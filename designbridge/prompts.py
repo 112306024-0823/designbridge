@@ -9,6 +9,8 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
 初始圖片: {initial_image}
 
 ## 任務
+
+# 將使用者需求轉換為結構化 JSON 格式
 分析使用者需求，產出符合下列結構的完整 Requirement JSON：
 
 ### 1. meta（基本資訊）
