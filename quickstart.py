@@ -5,7 +5,6 @@ from typing_extensions import TypedDict
 class State(TypedDict):
     text: str
 
-
 def node_a(state: State) -> dict:
     return {"text": state["text"] + "a"}
 

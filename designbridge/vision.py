@@ -1,7 +1,9 @@
 """Local vision preprocessing for DesignBridge.
 
 Implements:
-- Depth estimation (MiDaS-style DPT) via HuggingFace Transformers
+- Depth estimation via HuggingFace Transformers:
+  - Depth Anything V2 (Small/Base/Large) - recommended, finer details
+  - Intel MiDaS DPT (legacy fallback)
 - Semantic segmentation (UPerNet) via HuggingFace Transformers
 
 Outputs are saved to disk and returned as file paths, so they can be stored in LangGraph state.
@@ -44,7 +46,7 @@ def _get_device() -> tuple[str, int]:
 
 @lru_cache(maxsize=1)
 def _load_depth_model(model_name: str) -> Any:
-    """Load depth model and processor once (cached)."""
+    """Load Depth Anything V2 model and processor once (cached)."""
     from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
     processor = AutoImageProcessor.from_pretrained(model_name)

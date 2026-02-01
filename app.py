@@ -4,6 +4,7 @@
 
 import json
 import tempfile
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -12,7 +13,7 @@ from designbridge import get_compiled_graph
 
 st.set_page_config(page_title="DesignBridge Test Interface", page_icon="🏠", layout="wide")
 
-st.title("🏠 DesignBridge 測試介面")
+st.title("DesignBridge 測試介面")
 st.markdown("輸入設計需求，查看 LangGraph 工作流的路由與執行結果")
 
 # Sidebar for input
@@ -85,7 +86,25 @@ if "example_prompt" in st.session_state:
     text_prompt = st.session_state["example_prompt"]
     del st.session_state["example_prompt"]
 
-# Main content
+# Main content: 工作流圖示（Mermaid，可收合）
+with st.expander("Workflow Diagram", expanded=True):
+    try:
+        _compiled = get_compiled_graph()
+        _drawable = _compiled.get_graph()
+        _mermaid_str = _drawable.draw_mermaid()
+        try:
+            _png_bytes = _drawable.draw_mermaid_png()
+            st.image(_png_bytes, use_container_width=True)
+        except Exception:
+            st.caption("圖示以 Mermaid 原始碼顯示於下方。")
+        with st.expander("🔍 檢視 / 複製 Mermaid 原始碼"):
+            st.code(_mermaid_str, language="mermaid")
+            st.caption("可複製到 [mermaid.live](https://mermaid.live) 編輯或匯出。")
+    except Exception as e:
+        st.warning(f"工作流圖無法載入：{e}")
+
+st.markdown("---")
+
 if run_button:
     if not text_prompt.strip():
         st.error("❌ 請輸入文字需求")
@@ -104,13 +123,15 @@ if run_button:
             # Invoke graph
             try:
                 compiled = get_compiled_graph()
+                t0 = time.perf_counter()
                 result = compiled.invoke(initial_state)
+                elapsed = time.perf_counter() - t0
 
                 # Display results
-                st.success("✅ 工作流執行完成！")
+                st.success(f"工作流執行完成！（耗時 {elapsed:.2f} 秒）")
 
                 # Key results in columns
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Task ID", result.get("task_id", "N/A")[:8] + "...")
                 with col2:
@@ -124,6 +145,28 @@ if run_button:
                         "layout_and_style": "📐🎨",
                     }
                     st.metric("路由決策", f"{emoji_map.get(routing, '❓')} {routing}")
+                with col4:
+                    st.metric("執行秒數", f"{elapsed:.2f} s")
+
+                # Generated image (Renderer output)
+                st.subheader("🖼️ 生成圖")
+                gen_path = result.get("generated_image")
+                render_result = result.get("render_result") or {}
+                if gen_path and Path(gen_path).exists():
+                    st.image(gen_path, caption="Renderer 輸出", use_container_width=True)
+                    st.caption(f"路徑：`{gen_path}`")
+                    gp = render_result.get("generation_params") or {}
+                    backend = gp.get("backend", "")
+                    if backend == "sdxl":
+                        st.success("使用本機 SDXL 生成（免費）")
+                    elif backend == "imagen":
+                        st.caption("使用 Imagen API 生成")
+                    elif gp.get("fallback") == "placeholder":
+                        st.info("⚠️ Imagen 未可用且 SDXL 未成功，已顯示佔位圖。可安裝 diffusers 啟用本機 SDXL。")
+                elif gen_path:
+                    st.warning(f"生成圖路徑不存在：`{gen_path}`")
+                else:
+                    st.info("無生成圖")
 
                 # Structured requirement
                 st.subheader("📋 結構化需求（Requirement JSON）")

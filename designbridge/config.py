@@ -3,23 +3,32 @@
 
 import os
 from typing import Optional
+import dotenv
+dotenv.load_dotenv()
 
 
 class Config:
     """DesignBridge configuration."""
-    GEMINI_API_KEY: Optional[str] = "AIzaSyBCwpO4Jb2078IK-jB5xqhb_uPK7B1zHXk"  # local-only; do not commit
 
-  
     GEMINI_MODEL: str = "gemini-2.5-flash"
-    GEMINI_TEMPERATURE: float = 0.3 
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
+    GEMINI_TEMPERATURE: float = 0.3
 
-    # Local vision preprocessing (MiDaS depth + UPerNet segmentation)
+    # Image generation (Imagen) - same API key as Gemini; requires billing
+    IMAGEN_MODEL: str = os.getenv("DESIGNBRIDGE_IMAGEN_MODEL", "imagen-4.0-generate-001")
+    # Local SDXL fallback (free); set DESIGNBRIDGE_SDXL_MODEL to use another model
+    SDXL_MODEL: str = os.getenv("DESIGNBRIDGE_SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0")
+    SDXL_STEPS: int = int(os.getenv("DESIGNBRIDGE_SDXL_STEPS", "25"))
+    ENABLE_SDXL_FALLBACK: bool = os.getenv("DESIGNBRIDGE_ENABLE_SDXL_FALLBACK", "true").lower() in ("1", "true", "yes")
+
+    # Local vision preprocessing (Depth + UPerNet segmentation)
     # NOTE: These models will be downloaded on first run (requires internet).
     ENABLE_DEPTH: bool = True
     ENABLE_SEGMENTATION: bool = True
 
-    # Depth (MiDaS-style DPT). Good default: smaller and widely supported.
-    DEPTH_MODEL: str = "Intel/dpt-hybrid-midas"
+    # Depth estimation: Depth Anything V2 (via HuggingFace Transformers).
+    # Options: Small (24.8M) | Base (97.5M) | Large (335M, default)
+    DEPTH_MODEL: str = "depth-anything/Depth-Anything-V2-Large-hf"
     # Semantic segmentation (UPerNet). Example checkpoint on HuggingFace.
     SEGMENTATION_MODEL: str = "openmmlab/upernet-convnext-small"
 
