@@ -316,7 +316,7 @@ def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
 
 
 def _build_imagen_prompt_from_requirement(req: dict[str, Any]) -> str:
-    """Build an English text prompt for Imagen from structured_requirement."""
+    """Build an English text prompt for SDXL from structured_requirement."""
     meta = req.get("meta") or {}
     style_prefs = req.get("style_preferences") or {}
     room_type = meta.get("room_type", "living_room").replace("_", " ")
@@ -330,7 +330,7 @@ def _build_imagen_prompt_from_requirement(req: dict[str, Any]) -> str:
 
 
 def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> None:
-    """Save a placeholder image (PIL) when Imagen is unavailable."""
+    """Save a placeholder image (PIL) when SDXL is unavailable."""
     from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (512, 512), color=(240, 240, 245))
@@ -436,7 +436,7 @@ def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None =
 def renderer(state: DesignBridgeState) -> dict[str, Any]:
     """
     Renderer: generate image from structured_requirement.
-    Order: Imagen API (if billing) -> local SDXL (free) -> placeholder.
+    Uses Stable Diffusion XL only (with ControlNet if depth available), then placeholder on failure.
     """
     task_id = state.get("task_id") or str(uuid.uuid4())
     req = state.get("structured_requirement") or {}
@@ -448,7 +448,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     prompt = _build_imagen_prompt_from_requirement(req)
     generation_params: dict[str, Any] = {"prompt_preview": prompt[:200]}
     backend = "placeholder"
-    
+
     # Get vision features for ControlNet (if available)
     vision = state.get("vision_features") or {}
     depth_path = vision.get("depth")
@@ -459,38 +459,8 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if seg_path:
         controlnet_inputs["segmentation"] = str(seg_path)
 
-    # 1. Try Imagen (requires billed account)
-    try:
-        api_key = Config.get_gemini_api_key()
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_images(
-            model=Config.IMAGEN_MODEL,
-            prompt=prompt,
-            config=types.GenerateImagesConfig(number_of_images=1),
-        )
-        if response.generated_images:
-            gen_img = response.generated_images[0]
-            if hasattr(gen_img, "image") and gen_img.image is not None and hasattr(gen_img.image, "image_bytes"):
-                from io import BytesIO
-                from PIL import Image
-                img = Image.open(BytesIO(gen_img.image.image_bytes))
-                img.save(str(out_path))
-                backend = "imagen"
-                generation_params["model"] = Config.IMAGEN_MODEL
-            else:
-                raise RuntimeError("Imagen response missing image_bytes")
-        else:
-            raise RuntimeError("Imagen returned no images")
-    except Exception as e:
-        print(f"⚠️  Imagen render failed ({e})")
-        generation_params["imagen_error"] = str(e)
-
-    # 2. If Imagen failed, try local SDXL (free, with ControlNet if depth available)
-    if backend == "placeholder" and Config.ENABLE_SDXL_FALLBACK:
-        # Use depth image for ControlNet guidance if available
+    # 1. SDXL (with ControlNet if depth available)
+    if Config.ENABLE_SDXL_FALLBACK:
         control_img = depth_path if depth_path and Path(depth_path).exists() else None
         if _render_sdxl(prompt, out_path, control_image=control_img):
             backend = "sdxl"
@@ -501,7 +471,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         else:
             generation_params["sdxl_error"] = "SDXL render failed"
 
-    # 3. Fallback to placeholder
+    # 2. Fallback to placeholder
     if backend == "placeholder":
         _renderer_placeholder_image(out_path, task_id, prompt)
         generation_params["fallback"] = "placeholder"
