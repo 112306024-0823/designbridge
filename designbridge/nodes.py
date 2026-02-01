@@ -347,6 +347,7 @@ def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> No
 
 # Cached SDXL pipeline (loaded once, reused for subsequent renders)
 _sdxl_pipeline: Any = None
+_controlnet_pipeline: Any = None
 
 
 def _get_sdxl_pipeline():
@@ -366,17 +367,65 @@ def _get_sdxl_pipeline():
     return _sdxl_pipeline
 
 
-def _render_sdxl(prompt: str, out_path: Path) -> bool:
-    """Generate image with local SDXL. Returns True on success."""
+def _get_controlnet_pipeline():
+    """Load SDXL + ControlNet pipeline once and cache it. Uses depth ControlNet for layout guidance."""
+    global _controlnet_pipeline
+    if _controlnet_pipeline is not None:
+        return _controlnet_pipeline
+    from diffusers import StableDiffusionXLControlNetPipeline, ControlNetModel
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # Load ControlNet model (depth)
+    controlnet = ControlNetModel.from_pretrained(
+        Config.CONTROLNET_DEPTH_MODEL,
+        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+    )
+    
+    # Load SDXL pipeline with ControlNet
+    _controlnet_pipeline = StableDiffusionXLControlNetPipeline.from_pretrained(
+        Config.SDXL_MODEL,
+        controlnet=controlnet,
+        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+        use_safetensors=True,
+    )
+    _controlnet_pipeline = _controlnet_pipeline.to(device)
+    return _controlnet_pipeline
+
+
+def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None = None) -> bool:
+    """
+    Generate image with local SDXL. If control_image is provided and ControlNet is enabled,
+    uses ControlNet pipeline with depth guidance. Returns True on success.
+    """
     try:
-        pipe = _get_sdxl_pipeline()
         import torch
+        from PIL import Image
+        
         device = "cuda" if torch.cuda.is_available() else "cpu"
         steps = Config.SDXL_STEPS
         if device == "cpu":
             steps = min(steps, 20)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        image = pipe(prompt=prompt, num_inference_steps=steps).images[0]
+        
+        # Use ControlNet if enabled and control_image is provided
+        if Config.ENABLE_CONTROLNET and control_image and Path(control_image).exists():
+            pipe = _get_controlnet_pipeline()
+            control_img = Image.open(control_image).convert("RGB")
+            # Resize control image to match SDXL's expected resolution (1024x1024 or similar)
+            control_img = control_img.resize((1024, 1024), Image.Resampling.LANCZOS)
+            
+            image = pipe(
+                prompt=prompt,
+                image=control_img,
+                num_inference_steps=steps,
+                controlnet_conditioning_scale=Config.CONTROLNET_CONDITIONING_SCALE,
+            ).images[0]
+        else:
+            # Fallback to standard SDXL without ControlNet
+            pipe = _get_sdxl_pipeline()
+            image = pipe(prompt=prompt, num_inference_steps=steps).images[0]
+        
         image.save(str(out_path))
         return True
     except Exception as e:
@@ -399,6 +448,16 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     prompt = _build_imagen_prompt_from_requirement(req)
     generation_params: dict[str, Any] = {"prompt_preview": prompt[:200]}
     backend = "placeholder"
+    
+    # Get vision features for ControlNet (if available)
+    vision = state.get("vision_features") or {}
+    depth_path = vision.get("depth")
+    seg_path = vision.get("segmentation")
+    controlnet_inputs: dict[str, str] = {}
+    if depth_path:
+        controlnet_inputs["depth"] = str(depth_path)
+    if seg_path:
+        controlnet_inputs["segmentation"] = str(seg_path)
 
     # 1. Try Imagen (requires billed account)
     try:
@@ -429,11 +488,16 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         print(f"⚠️  Imagen render failed ({e})")
         generation_params["imagen_error"] = str(e)
 
-    # 2. If Imagen failed, try local SDXL (free)
+    # 2. If Imagen failed, try local SDXL (free, with ControlNet if depth available)
     if backend == "placeholder" and Config.ENABLE_SDXL_FALLBACK:
-        if _render_sdxl(prompt, out_path):
+        # Use depth image for ControlNet guidance if available
+        control_img = depth_path if depth_path and Path(depth_path).exists() else None
+        if _render_sdxl(prompt, out_path, control_image=control_img):
             backend = "sdxl"
             generation_params["model"] = Config.SDXL_MODEL
+            if control_img:
+                generation_params["controlnet"] = "depth"
+                generation_params["controlnet_scale"] = Config.CONTROLNET_CONDITIONING_SCALE
         else:
             generation_params["sdxl_error"] = "SDXL render failed"
 
@@ -449,6 +513,10 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         "generation_params": generation_params,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    # Add controlnet_inputs if any were used
+    if controlnet_inputs:
+        render_result["controlnet_inputs"] = controlnet_inputs
+    
     return {
         "generated_image": path_str,
         "render_result": render_result,

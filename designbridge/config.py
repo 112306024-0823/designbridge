@@ -20,6 +20,11 @@ class Config:
     SDXL_MODEL: str = os.getenv("DESIGNBRIDGE_SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0")
     SDXL_STEPS: int = int(os.getenv("DESIGNBRIDGE_SDXL_STEPS", "25"))
     ENABLE_SDXL_FALLBACK: bool = os.getenv("DESIGNBRIDGE_ENABLE_SDXL_FALLBACK", "true").lower() in ("1", "true", "yes")
+    
+    # ControlNet for SDXL (depth + segmentation guidance)
+    ENABLE_CONTROLNET: bool = os.getenv("DESIGNBRIDGE_ENABLE_CONTROLNET", "true").lower() in ("1", "true", "yes")
+    CONTROLNET_DEPTH_MODEL: str = "diffusers/controlnet-depth-sdxl-1.0"
+    CONTROLNET_CONDITIONING_SCALE: float = 0.5  # Strength of ControlNet guidance (0.0-1.0)
 
     # Local vision preprocessing (Depth + UPerNet segmentation)
     # NOTE: These models will be downloaded on first run (requires internet).
