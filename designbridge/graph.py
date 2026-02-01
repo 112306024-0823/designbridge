@@ -12,6 +12,7 @@ from designbridge.nodes import (
     layout_agent_stub,
     layout_and_style_agent_stub,
     requirement_analyzer,
+    renderer,
     style_agent_stub,
     visual_preprocessing_local,
 )
@@ -34,8 +35,8 @@ def _route_after_director(state: DesignBridgeState) -> str:
 def build_graph() -> StateGraph:
     """
     Build DesignBridge workflow:
-    START -> requirement_analyzer -> visual_preprocessing_stub -> design_director
-      -> (layout_agent | style_agent | adjuster_agent | layout_and_style_agent) -> END
+    START -> requirement_analyzer -> visual_preprocessing -> design_director
+      -> (layout_agent | style_agent | adjuster_agent | layout_and_style_agent) -> renderer -> END
     """
     graph: StateGraph[DesignBridgeState] = StateGraph(DesignBridgeState)
 
@@ -46,6 +47,7 @@ def build_graph() -> StateGraph:
     graph.add_node("style_agent", style_agent_stub)
     graph.add_node("adjuster_agent", adjuster_agent_stub)
     graph.add_node("layout_and_style_agent", layout_and_style_agent_stub)
+    graph.add_node("renderer", renderer)
 
     graph.add_edge(START, "requirement_analyzer")
     graph.add_edge("requirement_analyzer", "visual_preprocessing")
@@ -60,10 +62,11 @@ def build_graph() -> StateGraph:
             "layout_and_style_agent": "layout_and_style_agent",
         },
     )
-    graph.add_edge("layout_agent", END)
-    graph.add_edge("style_agent", END)
-    graph.add_edge("adjuster_agent", END)
-    graph.add_edge("layout_and_style_agent", END)
+    graph.add_edge("layout_agent", "renderer")
+    graph.add_edge("style_agent", "renderer")
+    graph.add_edge("adjuster_agent", "renderer")
+    graph.add_edge("layout_and_style_agent", "renderer")
+    graph.add_edge("renderer", END)
 
     return graph
 

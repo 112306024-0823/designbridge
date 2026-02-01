@@ -138,11 +138,25 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
 
 只需保持相同的輸入/輸出格式即可。
 
+## 深度估計模型（Depth Anything V2）
+
+預設使用 **Depth Anything V2**（vitl，335M params），透過 HuggingFace Transformers 載入。
+
+在 `config.py` 可調整 `DEPTH_MODEL`：
+
+| 模型 | 參數量 | 說明 |
+|------|--------|------|
+| `depth-anything/Depth-Anything-V2-Small-hf` | 24.8M | 最快，適合 CPU |
+| `depth-anything/Depth-Anything-V2-Base-hf` | 97.5M | 平衡 |
+| `depth-anything/Depth-Anything-V2-Large-hf` | 335M | **預設**，品質最佳 |
+
+需 `transformers>=4.45.0` 與 `torch`。第一次執行會從 HuggingFace 下載模型。
+
 ## 下一步
 
 串接完 Requirement Analyzer 後，可繼續串接：
 
-1. **Visual Preprocessing**：UPerNet (segmentation) + MiDaS (depth) + VLM (GPT-4V/Gemini Vision)
+1. **Visual Preprocessing**：Depth Anything V2 (depth) + UPerNet (segmentation)
 2. **Layout/Style/Adjuster Agents**：Stable Diffusion + ControlNet
 3. **Evaluation**：品質評估 + 決策迭代
 

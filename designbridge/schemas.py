@@ -134,7 +134,6 @@ class RenderResultJSON(TypedDict):
     controlnet_inputs: NotRequired[dict[str, str]]  # {"depth": ..., "segmentation": ...}
     timestamp: str
 
-
 # ========== Eval/Feedback JSON ==========
 class EvalFeedbackJSON(TypedDict):
     """Output of Evaluator: scores and decision."""
