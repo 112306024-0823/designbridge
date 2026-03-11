@@ -2,9 +2,14 @@
 """Configuration for DesignBridge APIs."""
 
 import os
-from typing import Optional
+from pathlib import Path
+
 import dotenv
-dotenv.load_dotenv()
+
+# Load .env from project root (parent of designbridge package) so it works from any cwd
+_root = Path(__file__).resolve().parent.parent
+dotenv.load_dotenv(_root / ".env")
+dotenv.load_dotenv()  # Allow override from current working directory
 
 
 class Config:
