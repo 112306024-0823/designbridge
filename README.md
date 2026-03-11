@@ -1,91 +1,81 @@
-<picture class="github-only">
-  <source media="(prefers-color-scheme: light)" srcset="https://langchain-ai.github.io/langgraph/static/wordmark_dark.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="https://langchain-ai.github.io/langgraph/static/wordmark_light.svg">
-  <img alt="LangGraph Logo" src="https://langchain-ai.github.io/langgraph/static/wordmark_dark.svg" width="80%">
-</picture>
+# DesignBridge
 
-<div>
-<br>
-</div>
+使用 **LangGraph** 編排的多代理室內設計工作流（含 Streamlit 測試介面）。系統規格請見 `docs/DesignBridge.md`，Agent/JSON 規格請見 `docs/SCHEMAS.md`。
 
-[![Version](https://img.shields.io/pypi/v/langgraph.svg)](https://pypi.org/project/langgraph/)
-[![Downloads](https://static.pepy.tech/badge/langgraph/month)](https://pepy.tech/project/langgraph)
-[![Open Issues](https://img.shields.io/github/issues-raw/langchain-ai/langgraph)](https://github.com/langchain-ai/langgraph/issues)
-[![Docs](https://img.shields.io/badge/docs-latest-blue)](https://docs.langchain.com/oss/python/langgraph/overview)
+## 快速啟動（Streamlit）
 
-Trusted by companies shaping the future of agents – including Klarna, Replit, Elastic, and more – LangGraph is a low-level orchestration framework for building, managing, and deploying long-running, stateful agents.
+在專案根目錄執行：
 
-## Get started
-
-Install LangGraph:
-
-```
-pip install -U langgraph
+```bash
+pip install -r requirements.txt
+streamlit run app.py
 ```
 
-Create a simple workflow:
+啟動後瀏覽器開 `http://localhost:8501`。
 
-```python
-from langgraph.graph import START, StateGraph
-from typing_extensions import TypedDict
+## API 設定（Gemini）
 
+Requirement Analyzer 會優先用 **Google Gemini API** 解析需求；若未設定或失敗，會自動 fallback 到規則式解析。
 
-class State(TypedDict):
-    text: str
+### 1) 安裝依賴
 
+```bash
+pip install -r requirements.txt
 
-def node_a(state: State) -> dict:
-    return {"text": state["text"] + "a"}
-
-
-def node_b(state: State) -> dict:
-    return {"text": state["text"] + "b"}
-
-
-graph = StateGraph(State)
-graph.add_node("node_a", node_a)
-graph.add_node("node_b", node_b)
-graph.add_edge(START, "node_a")
-graph.add_edge("node_a", "node_b")
-
-print(graph.compile().invoke({"text": ""}))
-# {'text': 'ab'}
+pip install google-generativeai
 ```
 
-Get started with the [LangGraph Quickstart](https://docs.langchain.com/oss/python/langgraph/quickstart).
+### 2) 取得 API Key
 
-To quickly build agents with LangChain's `create_agent` (built on LangGraph), see the [LangChain Agents documentation](https://docs.langchain.com/oss/python/langchain/agents).
+- 到 `https://makersuite.google.com/app/apikey` 建立並複製 API key
 
-## Core benefits
+### 3) 設定 `GEMINI_API_KEY`
 
-LangGraph provides low-level supporting infrastructure for *any* long-running, stateful workflow or agent. LangGraph does not abstract prompts or architecture, and provides the following central benefits:
+**方式 A：寫入 `.env`（推薦）**
 
-- [Durable execution](https://docs.langchain.com/oss/python/langgraph/durable-execution): Build agents that persist through failures and can run for extended periods, automatically resuming from exactly where they left off.
-- [Human-in-the-loop](https://docs.langchain.com/oss/python/langgraph/interrupts): Seamlessly incorporate human oversight by inspecting and modifying agent state at any point during execution.
-- [Comprehensive memory](https://docs.langchain.com/oss/python/langgraph/memory): Create truly stateful agents with both short-term working memory for ongoing reasoning and long-term persistent memory across sessions.
-- [Debugging with LangSmith](http://www.langchain.com/langsmith): Gain deep visibility into complex agent behavior with visualization tools that trace execution paths, capture state transitions, and provide detailed runtime metrics.
-- [Production-ready deployment](https://docs.langchain.com/langsmith/app-development): Deploy sophisticated agent systems confidently with scalable infrastructure designed to handle the unique challenges of stateful, long-running workflows.
+在專案根目錄新增/編輯 `.env`：
 
-## LangGraph’s ecosystem
+```env
+GEMINI_API_KEY=YOUR_API_KEY_HERE
+```
 
-While LangGraph can be used standalone, it also integrates seamlessly with any LangChain product, giving developers a full suite of tools for building agents. To improve your LLM application development, pair LangGraph with:
+**方式 B：臨時環境變數**
 
-- [LangSmith](http://www.langchain.com/langsmith) — Helpful for agent evals and observability. Debug poor-performing LLM app runs, evaluate agent trajectories, gain visibility in production, and improve performance over time.
-- [LangSmith Deployment](https://docs.langchain.com/langsmith/deployments) — Deploy and scale agents effortlessly with a purpose-built deployment platform for long running, stateful workflows. Discover, reuse, configure, and share agents across teams — and iterate quickly with visual prototyping in [LangGraph Studio](https://docs.langchain.com/oss/python/langgraph/studio).
-- [LangChain](https://docs.langchain.com/oss/python/langchain/overview) – Provides integrations and composable components to streamline LLM application development.
+PowerShell：
 
-> [!NOTE]
-> Looking for the JS version of LangGraph? See the [JS repo](https://github.com/langchain-ai/langgraphjs) and the [JS docs](https://docs.langchain.com/oss/javascript/langgraph/overview).
+```powershell
+$env:GEMINI_API_KEY="YOUR_API_KEY_HERE"
+```
 
-## Additional resources
+CMD：
 
-- [Guides](https://docs.langchain.com/oss/python/langgraph/overview): Quick, actionable code snippets for topics such as streaming, adding memory & persistence, and design patterns (e.g. branching, subgraphs, etc.).
-- [Reference](https://reference.langchain.com/python/langgraph/): Detailed reference on core classes, methods, how to use the graph and checkpointing APIs, and higher-level prebuilt components.
-- [Examples](https://docs.langchain.com/oss/python/langgraph/agentic-rag): Guided examples on getting started with LangGraph.
-- [LangChain Forum](https://forum.langchain.com/): Connect with the community and share all of your technical questions, ideas, and feedback.
-- [LangChain Academy](https://academy.langchain.com/courses/intro-to-langgraph): Learn the basics of LangGraph in our free, structured course.
-- [Case studies](https://www.langchain.com/built-with-langgraph): Hear how industry leaders use LangGraph to ship AI applications at scale.
+```cmd
+set GEMINI_API_KEY=YOUR_API_KEY_HERE
+```
 
-## Acknowledgements
+## 測試工作流（CLI）
 
-LangGraph is inspired by [Pregel](https://research.google/pubs/pub37252/) and [Apache Beam](https://beam.apache.org/). The public interface draws inspiration from [NetworkX](https://networkx.org/documentation/latest/). LangGraph is built by LangChain Inc, the creators of LangChain, but can be used without LangChain.
+```bash
+python scripts/run_designbridge.py
+```
+
+若 console 出現：
+- ✅ 正常輸出結構化 JSON：Gemini 解析成功
+- ⚠️ `falling back to rule-based`：API key 未設或呼叫失敗，已退回規則解析
+
+## 專案結構
+
+```
+DesignBridge/
+├── app.py                  # Streamlit UI
+├── designbridge/           # LangGraph graph/nodes/config
+├── scripts/
+│   └── run_designbridge.py # CLI 測試入口
+├── docs/                   # 規格與文件
+└── artifacts/              # 產出（depth/seg/render）
+```
+
+## 參考文件
+
+- `docs/DesignBridge.md`：工作流與 State 定義
+- `docs/SCHEMAS.md`：各 Agent 的輸入/輸出 JSON 規格

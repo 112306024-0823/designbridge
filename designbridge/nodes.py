@@ -437,7 +437,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     """
     Renderer: generate image from structured_requirement.
     Uses Stable Diffusion XL only (with ControlNet if depth available), then placeholder on failure.
-    """
+    """ 
     task_id = state.get("task_id") or str(uuid.uuid4())
     req = state.get("structured_requirement") or {}
     artifacts_root = Path(Config.ARTIFACTS_DIR)
