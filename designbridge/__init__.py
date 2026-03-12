@@ -1,5 +1,4 @@
 # designbridge/__init__.py
-"""DesignBridge: LangGraph multi-agent workflow for interior design."""
 
 from designbridge.graph import build_graph, get_compiled_graph
 from designbridge.schemas import (
