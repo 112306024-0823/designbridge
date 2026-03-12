@@ -94,7 +94,7 @@ with st.expander("Workflow Diagram", expanded=True):
         _mermaid_str = _drawable.draw_mermaid()
         try:
             _png_bytes = _drawable.draw_mermaid_png()
-            st.image(_png_bytes, use_container_width=True)
+            st.image(_png_bytes, width=True)
         except Exception:
             st.caption("圖示以 Mermaid 原始碼顯示於下方。")
         with st.expander("🔍 檢視 / 複製 Mermaid 原始碼"):
@@ -153,12 +153,14 @@ if run_button:
                 gen_path = result.get("generated_image")
                 render_result = result.get("render_result") or {}
                 if gen_path and Path(gen_path).exists():
-                    st.image(gen_path, caption="Renderer 輸出", use_container_width=True)
+                    st.image(gen_path, caption="Renderer 輸出", width=True)
                     st.caption(f"路徑：`{gen_path}`")
                     gp = render_result.get("generation_params") or {}
                     backend = gp.get("backend", "")
                     if backend == "sdxl":
                         st.success("使用本機 SDXL 生成（免費）")
+                    elif backend == "hf_inference":
+                        st.success("使用 Hugging Face Inference API 生成（雲端 SDXL）")
                     elif backend == "imagen":
                         st.caption("使用 Imagen API 生成")
                     elif gp.get("fallback") == "placeholder":
