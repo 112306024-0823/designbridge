@@ -9,7 +9,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from designbridge import get_compiled_graph
+from designbridge.designbridge import get_compiled_graph #修正為 designbridge.designbridge
 
 st.set_page_config(page_title="DesignBridge Test Interface", page_icon="🏠", layout="wide")
 
