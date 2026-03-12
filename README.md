@@ -8,7 +8,8 @@
 
 ```bash
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run app.py (若這個指令無效，應該是電腦設定的path沒有加到streamlit)，
+可跑跑看 python -m streamlit run app.py
 ```
 
 啟動後瀏覽器開 `http://localhost:8501`。
@@ -52,6 +53,17 @@ CMD：
 ```cmd
 set GEMINI_API_KEY=YOUR_API_KEY_HERE
 ```
+
+## 雲端圖生（Hugging Face Inference API，預設優先）
+
+**預設會先用雲端**生成圖片（Hugging Face Inference API，例如 nscale），無需下載 5GB 本機 SDXL；失敗再 fallback 本機 SDXL 或佔位圖。
+
+1. 在 [Hugging Face](https://huggingface.co/settings/tokens) 建立 Access Token（Read 權限即可）。
+2. 在 `.env` 加上：
+   ```env
+   HF_TOKEN=hf_你的token
+   ```
+3. 重啟 app 後即會優先使用雲端 SDXL。若想改回本機優先，可設 `DESIGNBRIDGE_ENABLE_HF_INFERENCE=false`。
 
 ## 測試工作流（CLI）
 

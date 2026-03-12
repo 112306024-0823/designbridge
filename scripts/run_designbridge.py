@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # run_designbridge.py
+# 啟動指令 python -m scripts.run_designbridge
+
 """Run DesignBridge workflow with sample user input."""
 
 from designbridge import get_compiled_graph
