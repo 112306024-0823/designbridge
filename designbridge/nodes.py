@@ -393,6 +393,35 @@ def _get_controlnet_pipeline():
     return _controlnet_pipeline
 
 
+def _render_hf_inference(prompt: str, out_path: Path) -> bool:
+    """
+    Generate image via Hugging Face Inference API (e.g. nscale provider).
+    No local model download. Returns True on success.
+    """
+    api_key = Config.HF_TOKEN
+    if not api_key:
+        return False
+    try:
+        from huggingface_hub import InferenceClient
+
+        client = InferenceClient(
+            provider=Config.HF_INFERENCE_PROVIDER,
+            api_key=api_key,
+        )
+        image = client.text_to_image(
+            prompt,
+            model=Config.SDXL_MODEL,
+        )
+        if image is None:
+            return False
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        image.save(str(out_path))
+        return True
+    except Exception as e:
+        print(f"⚠️  HF Inference render failed ({e})")
+        return False
+
+
 def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None = None) -> bool:
     """
     Generate image with local SDXL. If control_image is provided and ControlNet is enabled,
@@ -459,8 +488,15 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if seg_path:
         controlnet_inputs["segmentation"] = str(seg_path)
 
-    # 1. SDXL (with ControlNet if depth available)
-    if Config.ENABLE_SDXL_FALLBACK:
+    # 1. Hugging Face Inference API (cloud SDXL; no local download)
+    if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
+        if _render_hf_inference(prompt, out_path):
+            backend = "hf_inference"
+            generation_params["model"] = Config.SDXL_MODEL
+            generation_params["provider"] = Config.HF_INFERENCE_PROVIDER
+
+    # 2. Local SDXL (with ControlNet if depth available)
+    if backend == "placeholder" and Config.ENABLE_SDXL_FALLBACK:
         control_img = depth_path if depth_path and Path(depth_path).exists() else None
         if _render_sdxl(prompt, out_path, control_image=control_img):
             backend = "sdxl"
@@ -471,7 +507,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         else:
             generation_params["sdxl_error"] = "SDXL render failed"
 
-    # 2. Fallback to placeholder
+    # 3. Fallback to placeholder
     if backend == "placeholder":
         _renderer_placeholder_image(out_path, task_id, prompt)
         generation_params["fallback"] = "placeholder"
