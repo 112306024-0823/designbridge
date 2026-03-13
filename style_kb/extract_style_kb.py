@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Extract Style KB JSON from interior images using the existing Gemini model.
+
+Usage (from project root `DesignBridge`):
+
+    python -m style_kb.extract_style_kb
+
+Put input images under one folder per style (10 styles):
+    style_kb/images/<style_id>/
+
+  style_id: modern, country, classic, mix, nordic, industrial, japanese, american, luxury, neoclassic
+  (See style_kb.styles.STYLES for the full list and Chinese names.)
+
+Results will be written to:
+    style_kb/outputs/<style_id>/<image_stem>.json
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from designbridge.config import Config
+from style_kb.prompts_style_kb import STYLE_KB_PROMPT
+from style_kb.styles import STYLES
+
+
+def _call_gemini_style_kb(
+    image_path: Path,
+    style_id: str,
+    style_name: str,
+    user_hint: str = "",
+) -> dict[str, Any]:
+    """Use current Gemini configuration to extract Style KB JSON for a single image."""
+    try:
+        import google.generativeai as genai
+    except ImportError as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "google-generativeai 未安裝。請先執行: pip install google-generativeai"
+        ) from exc
+
+    api_key = Config.get_gemini_api_key()
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(Config.GEMINI_MODEL)
+
+    prompt = STYLE_KB_PROMPT.format(
+        style_id=style_id,
+        style_name=style_name,
+        user_hint=user_hint,
+    )
+
+    # 上傳圖片給 Gemini（與 requirement_analyzer 的做法類似）
+    uploaded = genai.upload_file(path=str(image_path))
+
+    response = model.generate_content(
+        [uploaded, prompt],
+        generation_config=genai.GenerationConfig(
+            temperature=Config.GEMINI_TEMPERATURE,
+        ),
+    )
+
+    text = (getattr(response, "text", "") or "").strip()
+
+    # 處理 ```json ... ``` 包裹
+    if text.startswith("```json"):
+        text = text[7:]
+    if text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("Gemini 回傳的不是 JSON 物件。")
+    # 強制寫入既有風格標籤，確保與資料夾一致
+    if "style_info" not in data:
+        data["style_info"] = {}
+    data["style_info"]["style_id"] = style_id
+    data["style_info"]["name"] = style_name
+    return data
+
+
+def main() -> None:
+    base_dir = Path(__file__).resolve().parent
+    images_dir = base_dir / "images"
+    out_dir = base_dir / "outputs"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 建立 10 個風格的 images 與 outputs 子資料夾
+    for style_id, style_name in STYLES:
+        (images_dir / style_id).mkdir(parents=True, exist_ok=True)
+        (out_dir / style_id).mkdir(parents=True, exist_ok=True)
+    print(f"📂 已確保 style_kb/images/<style_id>/ 與 style_kb/outputs/<style_id>/ 共 {len(STYLES)} 組資料夾存在。")
+
+    total = 0
+    for style_id, style_name in STYLES:
+        style_images_dir = images_dir / style_id
+        if not style_images_dir.is_dir():
+            print(f"⏭️ 略過 {style_id}（{style_name}）：無資料夾 {style_images_dir}")
+            continue
+
+        image_files = sorted(
+            [
+                p
+                for p in style_images_dir.iterdir()
+                if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+            ]
+        )
+        if not image_files:
+            print(f"⏭️ 略過 {style_id}（{style_name}）：資料夾內無圖片")
+            continue
+
+        style_out_dir = out_dir / style_id
+        style_out_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\n📁 風格 [{style_name} / {style_id}] 共 {len(image_files)} 張")
+
+        for img_path in image_files:
+            print(f"  🔍 {img_path.name}")
+            try:
+                style_kb = _call_gemini_style_kb(
+                    img_path, style_id=style_id, style_name=style_name, user_hint=""
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ❌ 失敗: {exc}")
+                continue
+
+            out_path = style_out_dir / f"{img_path.stem}.json"
+            out_path.write_text(
+                json.dumps(style_kb, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            total += 1
+            print(f"  ✅ {out_path.name}")
+
+    print(f"\n🎯 完成，共輸出 {total} 個 Style KB。")
+
+
+if __name__ == "__main__":
+    main()
+
