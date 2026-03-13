@@ -153,7 +153,15 @@ if run_button:
                 gen_path = result.get("generated_image")
                 render_result = result.get("render_result") or {}
                 if gen_path and Path(gen_path).exists():
-                    st.image(gen_path, caption="Renderer 輸出", width=True)
+                    import base64
+                    with open(gen_path, "rb") as _f:
+                        _b64 = base64.b64encode(_f.read()).decode()
+                    st.markdown(
+                        f'<img src="data:image/png;base64,{_b64}" '
+                        f'style="width:480px; max-width:100%; border-radius:6px;">',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption("Renderer 輸出")
                     st.caption(f"路徑：`{gen_path}`")
                     gp = render_result.get("generation_params") or {}
                     backend = gp.get("backend", "")
@@ -228,22 +236,29 @@ if run_button:
                     col1, col2 = st.columns(2)
                     with col1:
                         st.write("**Segmentation**")
-                        seg_path = vision.get("segmentation", "N/A")
-                        st.code(seg_path)
-                        try:
-                            if isinstance(seg_path, str) and Path(seg_path).exists():
-                                st.image(seg_path, caption="Segmentation label map", width="stretch")
-                        except Exception:
-                            pass
+                        seg_path = vision.get("segmentation")
+                        if isinstance(seg_path, str) and Path(seg_path).exists():
+                            try:
+                                import numpy as np
+                                from PIL import Image as _PIL
+                                _arr = np.array(_PIL.open(seg_path), dtype=np.float32)
+                                _mn, _mx = _arr.min(), _arr.max()
+                                _u8 = ((_arr - _mn) / (_mx - _mn + 1e-8) * 255).astype(np.uint8)
+                                st.image(_u8, caption="Segmentation", use_container_width=True)
+                            except Exception as _e:
+                                st.warning(f"載入失敗：{_e}")
+                        else:
+                            st.info("未產出（需上傳圖片）")
                     with col2:
                         st.write("**Depth Map**")
-                        depth_path = vision.get("depth", "N/A")
-                        st.code(depth_path)
-                        try:
-                            if isinstance(depth_path, str) and Path(depth_path).exists():
-                                st.image(depth_path, caption="Depth map", width="stretch")
-                        except Exception:
-                            pass
+                        depth_path = vision.get("depth")
+                        if isinstance(depth_path, str) and Path(depth_path).exists():
+                            try:
+                                st.image(depth_path, caption="Depth Map", use_container_width=True)
+                            except Exception as _e:
+                                st.warning(f"載入失敗：{_e}")
+                        else:
+                            st.info("未產出（需上傳圖片）")
                     with st.expander("🔍 完整 vision_features JSON"):
                         st.json(vision)
                 else:
