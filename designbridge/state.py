@@ -46,6 +46,8 @@ class DesignBridgeState(TypedDict):
     # Renderer output
     render_result: NotRequired[RenderResultJSON]
     generated_image: NotRequired[str]
+    # Depth layout extraction output
+    layout_from_depth: NotRequired[dict[str, Any]]
     # Evaluator output
     evaluation_result: NotRequired[EvalFeedbackJSON]
     # Legacy / intermediate outputs (can be refactored later)
