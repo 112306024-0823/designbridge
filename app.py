@@ -9,7 +9,12 @@ from pathlib import Path
 
 import streamlit as st
 
-from designbridge import get_compiled_graph 
+from designbridge import get_compiled_graph
+
+
+@st.cache_resource
+def _get_cached_graph():
+    return get_compiled_graph()
 
 st.set_page_config(page_title="DesignBridge Test Interface", page_icon="🏠", layout="wide")
 
@@ -34,6 +39,22 @@ edit_scope = st.sidebar.slider(
     step=0.1,
     help="0.0 = 最小改動（局部微調），1.0 = 大幅改動（完全重新設計）",
 )
+
+# 生成模型選擇
+st.sidebar.markdown("**生成模型**")
+model_type = st.sidebar.radio(
+    "選擇生成模型",
+    options=["sdxl", "sd", "flux"],
+    format_func=lambda x: {
+        "sdxl": "SDXL (穩定，1024px)",
+        "sd": "SD 3.5 Medium (高品質，1024px)",
+        "flux": "Flux.1 Schnell (快速，高品質)",
+    }[x],
+    help="SDXL 品質最穩定；SD 1.5 較輕量快速；Flux 生成速度快且品質高但需較多 VRAM",
+    label_visibility="collapsed",
+)
+import os as _os
+_os.environ["DESIGNBRIDGE_LOCAL_MODEL_TYPE"] = model_type
 
 # 圖片上傳：上傳檔案或留空表示從空布局開始
 st.sidebar.markdown("**初始空間圖片（可選）**")
@@ -89,13 +110,18 @@ if "example_prompt" in st.session_state:
 # Main content: 工作流圖示（Mermaid，可收合）
 with st.expander("Workflow Diagram", expanded=True):
     try:
-        _compiled = get_compiled_graph()
+        _compiled = _get_cached_graph()
         _drawable = _compiled.get_graph()
         _mermaid_str = _drawable.draw_mermaid()
-        try:
-            _png_bytes = _drawable.draw_mermaid_png()
-            st.image(_png_bytes, width=True)
-        except Exception:
+        # Cache the PNG bytes in session_state so we only fetch once per session
+        if "workflow_png" not in st.session_state:
+            try:
+                st.session_state["workflow_png"] = _drawable.draw_mermaid_png()
+            except Exception:
+                st.session_state["workflow_png"] = None
+        if st.session_state["workflow_png"]:
+            st.image(st.session_state["workflow_png"], use_container_width=True)
+        else:
             st.caption("圖示以 Mermaid 原始碼顯示於下方。")
         with st.expander("🔍 檢視 / 複製 Mermaid 原始碼"):
             st.code(_mermaid_str, language="mermaid")
@@ -122,7 +148,7 @@ if run_button:
 
             # Invoke graph
             try:
-                compiled = get_compiled_graph()
+                compiled = _get_cached_graph()
                 t0 = time.perf_counter()
                 result = compiled.invoke(initial_state)
                 elapsed = time.perf_counter() - t0
@@ -166,13 +192,17 @@ if run_button:
                     gp = render_result.get("generation_params") or {}
                     backend = gp.get("backend", "")
                     if backend == "sdxl":
-                        st.success("使用本機 SDXL 生成（免費）")
+                        st.success(f"SDXL　`{gp.get('model','')}`")
+                    elif backend == "sd":
+                        st.success(f"SD 1.5　`{gp.get('model','')}`")
+                    elif backend == "flux":
+                        st.success(f"Flux　`{gp.get('model','')}`")
                     elif backend == "hf_inference":
-                        st.success("使用 Hugging Face Inference API 生成（雲端 SDXL）")
+                        st.success(f"HF Inference API　`{gp.get('model','')}`")
                     elif backend == "imagen":
-                        st.caption("使用 Imagen API 生成")
+                        st.caption("Imagen API")
                     elif gp.get("fallback") == "placeholder":
-                        st.info("⚠️ Imagen 未可用且 SDXL 未成功，已顯示佔位圖。可安裝 diffusers 啟用本機 SDXL。")
+                        st.info("⚠️ 生成失敗，顯示佔位圖")
                 elif gen_path:
                     st.warning(f"生成圖路徑不存在：`{gen_path}`")
                 else:

@@ -345,9 +345,11 @@ def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> No
     img.save(out_path)
 
 
-# Cached SDXL pipeline (loaded once, reused for subsequent renders)
+# Cached pipelines (loaded once, reused for subsequent renders)
 _sdxl_pipeline: Any = None
 _controlnet_pipeline: Any = None
+_sd_pipeline: Any = None
+_flux_pipeline: Any = None
 
 
 def _get_sdxl_pipeline():
@@ -375,13 +377,13 @@ def _get_controlnet_pipeline():
     from diffusers import StableDiffusionXLControlNetPipeline, ControlNetModel
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+
     # Load ControlNet model (depth)
     controlnet = ControlNetModel.from_pretrained(
         Config.CONTROLNET_DEPTH_MODEL,
         torch_dtype=torch.float16 if device == "cuda" else torch.float32,
     )
-    
+
     # Load SDXL pipeline with ControlNet
     _controlnet_pipeline = StableDiffusionXLControlNetPipeline.from_pretrained(
         Config.SDXL_MODEL,
@@ -393,9 +395,9 @@ def _get_controlnet_pipeline():
     return _controlnet_pipeline
 
 
-def _render_hf_inference(prompt: str, out_path: Path) -> bool:
+def _render_hf_inference(prompt: str, out_path: Path, model: str) -> bool:
     """
-    Generate image via Hugging Face Inference API (e.g. nscale provider).
+    Generate image via Hugging Face Inference API.
     No local model download. Returns True on success.
     """
     api_key = Config.HF_TOKEN
@@ -408,57 +410,98 @@ def _render_hf_inference(prompt: str, out_path: Path) -> bool:
             provider=Config.HF_INFERENCE_PROVIDER,
             api_key=api_key,
         )
-        image = client.text_to_image(
-            prompt,
-            model=Config.SDXL_MODEL,
-        )
+        image = client.text_to_image(prompt, model=model)
         if image is None:
             return False
         out_path.parent.mkdir(parents=True, exist_ok=True)
         image.save(str(out_path))
         return True
     except Exception as e:
-        print(f"⚠️  HF Inference render failed ({e})")
+        import traceback
+        print(f"⚠️  HF Inference render failed ({type(e).__name__}: {e})")
+        traceback.print_exc()
         return False
+
+
+def _get_sd_pipeline():
+    """Load SD 3.5 pipeline once and cache it."""
+    global _sd_pipeline
+    if _sd_pipeline is not None:
+        return _sd_pipeline
+    from diffusers import StableDiffusion3Pipeline
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    kwargs: dict[str, Any] = {
+        "torch_dtype": torch.bfloat16 if device == "cuda" else torch.float32,
+    }
+    if Config.HF_TOKEN:
+        kwargs["token"] = Config.HF_TOKEN
+    _sd_pipeline = StableDiffusion3Pipeline.from_pretrained(Config.SD_MODEL, **kwargs).to(device)
+    return _sd_pipeline
+
+
+def _get_flux_pipeline():
+    """Load Flux.1 pipeline once and cache it."""
+    global _flux_pipeline
+    if _flux_pipeline is not None:
+        return _flux_pipeline
+    from diffusers import FluxPipeline
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    kwargs: dict[str, Any] = {
+        "torch_dtype": torch.bfloat16 if device == "cuda" else torch.float32,
+    }
+    if Config.HF_TOKEN:
+        kwargs["token"] = Config.HF_TOKEN
+    _flux_pipeline = FluxPipeline.from_pretrained(Config.FLUX_MODEL, **kwargs).to(device)
+    return _flux_pipeline
 
 
 def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None = None) -> bool:
     """
-    Generate image with local SDXL. If control_image is provided and ControlNet is enabled,
-    uses ControlNet pipeline with depth guidance. Returns True on success.
+    Generate image with local SD / SDXL / Flux based on Config.LOCAL_MODEL_TYPE.
+    Returns True on success.
     """
     try:
         import torch
         from PIL import Image
-        
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
         steps = Config.SDXL_STEPS
         if device == "cpu":
             steps = min(steps, 20)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Use ControlNet if enabled and control_image is provided
-        if Config.ENABLE_CONTROLNET and control_image and Path(control_image).exists():
-            pipe = _get_controlnet_pipeline()
-            control_img = Image.open(control_image).convert("RGB")
-            # Resize control image to match SDXL's expected resolution (1024x1024 or similar)
-            control_img = control_img.resize((1024, 1024), Image.Resampling.LANCZOS)
-            
-            image = pipe(
-                prompt=prompt,
-                image=control_img,
-                num_inference_steps=steps,
-                controlnet_conditioning_scale=Config.CONTROLNET_CONDITIONING_SCALE,
-            ).images[0]
-        else:
-            # Fallback to standard SDXL without ControlNet
-            pipe = _get_sdxl_pipeline()
+        model_type = Config.get_local_model_type()
+
+        if model_type == "flux":
+            pipe = _get_flux_pipeline()
+            image = pipe(prompt=prompt, num_inference_steps=steps, guidance_scale=0.0).images[0]
+
+        elif model_type == "sd":
+            pipe = _get_sd_pipeline()
             image = pipe(prompt=prompt, num_inference_steps=steps).images[0]
-        
+
+        else:  # sdxl (default)
+            if Config.ENABLE_CONTROLNET and control_image and Path(control_image).exists():
+                pipe = _get_controlnet_pipeline()
+                control_img = Image.open(control_image).convert("RGB")
+                control_img = control_img.resize((1024, 1024), Image.Resampling.LANCZOS)
+                image = pipe(
+                    prompt=prompt,
+                    image=control_img,
+                    num_inference_steps=steps,
+                    controlnet_conditioning_scale=Config.CONTROLNET_CONDITIONING_SCALE,
+                ).images[0]
+            else:
+                pipe = _get_sdxl_pipeline()
+                image = pipe(prompt=prompt, num_inference_steps=steps).images[0]
+
         image.save(str(out_path))
         return True
     except Exception as e:
-        print(f"⚠️  SDXL render failed ({e})")
+        import traceback
+        print(f"⚠️  render failed ({type(e).__name__}: {e})")
+        traceback.print_exc()
         return False
 
 
@@ -488,24 +531,33 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if seg_path:
         controlnet_inputs["segmentation"] = str(seg_path)
 
-    # 1. Hugging Face Inference API (cloud SDXL; no local download)
+    # Resolve selected model type and corresponding HF model ID
+    model_type = Config.get_local_model_type()
+    if model_type == "flux":
+        hf_model_id = Config.FLUX_MODEL
+    elif model_type == "sd":
+        hf_model_id = Config.SD_MODEL
+    else:
+        hf_model_id = Config.SDXL_MODEL
+
+    # 1. Hugging Face Inference API (cloud; no local download)
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
-        if _render_hf_inference(prompt, out_path):
+        if _render_hf_inference(prompt, out_path, model=hf_model_id):
             backend = "hf_inference"
-            generation_params["model"] = Config.SDXL_MODEL
+            generation_params["model"] = hf_model_id
             generation_params["provider"] = Config.HF_INFERENCE_PROVIDER
 
-    # 2. Local SDXL (with ControlNet if depth available)
+    # 2. Local model (SD / SDXL / Flux)
     if backend == "placeholder" and Config.ENABLE_SDXL_FALLBACK:
         control_img = depth_path if depth_path and Path(depth_path).exists() else None
         if _render_sdxl(prompt, out_path, control_image=control_img):
-            backend = "sdxl"
-            generation_params["model"] = Config.SDXL_MODEL
-            if control_img:
+            backend = model_type
+            generation_params["model"] = hf_model_id
+            if control_img and model_type == "sdxl":
                 generation_params["controlnet"] = "depth"
                 generation_params["controlnet_scale"] = Config.CONTROLNET_CONDITIONING_SCALE
         else:
-            generation_params["sdxl_error"] = "SDXL render failed"
+            generation_params["render_error"] = "local render failed"
 
     # 3. Fallback to placeholder
     if backend == "placeholder":
