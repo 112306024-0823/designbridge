@@ -1,0 +1,56 @@
+{
+  "style_info": {
+    "style_id": "country",
+    "name": "鄉村",
+    "tags": [
+      "溫馨",
+      "明亮",
+      "白色系",
+      "木質",
+      "簡約"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#F5F5F5",
+      "secondary": "#D2B48C",
+      "accent": "#A9A9A9"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "ceramic tile",
+        "finish": "polished light beige"
+      },
+      {
+        "target": "牆面",
+        "type": "painted brick",
+        "finish": "white matte"
+      },
+      {
+        "target": "櫥櫃",
+        "type": "wood",
+        "finish": "white painted"
+      },
+      {
+        "target": "餐桌椅",
+        "type": "solid wood",
+        "finish": "light natural finish"
+      }
+    ],
+    "lighting": {
+      "type": "warm recessed ceiling lights and natural diffused light",
+      "color_temp": 3200
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "A bright and cozy country style living and dining room, featuring extensive white paneled storage cabinets, a white painted wood TV console, a light natural wood dining table with matching chairs, a textured white brick accent wall, warm recessed lighting, and soft natural light filtering through sheer curtains. Clean, inviting, and harmonious atmosphere.",
+      "negative": "Cluttered, dark, messy, unorganized, cold lighting, industrial design, overly minimalist, highly saturated colors, dark wood, modern abstract art."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "style_info": {
+    "style_id": "country",
+    "name": "鄉村",
+    "tags": [
+      "自然",
+      "木質",
+      "石材",
+      "溫暖",
+      "現代鄉村",
+      "大地色"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#A08B73",
+      "secondary": "#8C8C8C",
+      "accent": "#3D3D3D"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "Porcelain tile",
+        "finish": "matte"
+      },
+      {
+        "target": "牆面",
+        "type": "Natural stone",
+        "finish": "rough-cut"
+      },
+      {
+        "target": "牆面",
+        "type": "Wood paneling",
+        "finish": "vertical grain"
+      },
+      {
+        "target": "天花板",
+        "type": "Wood planks",
+        "finish": "natural finish"
+      },
+      {
+        "target": "餐桌",
+        "type": "Solid wood",
+        "finish": "live edge"
+      },
+      {
+        "target": "沙發",
+        "type": "Fabric",
+        "finish": "textured"
+      },
+      {
+        "target": "餐椅/扶手椅",
+        "type": "Solid wood",
+        "finish": "polished"
+      },
+      {
+        "target": "廚房檯面",
+        "type": "Granite/Quartz",
+        "finish": "honed"
+      }
+    ],
+    "lighting": {
+      "type": "Mixed lighting with natural light from large windows, warm recessed spotlights, and linear LED strips",
+      "color_temp": 3200
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "A modern rustic living and dining space, featuring a natural stone accent wall, warm wood plank ceiling with integrated black track lighting, a live-edge solid wood dining table, comfortable fabric sofa, and mid-century inspired wooden armchairs. Earthy tones, natural materials, warm ambient lighting, cozy atmosphere, open plan, large windows with blinds, decorative fireplace with log storage, contemporary kitchen island with dark countertop. 自然光線充足，溫馨舒適。",
+      "negative": "Cluttered, messy, bright saturated colors, plastic furniture, cold lighting, sterile, overly minimalist, traditional ornate decor, cheap artificial materials, poor lighting."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

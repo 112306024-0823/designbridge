@@ -1,0 +1,61 @@
+{
+  "style_info": {
+    "style_id": "country",
+    "name": "鄉村",
+    "tags": [
+      "溫馨",
+      "古典",
+      "浪漫",
+      "米色",
+      "雕花"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#F5EFE0",
+      "secondary": "#FFFFFF",
+      "accent": "#E0B0B0"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "淺色木地板",
+        "finish": "霧面"
+      },
+      {
+        "target": "牆面",
+        "type": "石膏板",
+        "finish": "米色啞光漆"
+      },
+      {
+        "target": "沙發",
+        "type": "絨布",
+        "finish": "柔軟"
+      },
+      {
+        "target": "咖啡桌",
+        "type": "彩繪木",
+        "finish": "光滑"
+      },
+      {
+        "target": "窗戶",
+        "type": "木質百葉窗",
+        "finish": "白色"
+      }
+    ],
+    "lighting": {
+      "type": "暖色調吊燈與壁燈，搭配自然光",
+      "color_temp": 2800
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "A charming and elegant country style living room, featuring warm beige walls, whitewashed wood plank flooring, ornate crystal chandeliers and wall sconces, a tufted fabric sofa with floral and patterned cushions, a vintage painted wood coffee table, a velvet armchair, and large white louvered shutters. The space is filled with soft, warm ambient lighting and natural light, creating a cozy and romantic atmosphere with classical details and curved furniture forms.",
+      "negative": "Modern, minimalist, industrial, stark, cold lighting, clutter, bright saturated colors, contemporary art, sharp angles, futuristic elements."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

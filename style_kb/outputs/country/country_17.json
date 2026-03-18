@@ -1,0 +1,46 @@
+{
+  "style_info": {
+    "style_id": "country",
+    "name": "鄉村",
+    "tags": [
+      "優雅",
+      "明亮",
+      "現代古典",
+      "舒適",
+      "淺色系"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#F7F7F7",
+      "secondary": "#A7C7D9",
+      "accent": "#D3D3D3"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "陶瓷磚",
+        "finish": "亮面"
+      },
+      {
+        "target": "牆面",
+        "type": "乳膠漆",
+        "finish": "霧面"
+      }
+    ],
+    "lighting": {
+      "type": "自然光與嵌燈",
+      "color_temp": 3500
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "A bright and elegant living room, featuring a light blue accent wall with classic white molding, a comfortable light grey leather sofa, and a light blue tufted velvet armchair. The space includes a white built-in TV console with open shelves against a white brick textured wall, white glossy ceramic floor tiles, and sheer white curtains paired with grey blackout curtains. The room is illuminated by abundant natural light and warm recessed ceiling lights, creating a modern classic and inviting atmosphere.",
+      "negative": "Cluttered, dark, dull, messy, old-fashioned, poor lighting, overly saturated colors, uninviting, industrial style, rustic wood, heavy textures."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

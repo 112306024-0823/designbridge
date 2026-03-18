@@ -1,0 +1,73 @@
+{
+  "style_info": {
+    "style_id": "modern",
+    "name": "現代",
+    "tags": [
+      "極簡",
+      "開放式",
+      "大地色系",
+      "木質",
+      "水泥",
+      "舒適",
+      "都會"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#A3A3A3",
+      "secondary": "#C7B092",
+      "accent": "#2F4F6F"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "微水泥",
+        "finish": "霧面"
+      },
+      {
+        "target": "牆面",
+        "type": "木質飾面板",
+        "finish": "平滑"
+      },
+      {
+        "target": "牆面",
+        "type": "水泥灰塗料",
+        "finish": "霧面"
+      },
+      {
+        "target": "家具",
+        "type": "織品",
+        "finish": "紋理"
+      },
+      {
+        "target": "家具",
+        "type": "大理石",
+        "finish": "拋光"
+      },
+      {
+        "target": "家具",
+        "type": "深色木材",
+        "finish": "霧面"
+      },
+      {
+        "target": "燈具",
+        "type": "金屬",
+        "finish": "拉絲"
+      }
+    ],
+    "lighting": {
+      "type": "自然光與多種人工光源（軌道燈、吊燈、嵌燈）混合，營造層次感",
+      "color_temp": 3500
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "Modern minimalist open-plan living and dining room, sleek design, warm wood paneling, cool grey microcement floor, dark grey ceiling, contemporary chaise lounge sofa, oval marble coffee table, deep blue curtains, minimalist decor, elegant dining area, dark wood dining table, mid-century modern chairs, sculptural pendant lights, integrated storage, natural light, subtle warm accents, clean lines, sophisticated interior design.",
+      "negative": "Cluttered, messy, traditional, ornate, bright saturated colors, excessive patterns, old-fashioned, poor lighting, low quality textures, rustic, bohemian."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}
