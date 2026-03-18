@@ -3,7 +3,9 @@
 
 Usage (from project root `DesignBridge`):
 
-    python -m style_kb.extract_style_kb
+    python -m style_kb.extract_style_kb              # 處理所有風格
+    python -m style_kb.extract_style_kb country      # 只處理 country 風格
+    python -m style_kb.extract_style_kb luxury       # 只處理 luxury 風格
 
 Put input images under one folder per style (10 styles):
     style_kb/images/<style_id>/
@@ -17,6 +19,7 @@ Results will be written to:
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any
@@ -83,6 +86,18 @@ def _call_gemini_style_kb(
 
 
 def main() -> None:
+    # 解析命令行參數
+    parser = argparse.ArgumentParser(
+        description="提取室內設計圖片的風格知識庫 JSON"
+    )
+    parser.add_argument(
+        "style_filter",
+        nargs="?",
+        default=None,
+        help="只處理指定的風格（例如：country, luxury）。若不指定則處理所有風格。",
+    )
+    args = parser.parse_args()
+
     base_dir = Path(__file__).resolve().parent
     images_dir = base_dir / "images"
     out_dir = base_dir / "outputs"
@@ -95,8 +110,20 @@ def main() -> None:
         (out_dir / style_id).mkdir(parents=True, exist_ok=True)
     print(f"📂 已確保 style_kb/images/<style_id>/ 與 style_kb/outputs/<style_id>/ 共 {len(STYLES)} 組資料夾存在。")
 
+    # 決定要處理的風格
+    if args.style_filter:
+        # 驗證指定的風格是否存在
+        valid_styles = [s[0] for s in STYLES]
+        if args.style_filter not in valid_styles:
+            print(f"❌ 錯誤：風格 '{args.style_filter}' 不存在。")
+            print(f"有效的風格包括：{', '.join(valid_styles)}")
+            return
+        styles_to_process = [(s[0], s[1]) for s in STYLES if s[0] == args.style_filter]
+    else:
+        styles_to_process = STYLES
+
     total = 0
-    for style_id, style_name in STYLES:
+    for style_id, style_name in styles_to_process:
         style_images_dir = images_dir / style_id
         if not style_images_dir.is_dir():
             print(f"⏭️ 略過 {style_id}（{style_name}）：無資料夾 {style_images_dir}")
@@ -117,7 +144,29 @@ def main() -> None:
         style_out_dir.mkdir(parents=True, exist_ok=True)
         print(f"\n📁 風格 [{style_name} / {style_id}] 共 {len(image_files)} 張")
 
+        # 檢查是否有已存在的檔案
+        existing_files = [
+            f"{img_path.stem}.json"
+            for img_path in image_files
+            if (style_out_dir / f"{img_path.stem}.json").exists()
+        ]
+        
+        skip_existing = False
+        if existing_files:
+            print(f"  ⚠️  發現 {len(existing_files)} 個已存在的檔案")
+            response = input("     是否要重新生成已存在的檔案？(yes/no，預設 no): ").strip().lower()
+            if response not in ("yes", "y", "是", "要"):
+                skip_existing = True
+                print(f"  ⏭️  將跳過所有已存在的檔案")
+
         for img_path in image_files:
+            out_path = style_out_dir / f"{img_path.stem}.json"
+            
+            # 如果檔案已存在且選擇跳過，則跳過
+            if out_path.exists() and skip_existing:
+                print(f"  ⏭️  {img_path.name} (已存在)")
+                continue
+            
             print(f"  🔍 {img_path.name}")
             try:
                 style_kb = _call_gemini_style_kb(
@@ -127,7 +176,6 @@ def main() -> None:
                 print(f"  ❌ 失敗: {exc}")
                 continue
 
-            out_path = style_out_dir / f"{img_path.stem}.json"
             out_path.write_text(
                 json.dumps(style_kb, ensure_ascii=False, indent=2),
                 encoding="utf-8",
