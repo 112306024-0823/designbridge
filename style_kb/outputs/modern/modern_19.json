@@ -1,0 +1,62 @@
+{
+  "style_info": {
+    "style_id": "modern",
+    "name": "現代",
+    "tags": [
+      "簡約",
+      "明亮",
+      "大理石",
+      "開放式",
+      "科技感",
+      "俐落"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#E0E0E0",
+      "secondary": "#F8F8F8",
+      "accent": "#202020"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "大理石磚",
+        "finish": "拋光"
+      },
+      {
+        "target": "牆面",
+        "type": "大理石",
+        "finish": "拋光"
+      },
+      {
+        "target": "牆面",
+        "type": "乳膠漆",
+        "finish": "霧面"
+      },
+      {
+        "target": "家具",
+        "type": "皮革",
+        "finish": "光滑"
+      },
+      {
+        "target": "家具",
+        "type": "木材",
+        "finish": "原木色"
+      }
+    ],
+    "lighting": {
+      "type": "自然光、嵌入式吸頂燈、線性燈帶",
+      "color_temp": 4000
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "Modern minimalist living room, open concept, bright and airy, light grey polished marble floor, white marble TV wall with grey veins, integrated wooden shelves, large flat-screen TV, sleek light grey modular sofa, nesting marble coffee tables with black bases, sheer white curtains, recessed ceiling lights, neutral color palette, clean lines, sophisticated design, high-end finishes.",
+      "negative": "Cluttered, messy, dark, old-fashioned, vibrant saturated colors, heavy drapes, traditional furniture, busy patterns, low quality, poor lighting, rustic elements."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}
