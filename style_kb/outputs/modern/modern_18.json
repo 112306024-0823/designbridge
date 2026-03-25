@@ -1,0 +1,62 @@
+{
+  "style_info": {
+    "style_id": "modern",
+    "name": "現代",
+    "tags": [
+      "極簡",
+      "工業風",
+      "簡約",
+      "中性色",
+      "開放式",
+      "俐落"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#A0A0A0",
+      "secondary": "#202020",
+      "accent": "#C8A840"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "拋光水泥",
+        "finish": "淺灰"
+      },
+      {
+        "target": "牆面",
+        "type": "紋理灰泥",
+        "finish": "霧面"
+      },
+      {
+        "target": "書架/隔斷",
+        "type": "黑色金屬",
+        "finish": "霧面"
+      },
+      {
+        "target": "沙發",
+        "type": "織品",
+        "finish": "淺灰"
+      },
+      {
+        "target": "隔斷門",
+        "type": "磨砂玻璃",
+        "finish": "半透明"
+      }
+    ],
+    "lighting": {
+      "type": "柔和自然光、嵌入式吸頂燈、裝飾吊燈",
+      "color_temp": 3800
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "Modern minimalist interior design, open concept living space, grey textured walls, light grey polished concrete floor, black metal open shelving unit, sleek black dining table with bench, large light grey sectional sofa, brass pendant light, frosted glass room dividers, neutral color palette with black and brass accents, clean lines, sophisticated, contemporary, industrial touches.",
+      "negative": "Cluttered, messy, traditional, ornate, bright saturated colors, excessive patterns, dark and gloomy, poor lighting, rustic, vintage."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "style_info": {
+    "style_id": "modern",
+    "name": "現代",
+    "tags": [
+      "簡約",
+      "開放式",
+      "中性色",
+      "曲線設計",
+      "舒適",
+      "明亮"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#DCD7D0",
+      "secondary": "#F8F8F8",
+      "accent": "#366B6B"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "ceramic tile",
+        "finish": "glossy"
+      },
+      {
+        "target": "牆面",
+        "type": "plaster",
+        "finish": "matte"
+      }
+    ],
+    "lighting": {
+      "type": "natural light from large window, combined with warm recessed ceiling spotlights",
+      "color_temp": 3500
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "Modern minimalist living room, spacious, bright natural light, soft curved architectural elements, light greige walls, off-white ceiling, large L-shaped fabric sofa, minimalist oval marble coffee table with dark wood base, large green indoor plant, abstract art with gold frame, subtle dark teal accents, warm recessed lighting, clean lines, serene atmosphere.",
+      "negative": "Cluttered, messy, dark, gloomy, outdated, busy patterns, harsh lighting, vibrant saturated colors, small space, traditional furniture, heavy textures."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

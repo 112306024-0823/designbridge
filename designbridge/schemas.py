@@ -101,6 +101,11 @@ class StyleParamsJSON(TypedDict):
     style_prompt: str
     negative_prompt: NotRequired[str]
     style_strength: float
+    style_profile_id: NotRequired[str]
+    style_profile_name: NotRequired[str]
+    style_summary: NotRequired[str]
+    controlnet_type: NotRequired[str]
+    material_recommendations: NotRequired[list[str]]
     lora_weights: NotRequired[dict[str, float]]  # {"lora_name": weight}
     ip_adapter_images: NotRequired[list[str]]
     color_guidance: NotRequired[dict[str, Any]]

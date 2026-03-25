@@ -1,0 +1,63 @@
+{
+  "style_info": {
+    "style_id": "luxury",
+    "name": "奢華",
+    "tags": [
+      "現代",
+      "優雅",
+      "大理石",
+      "水晶燈",
+      "中性色調",
+      "開放式空間",
+      "精緻"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#F8F8F8",
+      "secondary": "#B0C4DE",
+      "accent": "#DEB887"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "polished porcelain tile",
+        "finish": "light beige"
+      },
+      {
+        "target": "牆面",
+        "type": "polished marble",
+        "finish": "grey"
+      },
+      {
+        "target": "牆面",
+        "type": "wood paneling",
+        "finish": "light oak"
+      },
+      {
+        "target": "餐桌",
+        "type": "polished marble",
+        "finish": "beige"
+      },
+      {
+        "target": "餐椅",
+        "type": "upholstered fabric",
+        "finish": "beige"
+      }
+    ],
+    "lighting": {
+      "type": "recessed ceiling lights, linear cove lighting, crystal chandelier",
+      "color_temp": 3800
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "Luxury modern dining and living room, elegant grey polished marble feature wall, sparkling crystal chandelier, light beige upholstered dining chairs, round polished marble dining table, light oak wood paneling, bright recessed ceiling lights, warm neutral cove lighting, sleek wall-mounted TV, golden decorative sculpture, clean and sophisticated interior design, high-end finishes.",
+      "negative": "Clutter, messy, dirty, old furniture, dark and gloomy, cheap materials, poor lighting, vibrant saturated colors, rustic, industrial, traditional, vintage."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

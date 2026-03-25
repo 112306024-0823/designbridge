@@ -10,11 +10,14 @@ from pathlib import Path
 import streamlit as st
 
 from designbridge import get_compiled_graph
+from designbridge.style_apply import list_available_style_profiles
 
 
 @st.cache_resource
 def _get_cached_graph():
     return get_compiled_graph()
+
+
 
 st.set_page_config(page_title="DesignBridge Test Interface", page_icon="🏠", layout="wide")
 
@@ -55,6 +58,19 @@ model_type = st.sidebar.radio(
 )
 import os as _os
 _os.environ["DESIGNBRIDGE_LOCAL_MODEL_TYPE"] = model_type
+
+
+# 風格功能 
+available_style_profiles = list_available_style_profiles()
+style_options = ["自動（依文字需求判斷）"] + [
+    f"{item['style_name']} ({item['style_id']})" for item in available_style_profiles
+]
+selected_style_option = st.sidebar.selectbox(
+    "套用聚合風格檔（方案 B）",
+    options=style_options,
+    index=0,
+    help="若選擇特定風格，系統會直接讀取 style_kb/aggregated 裡的聚合風格檔來組裝生成 prompt。",
+)
 
 # 圖片上傳：上傳檔案或留空表示從空布局開始
 st.sidebar.markdown("**初始空間圖片（可選）**")
@@ -141,6 +157,9 @@ if run_button:
                 "text_prompt": text_prompt,
                 "edit_scope": edit_scope,
             }
+            if selected_style_option != "自動（依文字需求判斷）":
+                selected_style_id = selected_style_option.rsplit("(", 1)[-1].rstrip(")")
+                user_input["style_profile_id"] = selected_style_id
             if initial_image:
                 user_input["initial_image"] = initial_image
 
@@ -194,7 +213,7 @@ if run_button:
                     if backend == "sdxl":
                         st.success(f"SDXL　`{gp.get('model','')}`")
                     elif backend == "sd":
-                        st.success(f"SD 1.5　`{gp.get('model','')}`")
+                        st.success(f"SD 3.5　`{gp.get('model','')}`")
                     elif backend == "flux":
                         st.success(f"Flux　`{gp.get('model','')}`")
                     elif backend == "hf_inference":
@@ -301,6 +320,24 @@ if run_button:
                     st.json(intermediate)
                 else:
                     st.info("無中間輸出")
+
+                st.subheader("🎨 套用風格參數")
+                style_params = result.get("style_params", {})
+                if style_params:
+                    scol1, scol2, scol3 = st.columns(3)
+                    with scol1:
+                        st.write("**風格檔**")
+                        st.code(style_params.get("style_profile_id", "N/A"))
+                    with scol2:
+                        st.write("**風格名稱**")
+                        st.code(style_params.get("style_profile_name", "N/A"))
+                    with scol3:
+                        st.write("**風格強度**")
+                        st.code(str(style_params.get("style_strength", "N/A")))
+                    with st.expander("🔍 完整 style_params"):
+                        st.json(style_params)
+                else:
+                    st.info("未載入聚合風格檔，將依文字需求與預設 prompt 生成。")
 
                 # Full state
                 with st.expander("🗂️ 完整 State JSON"):

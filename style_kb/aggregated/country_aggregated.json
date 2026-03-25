@@ -1,0 +1,52 @@
+{
+  "style_id": "country",
+  "style_name": "鄉村",
+  "aggregated_from": 20,
+  "successfully_used": 20,
+  "statistics": {
+    "primary_color": "#e1dfdb",
+    "secondary_color": "#aba098",
+    "accent_color": "#99806e",
+    "avg_color_temp_k": 3435,
+    "top_materials": [
+      "淺色木地板",
+      "乳膠漆",
+      "亞麻布",
+      "烤漆木",
+      "彩繪木箱"
+    ],
+    "top_tags": [
+      "溫馨",
+      "木質",
+      "舒適",
+      "明亮",
+      "復古",
+      "現代鄉村",
+      "簡約",
+      "自然",
+      "自然光",
+      "開放式"
+    ]
+  },
+  "ai_config": {
+    "unified_positive_prompt": "Warm, bright modern country interior. Light wood floors, #e1dfdb walls, #aba098 secondary, #99806e accents. Abundant natural light, linen, open layout. Simple, rustic charm, 3435K warm ambiance.",
+    "unified_negative_prompt": "Cluttered, dark, cold, industrial, sterile, overly minimalist, artificial lighting, harsh colors, synthetic materials, opulent, highly ornate, futuristic.",
+    "recommended_ip_adapter_weight": 0.85,
+    "controlnet_type": "depth"
+  },
+  "style_profile": {
+    "visual_essence": [
+      "明亮開放的自然光空間",
+      "溫暖樸實的木質與亞麻材質",
+      "柔和大地色系與低色溫照明",
+      "舒適簡約的現代鄉村氛圍"
+    ],
+    "summary": "溫馨、明亮，融合自然材質與現代簡約的鄉村風格。",
+    "material_recommendations": [
+      "淺色木材",
+      "天然棉麻織品",
+      "啞光乳膠漆",
+      "陶土或石材"
+    ]
+  }
+}

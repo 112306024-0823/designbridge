@@ -1,0 +1,67 @@
+{
+  "style_info": {
+    "style_id": "country",
+    "name": "鄉村",
+    "tags": [
+      "溫馨",
+      "混搭",
+      "自然材質",
+      "暖色調",
+      "生活感",
+      "現代鄉村"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#C8D7E4",
+      "secondary": "#4A80B8",
+      "accent": "#A06040"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "淺色木地板",
+        "finish": "霧面"
+      },
+      {
+        "target": "牆面",
+        "type": "油漆",
+        "finish": "霧面"
+      },
+      {
+        "target": "沙發",
+        "type": "布藝",
+        "finish": "柔軟"
+      },
+      {
+        "target": "咖啡桌",
+        "type": "實木",
+        "finish": "自然紋理"
+      },
+      {
+        "target": "咖啡桌腳",
+        "type": "金屬",
+        "finish": "消光黑"
+      },
+      {
+        "target": "邊桌",
+        "type": "彩繪木",
+        "finish": "仿舊"
+      }
+    ],
+    "lighting": {
+      "type": "明亮的自然光透過百葉窗，輔以壁燈和落地燈的暖色人工照明",
+      "color_temp": 3800
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "A cozy and bright living room in a modern country eclectic style. Light blue-grey painted walls, a comfortable blue fabric sofa, and a matching armchair. Light wood plank flooring. An oval coffee table with a natural wood top and a matte black metal base. Decorative patterned throw pillows in warm earthy tones. A hexagonal patchwork rug on the floor. Bright natural light streaming through white shutter blinds. Vintage-inspired decor including a retro telephone and a wall sconce. Minimalist framed wall art with text and simple illustrations. Warm and inviting atmosphere.",
+      "negative": "Cluttered, messy, dark, cold lighting, overly modern, industrial, sterile, bright saturated colors, poor composition, empty room, unfinished."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.8,
+      "controlnet": "depth"
+    }
+  }
+}
