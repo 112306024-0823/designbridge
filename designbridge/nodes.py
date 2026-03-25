@@ -172,6 +172,7 @@ def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float) -> dic
 
     # Build RequirementJSON structure
     structured_requirement: dict[str, Any] = {
+        "user_description_raw": text_prompt,
         "meta": {
             "room_type": room_type,
             "design_goal": "renovation",  # default
