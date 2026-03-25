@@ -118,19 +118,24 @@ with st.expander("Workflow Diagram", expanded=True):
 st.markdown("---")
 
 if run_button:
-    if not text_prompt.strip():
-        st.error("❌ 請輸入文字需求")
+    # 只要三者任一有值即可
+    has_text = bool(text_prompt.strip())
+    has_style = selected_style_option != "自動（依文字需求判斷）"
+    has_image = bool(initial_image)
+    if not (has_text or has_style or has_image):
+        st.error("❌ 請至少輸入文字需求、選擇風格，或上傳圖片（任一即可）")
     else:
         with st.spinner("🔄 執行 DesignBridge 工作流..."):
             # Build initial state
             user_input = {
-                "text_prompt": text_prompt,
                 "edit_scope": edit_scope,
             }
-            if selected_style_option != "自動（依文字需求判斷）":
+            if has_text:
+                user_input["text_prompt"] = text_prompt
+            if has_style:
                 selected_style_id = selected_style_option.rsplit("(", 1)[-1].rstrip(")")
                 user_input["style_profile_id"] = selected_style_id
-            if initial_image:
+            if has_image:
                 user_input["initial_image"] = initial_image
 
             initial_state = {"user_input": user_input}
