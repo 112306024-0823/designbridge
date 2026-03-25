@@ -11,9 +11,17 @@ from typing import Any
 
 from designbridge.config import Config
 from designbridge.prompts import REQUIREMENT_ANALYZER_PROMPT
+from designbridge.style_apply import build_style_params
 from designbridge.state import DesignBridgeState, RoutingDecision
 from designbridge.vision import run_visual_preprocessing
-
+from designbridge.schemas import RequirementJSON, StyleParamsJSON
+from designbridge.inpaint import (
+    mask_from_segmentation,
+    fallback_center_mask,
+    build_inpaint_prompt,
+    run_inpainting,
+    run_hf_inpainting,
+)
 
 def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     """
@@ -275,6 +283,7 @@ def design_director(state: DesignBridgeState) -> dict[str, Any]:
     return {"routing_decision": routing_decision}
 
 
+
 def layout_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     """Stub for Layout agent. Real impl: layout optimization + ControlNet, etc."""
     return {
@@ -286,47 +295,197 @@ def layout_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
 
 
 def style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
-    """Stub for Style agent. Real impl: LoRA / IP-Adapter, etc."""
+    """Quick style agent: load aggregated style profile and build prompt params."""
+    req = state.get("structured_requirement") or {}
+    user_input = state.get("user_input") or {}
+    style_params = build_style_params(req, user_input)
+
+    if not style_params:
+        return {
+            "intermediate_outputs": {
+                **(state.get("intermediate_outputs") or {}),
+                "style_agent": "no_aggregated_style_profile",
+            }
+        }
+
     return {
+        "style_params": style_params,
         "intermediate_outputs": {
             **(state.get("intermediate_outputs") or {}),
-            "style_agent": "stub_output",
+            "style_agent": {
+                "status": "aggregated_style_loaded",
+                "style_profile_id": style_params.get("style_profile_id"),
+                "style_profile_name": style_params.get("style_profile_name"),
+            },
         }
     }
 
 
 def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
-    """Stub for Design Adjuster. Real impl: Inpainting, etc."""
+    """
+    Design Adjuster Agent：對初始圖片進行局部 inpainting。
+    觸發條件：edit_scope < 0.3 或 hint_adjuster = True。
+    """
+    from PIL import Image
+
+    task_id = state.get("task_id") or str(uuid.uuid4())
+    user_input = state.get("user_input") or {}
+    req = state.get("structured_requirement") or {}
+    vision = state.get("vision_features") or {}
+    style_params = state.get("style_params")
+
+    image_path = user_input.get("initial_image", "")
+    edit_scope = float(user_input.get("edit_scope", 0.2))
+
+    # 沒有原圖就無法 inpaint，跳過
+    if not image_path or not Path(image_path).is_file():
+        return {
+            "intermediate_outputs": {
+                **(state.get("intermediate_outputs") or {}),
+                "adjuster_agent": "no_initial_image_skipped",
+            }
+        }
+
+    # 決定要修改哪些物件
+    constraints = req.get("layout_constraints") or {}
+    must_remove = constraints.get("must_remove") or []
+    must_add = constraints.get("must_add") or []
+    # 要移除的物件 = mask 目標；要新增的物件 = prompt 目標
+    target_labels = must_remove if must_remove else ["furniture"]
+    target_objects = must_add if must_add else target_labels
+
+    # Mask 生成
+    seg_path = vision.get("segmentation")
+    seg_meta = vision.get("segmentation_meta")
+    original_img = Image.open(image_path)
+    img_size = original_img.size
+
+    if seg_path and seg_meta and Path(str(seg_path)).is_file() and Path(str(seg_meta)).is_file():
+        mask = mask_from_segmentation(str(seg_path), str(seg_meta), target_labels, img_size)
+        mask_source = "segmentation"
+    else:
+        mask = fallback_center_mask(img_size)
+        mask_source = "fallback_center"
+
+    # Prompt 組裝
+    prompt, negative_prompt = build_inpaint_prompt(req, style_params, target_objects)
+
+    # strength：edit_scope 越小改動越保守（0.4~0.85）
+    strength = max(0.4, min(0.85, edit_scope + 0.4))
+
+    out_path = Path(Config.ARTIFACTS_DIR) / "render" / f"{task_id}.png"
+    backend = "placeholder"
+
+    # 1. HF Inference API（雲端，不需本地模型）
+    if Config.HF_TOKEN:
+        if run_hf_inpainting(image_path, mask, prompt, out_path):
+            backend = "hf_inpainting"
+
+    # 2. 本地 SD Inpainting
+    if backend == "placeholder":
+        if run_inpainting(image_path, mask, prompt, negative_prompt, strength, out_path):
+            backend = "sd_inpainting"
+
+    # 3. Fallback：複製原圖
+    if backend == "placeholder":
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        original_img.save(str(out_path))
+
+    adjust_plan = {
+        "inpaint_regions": [{
+            "target_labels": target_labels,
+            "target_objects": target_objects,
+            "prompt": prompt,
+            "strength": strength,
+            "mask_source": mask_source,
+        }],
+        "consistency_guidance": (req.get("style_preferences") or {}).get("primary_style", ""),
+    }
+
     return {
+        "generated_image": str(out_path),
+        "render_result": {
+            "generated_image_path": str(out_path),
+            "generation_params": {
+                "backend": backend,
+                "model": "stable-diffusion-2-inpainting",
+                "strength": strength,
+                "mask_source": mask_source,
+                "prompt_preview": prompt[:150],
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
         "intermediate_outputs": {
             **(state.get("intermediate_outputs") or {}),
-            "adjuster_agent": "stub_output",
-        }
+            "adjuster_agent": adjust_plan,
+        },
     }
 
 
 def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
-    """Stub for Layout + Style collaboration. Real impl: both agents + rendering."""
+    """Quick layout+style agent: keep layout stub, but still attach style params."""
+    req = state.get("structured_requirement") or {}
+    user_input = state.get("user_input") or {}
+    style_params = build_style_params(req, user_input)
+
     return {
+        **({"style_params": style_params} if style_params else {}),
         "intermediate_outputs": {
             **(state.get("intermediate_outputs") or {}),
-            "layout_and_style_agent": "stub_output",
+            "layout_and_style_agent": {
+                "layout": "stub_output",
+                "style_profile_id": style_params.get("style_profile_id") if style_params else None,
+            },
         }
     }
 
 
-def _build_imagen_prompt_from_requirement(req: dict[str, Any]) -> str:
-    """Build an English text prompt for SDXL from structured_requirement."""
+def _build_imagen_prompt_from_requirement(
+    req: dict[str, Any],
+    style_params: dict[str, Any] | None = None,
+) -> str:
+    """Build an English text prompt for SDXL from structured_requirement and style params."""
     meta = req.get("meta") or {}
     style_prefs = req.get("style_preferences") or {}
     room_type = meta.get("room_type", "living_room").replace("_", " ")
     primary_style = style_prefs.get("primary_style", "modern")
     color_palette = style_prefs.get("color_palette") or []
     colors = ", ".join(str(c) for c in color_palette[:3]) if color_palette else "neutral tones"
-    return (
+    base_prompt = (
         f"Interior design visualization: a {room_type} room, {primary_style} style, "
         f"colors {colors}. Photorealistic, well-lit, high quality."
     )
+
+    if not style_params:
+        return base_prompt
+
+    color_guidance = style_params.get("color_guidance") or {}
+    visual_essence = color_guidance.get("visual_essence") or []
+    material_recommendations = style_params.get("material_recommendations") or []
+    style_prompt = style_params.get("style_prompt") or ""
+    summary = style_params.get("style_summary") or ""
+    strength = style_params.get("style_strength", 0.7)
+
+    extra_parts = [
+        f"Apply the style profile '{style_params.get('style_profile_name', primary_style)}' with strength {strength}.",
+    ]
+    if summary:
+        extra_parts.append(summary)
+    if visual_essence:
+        extra_parts.append("Key visual essence: " + ", ".join(str(item) for item in visual_essence[:4]) + ".")
+    if material_recommendations:
+        extra_parts.append("Preferred materials: " + ", ".join(str(item) for item in material_recommendations[:4]) + ".")
+    if color_guidance.get("primary_color"):
+        extra_parts.append(
+            "Target palette: "
+            f"primary {color_guidance.get('primary_color')}, "
+            f"secondary {color_guidance.get('secondary_color')}, "
+            f"accent {color_guidance.get('accent_color')}."
+        )
+    if style_prompt:
+        extra_parts.append(style_prompt)
+
+    return base_prompt + " " + " ".join(extra_parts)
 
 
 def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> None:
@@ -395,7 +554,7 @@ def _get_controlnet_pipeline():
     return _controlnet_pipeline
 
 
-def _render_hf_inference(prompt: str, out_path: Path, model: str) -> bool:
+def _render_hf_inference(prompt: str, out_path: Path, model: str = "") -> bool:
     """
     Generate image via Hugging Face Inference API.
     No local model download. Returns True on success.
@@ -509,17 +668,32 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     """
     Renderer: generate image from structured_requirement.
     Uses Stable Diffusion XL only (with ControlNet if depth available), then placeholder on failure.
-    """ 
+    若 routing_decision 為 design_adjuster 且已有 generated_image，直接跳過不覆蓋。
+    """
+    # Adjuster 已產出 inpainted 圖片，renderer 不再重新生成
+    if state.get("routing_decision") == "design_adjuster" and state.get("generated_image"):
+        return {}
+
     task_id = state.get("task_id") or str(uuid.uuid4())
     req = state.get("structured_requirement") or {}
+    style_params = state.get("style_params") or {}
     artifacts_root = Path(Config.ARTIFACTS_DIR)
     render_dir = artifacts_root / "render"
     render_dir.mkdir(parents=True, exist_ok=True)
     out_path = render_dir / f"{task_id}.png"
 
-    prompt = _build_imagen_prompt_from_requirement(req)
-    generation_params: dict[str, Any] = {"prompt_preview": prompt[:200]}
+    prompt = _build_imagen_prompt_from_requirement(req, style_params=style_params)
+    negative_prompt = style_params.get("negative_prompt") or None
+    generation_params: dict[str, Any] = {
+        "prompt_preview": prompt[:200],
+        "negative_prompt_preview": (negative_prompt or "")[:200],
+    }
     backend = "placeholder"
+
+    if style_params:
+        generation_params["style_profile_id"] = style_params.get("style_profile_id")
+        generation_params["style_profile_name"] = style_params.get("style_profile_name")
+        generation_params["style_strength"] = style_params.get("style_strength")
 
     # Get vision features for ControlNet (if available)
     vision = state.get("vision_features") or {}

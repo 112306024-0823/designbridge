@@ -1,0 +1,54 @@
+{
+  "style_id": "luxury",
+  "style_name": "奢華",
+  "aggregated_from": 10,
+  "successfully_used": 10,
+  "statistics": {
+    "primary_color": "#b8b3ab",
+    "secondary_color": "#8a8379",
+    "accent_color": "#93845d",
+    "avg_color_temp_k": 3390,
+    "top_materials": [
+      "拋光灰色大理石",
+      "淺灰色塗料",
+      "米色紋理灰泥",
+      "深灰色大理石",
+      "藍綠色絨布"
+    ],
+    "top_tags": [
+      "現代",
+      "精緻",
+      "大理石",
+      "石材",
+      "開放式空間",
+      "木質",
+      "簡約",
+      "沉穩",
+      "高雅",
+      "溫暖"
+    ]
+  },
+  "ai_config": {
+    "unified_positive_prompt": "A modern luxury interior design, exuding refined elegance and sophisticated simplicity. The primary color palette is dominated by warm light grey and earthy taupe tones, subtly complemented by muted gold or bronze accents, creating a harmonious and opulent feel. Key materials include luxurious polished grey marble, smooth light grey painted walls, and organic beige textured plaster, adding depth and tactile richness. The space is characterized by an open-plan layout, clean architectural lines, and a minimalist aesthetic, fostering a serene and expansive atmosphere. Natural wood elements are thoughtfully integrated to introduce warmth and a touch of organic texture. Soft, diffused lighting, with an average color temperature of 3390K, bathes the interior in a tranquil glow, enhancing the overall sense of calm, high-end comfort, and timeless sophistication. Every detail contributes to an understated yet undeniably luxurious environment.",
+    "unified_negative_prompt": "Cluttered, messy, disorganized, cheap materials, low quality, poor lighting, overly bright, vibrant colors, garish, busy patterns, excessive ornamentation, outdated, traditional, rustic, cold, sterile, dark, gloomy, unfinished, dirty, cartoon, illustration, drawing, painting, sketch.",
+    "recommended_ip_adapter_weight": 0.85,
+    "controlnet_type": "depth"
+  },
+  "style_profile": {
+    "visual_essence": [
+      "溫暖中性色調（灰米色、灰褐色、啞光金色）",
+      "拋光灰色大理石與精緻石材應用",
+      "簡潔線條與開放式空間設計",
+      "柔和溫暖的燈光（約3390K）",
+      "天然木材與紋理灰泥的細膩質感"
+    ],
+    "summary": "現代簡約奢華，溫暖中性色調與精緻石材，營造高雅沉穩氛圍。",
+    "material_recommendations": [
+      "拋光灰色大理石",
+      "淺灰色塗料",
+      "米色紋理灰泥",
+      "天然木材",
+      "啞光金屬飾面"
+    ]
+  }
+}

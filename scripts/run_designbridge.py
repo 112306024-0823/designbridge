@@ -11,6 +11,7 @@ initial_state = {
     "user_input": {
         "text_prompt": "客廳想要北歐風格，希望動線順暢",
         "edit_scope": 0.6,
+        "style_profile_id": "country",
     }
 }
 
@@ -24,5 +25,6 @@ print("routing_decision:", result.get("routing_decision"))
 print("structured_requirement (room_type, target_style):", end=" ")
 req = result.get("structured_requirement") or {}
 print(req.get("room_type"), req.get("target_style"))
+print("style_params:", result.get("style_params"))
 print("intermediate_outputs:", result.get("intermediate_outputs"))
 print("vision_features:", result.get("vision_features"))

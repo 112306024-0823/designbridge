@@ -1,0 +1,67 @@
+{
+  "style_info": {
+    "style_id": "country",
+    "name": "鄉村",
+    "tags": [
+      "現代",
+      "簡約",
+      "明亮",
+      "舒適",
+      "開放式",
+      "淺色系"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#F8F8F8",
+      "secondary": "#E8E4DF",
+      "accent": "#36454F"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "木質",
+        "finish": "淺色木紋, 霧面"
+      },
+      {
+        "target": "牆面",
+        "type": "乳膠漆",
+        "finish": "白色, 霧面"
+      },
+      {
+        "target": "沙發",
+        "type": "布藝",
+        "finish": "米色, 柔軟"
+      },
+      {
+        "target": "餐桌",
+        "type": "大理石",
+        "finish": "白色, 光滑"
+      },
+      {
+        "target": "餐椅",
+        "type": "布藝",
+        "finish": "米色, 柔軟"
+      },
+      {
+        "target": "櫥櫃",
+        "type": "木質",
+        "finish": "白色烤漆, 亮面"
+      }
+    ],
+    "lighting": {
+      "type": "充足自然光透過白色紗簾, 搭配嵌入式筒燈與現代感吊燈, 營造柔和明亮的氛圍",
+      "color_temp": 3800
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "A modern minimalist open-plan living and dining area, bright and spacious, with an L-shaped beige fabric sofa, a white marble-top coffee table, a sleek linear pendant light over a white marble dining table with upholstered chairs. White shaker-style kitchen cabinets, light wood flooring, sheer white curtains, soft natural light, clean lines, comfortable and elegant interior design.",
+      "negative": "Cluttered, messy, dark, dull colors, outdated furniture, excessive decorations, poor lighting, unorganized, traditional country style elements."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

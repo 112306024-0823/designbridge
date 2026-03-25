@@ -91,3 +91,9 @@ DesignBridge/
 
 - `docs/DesignBridge.md`：工作流與 State 定義
 - `docs/SCHEMAS.md`：各 Agent 的輸入/輸出 JSON 規格
+
+## 根目錄需創建env, env格式
+GEMINI_API_KEY=************
+HF_TOKEN=************
+
+自行更換Token，如果爆掉可以再用其他google帳號申請免費Token

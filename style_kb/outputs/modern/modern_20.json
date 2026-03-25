@@ -1,0 +1,66 @@
+{
+  "style_info": {
+    "style_id": "modern",
+    "name": "現代",
+    "tags": [
+      "簡約",
+      "開放式",
+      "中性色",
+      "質感",
+      "都會"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#E0E0E0",
+      "secondary": "#4A4A4A",
+      "accent": "#D4C1AD"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "大尺寸磁磚",
+        "finish": "淺灰, 霧面"
+      },
+      {
+        "target": "牆面",
+        "type": "石材紋理磚",
+        "finish": "淺灰, 霧面"
+      },
+      {
+        "target": "牆面",
+        "type": "乳膠漆",
+        "finish": "白色, 霧面"
+      },
+      {
+        "target": "沙發",
+        "type": "皮革/布藝",
+        "finish": "灰色, 霧面"
+      },
+      {
+        "target": "廚房檯面",
+        "type": "大理石",
+        "finish": "白色, 拋光"
+      },
+      {
+        "target": "餐椅",
+        "type": "皮革/木質",
+        "finish": "米白, 淺棕"
+      }
+    ],
+    "lighting": {
+      "type": "嵌入式LED吸頂燈, 隱藏式燈帶, 自然光",
+      "color_temp": 4000
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "A modern minimalist open-concept living room and kitchen, featuring light grey marble-effect walls, a sleek dark grey sectional sofa, white kitchen cabinets with integrated appliances, a white marble island, and contemporary beige accent chairs with slatted wood bases. The space is well-lit with neutral white recessed lighting and natural ambient light. Clean lines, functional design, sophisticated neutral color palette with warm accents. (現代簡約開放式客廳廚房，淺灰色大理石紋牆面，深灰色L型沙發，白色廚櫃與嵌入式家電，白色大理石中島，米色木質餐椅，中性白光照明，簡潔線條，功能性設計)",
+      "negative": "Cluttered, messy, traditional, ornate, dark, dull, vibrant saturated colors, excessive decoration, old-fashioned furniture, rustic elements, poor lighting, small cramped space."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

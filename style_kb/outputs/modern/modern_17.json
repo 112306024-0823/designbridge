@@ -1,0 +1,66 @@
+{
+  "style_info": {
+    "style_id": "modern",
+    "name": "現代",
+    "tags": [
+      "簡約",
+      "中性色",
+      "功能性",
+      "木質元素",
+      "開放式空間"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#E0E0E0",
+      "secondary": "#D8D4CC",
+      "accent": "#333333"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "concrete",
+        "finish": "matte"
+      },
+      {
+        "target": "牆面",
+        "type": "painted plaster",
+        "finish": "matte"
+      },
+      {
+        "target": "牆面",
+        "type": "wood veneer",
+        "finish": "smooth"
+      },
+      {
+        "target": "家具",
+        "type": "fabric",
+        "finish": "soft"
+      },
+      {
+        "target": "家具",
+        "type": "laminate",
+        "finish": "matte"
+      },
+      {
+        "target": "家具",
+        "type": "metal",
+        "finish": "matte"
+      }
+    ],
+    "lighting": {
+      "type": "abundant natural light, integrated linear LED, modern pendant light, wall-mounted spot light",
+      "color_temp": 3800
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "A modern minimalist living and dining room interior, featuring a neutral color palette of light grey, beige, and warm wood tones. Clean lines, functional furniture, and integrated linear LED lighting. Polished concrete floor, light grey textured walls, and light wood paneling. A large oval dining table with modern chairs, a comfortable fabric sofa, and a distinctive layered pendant lamp. Abundant natural light from large windows. Minimal decor, sleek wall-mounted TV, and dark wood open shelving.",
+      "negative": "Cluttered, messy, traditional style, ornate details, dark and gloomy, poor lighting, vibrant saturated colors, old furniture, dirty, busy patterns."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

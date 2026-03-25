@@ -24,6 +24,7 @@ class UserInput(TypedDict):
     initial_image: NotRequired[str]  # image_path_or_id, optional for empty layout
     text_prompt: str
     edit_scope: float  # 0~1
+    style_profile_id: NotRequired[str]  # optional aggregated style profile to apply directly
 
 
 class DesignBridgeState(TypedDict):
@@ -46,6 +47,8 @@ class DesignBridgeState(TypedDict):
     # Renderer output
     render_result: NotRequired[RenderResultJSON]
     generated_image: NotRequired[str]
+    # Depth layout extraction output
+    layout_from_depth: NotRequired[dict[str, Any]]
     # Evaluator output
     evaluation_result: NotRequired[EvalFeedbackJSON]
     # Legacy / intermediate outputs (can be refactored later)
