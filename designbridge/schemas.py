@@ -71,7 +71,14 @@ class RequirementJSON(TypedDict):
     hint_layout: NotRequired[bool]
     hint_style: NotRequired[bool]
     hint_adjuster: NotRequired[bool]
-
+    user_description_raw: str               # 使用者原始輸入，verbatim
+    user_description_normalized: NotRequired[str]  # 語意清理後版本
+    ambiguity_flags: NotRequired[list[str]] # 推斷或不確定的部分
+    explicit_tasks: NotRequired[list[str]]  # 解析出的原子操作清單
+    language: NotRequired[str]              # "zh-TW" / "en" 等
+    source_image_id: NotRequired[str]       # 對應 Vision JSON 的 image ref
+    has_vision_input: NotRequired[bool]     # 是否有圖片輸入
+    success_conditions: NotRequired[list[str]] 
 
 # ========== Vision JSON ==========
 class VisionJSON(TypedDict):
