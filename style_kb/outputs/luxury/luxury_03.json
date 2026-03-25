@@ -1,0 +1,72 @@
+{
+  "style_info": {
+    "style_id": "luxury",
+    "name": "奢華",
+    "tags": [
+      "現代",
+      "精緻",
+      "金色",
+      "大理石",
+      "藝術感",
+      "溫暖"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#F5F5DC",
+      "secondary": "#D4AF37",
+      "accent": "#8B9C8B"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "拋光石材",
+        "finish": "深色、光澤"
+      },
+      {
+        "target": "牆面",
+        "type": "塗料",
+        "finish": "淺米色、平光"
+      },
+      {
+        "target": "牆面",
+        "type": "大理石",
+        "finish": "淺灰白、紋理、霧面"
+      },
+      {
+        "target": "牆面",
+        "type": "木質飾板",
+        "finish": "深色、半光澤"
+      },
+      {
+        "target": "餐桌",
+        "type": "大理石",
+        "finish": "綠色、紋理、拋光"
+      },
+      {
+        "target": "吊燈",
+        "type": "金屬",
+        "finish": "黃銅色、啞光"
+      },
+      {
+        "target": "餐椅",
+        "type": "織品",
+        "finish": "米白色、紋理"
+      }
+    ],
+    "lighting": {
+      "type": "暖色調吸頂燈、藝術吊燈、自然漫射光",
+      "color_temp": 3000
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "A luxurious and modern open-plan living and dining space, featuring a large sculptural gold chandelier with leaf motifs, a long green marble dining table, and elegant upholstered chairs. The walls are a mix of light neutral paint, textured light grey marble panels, and dark wood accents. Warm ambient lighting from recessed fixtures and decorative wall sconces, complemented by soft natural light diffused through sheer curtains. Gold decorative accents and sophisticated furniture arrangements. (奢華、現代、開放式、雕塑感金色吊燈、綠色大理石餐桌、米色軟墊餐椅、紋理大理石牆、暖色調燈光)",
+      "negative": "cluttered, messy, cheap materials, dull colors, poor lighting, industrial, rustic, minimalist, cold light, unfinished, low quality, cartoon, anime"
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

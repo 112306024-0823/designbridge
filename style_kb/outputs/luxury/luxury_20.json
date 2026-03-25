@@ -1,0 +1,67 @@
+{
+  "style_info": {
+    "style_id": "luxury",
+    "name": "奢華",
+    "tags": [
+      "現代",
+      "沉穩",
+      "精緻",
+      "都會",
+      "工業風",
+      "暖色調"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#4C4C4C",
+      "secondary": "#8B6F6F",
+      "accent": "#E0A080"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "dark wood",
+        "finish": "matte"
+      },
+      {
+        "target": "牆面",
+        "type": "textured plaster",
+        "finish": "matte"
+      },
+      {
+        "target": "餐桌",
+        "type": "marble",
+        "finish": "polished"
+      },
+      {
+        "target": "沙發",
+        "type": "leather",
+        "finish": "smooth"
+      },
+      {
+        "target": "吊燈",
+        "type": "black metal",
+        "finish": "woven fabric"
+      },
+      {
+        "target": "隔斷",
+        "type": "clear glass",
+        "finish": "black metal frame"
+      }
+    ],
+    "lighting": {
+      "type": "warm ambient cove lighting, sculptural chandelier, recessed spotlights",
+      "color_temp": 3000
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "Luxury modern apartment interior, sophisticated dark grey textured walls, warm brown leather sofa, elegant marble dining table, striking multi-tiered black metal chandelier with warm glow, hidden LED cove lighting, dark wood flooring, minimalist floating TV console, glass partitions, city view through large windows, moody and inviting atmosphere, high-end design, dramatic lighting, contemporary style.",
+      "negative": "Cluttered, messy, cheap materials, bright saturated colors, cartoonish, low quality, poor lighting, traditional style, rustic, unfinished, empty room."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

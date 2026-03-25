@@ -1,0 +1,53 @@
+{
+  "style_id": "modern",
+  "style_name": "現代",
+  "aggregated_from": 20,
+  "successfully_used": 20,
+  "statistics": {
+    "primary_color": "#cccac9",
+    "secondary_color": "#a29e98",
+    "accent_color": "#7d7b66",
+    "avg_color_temp_k": 3695,
+    "top_materials": [
+      "微水泥",
+      "木質飾面板",
+      "水泥灰塗料",
+      "織品",
+      "大理石"
+    ],
+    "top_tags": [
+      "簡約",
+      "開放式",
+      "木質",
+      "明亮",
+      "中性色",
+      "極簡",
+      "都會",
+      "舒適",
+      "質感",
+      "石材"
+    ]
+  },
+  "ai_config": {
+    "unified_positive_prompt": "A sophisticated modern interior design, embracing a minimalist and open-plan concept. Features a serene neutral color palette of muted greys, warm beiges, and subtle earthy accents. Walls are finished with smooth microcement and textured wood veneer panels, complemented by polished concrete or natural stone elements. Abundant natural light illuminates the space, creating a bright yet comfortable and inviting atmosphere with a cozy 3700K warm white illumination, emphasizing quality textures and urban elegance.",
+    "unified_negative_prompt": "Cluttered, messy, chaotic, overly ornate, traditional, rustic, vibrant primary colors, cool white lighting, poor quality materials, unfinished, dark, gloomy, busy patterns, excessive decoration.",
+    "recommended_ip_adapter_weight": 0.85,
+    "controlnet_type": "depth"
+  },
+  "style_profile": {
+    "visual_essence": [
+      "簡約線條與開放式佈局",
+      "中性色調與溫暖木質",
+      "微水泥及石材的自然質感",
+      "明亮通透的舒適氛圍"
+    ],
+    "summary": "現代簡約，以中性色調與自然材質營造都會質感與舒適氛圍。",
+    "material_recommendations": [
+      "微水泥",
+      "木質飾面板",
+      "水泥灰塗料",
+      "天然石材",
+      "金屬（少量點綴）"
+    ]
+  }
+}
