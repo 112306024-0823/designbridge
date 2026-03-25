@@ -25,6 +25,7 @@ def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     text_prompt = (user.get("text_prompt") or "").strip()
     edit_scope = float(user.get("edit_scope", 0.5))
     initial_image = user.get("initial_image", "無")
+    style_reference_image = user.get("style_reference_image", "")
 
     task_id = state.get("task_id") or str(uuid.uuid4())
     iteration = state.get("iteration", 0)
@@ -33,11 +34,11 @@ def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     try:
         api_key = Config.get_gemini_api_key()
         structured_requirement = _call_gemini_requirement_analyzer(
-            text_prompt, edit_scope, initial_image, api_key
+            text_prompt, edit_scope, initial_image, api_key, style_reference_image=style_reference_image
         )
     except (ValueError, Exception) as e:
         print(f"⚠️  Gemini API not available or failed ({e}), falling back to rule-based")
-        structured_requirement = _rule_based_requirement_analyzer(text_prompt, edit_scope)
+        structured_requirement = _rule_based_requirement_analyzer(text_prompt, edit_scope, style_reference_image=style_reference_image)
 
     return {
         "task_id": task_id,
@@ -57,7 +58,7 @@ def _is_valid_image_path(image_path: str) -> bool:
 
 
 def _call_gemini_requirement_analyzer(
-    text_prompt: str, edit_scope: float, initial_image: str, api_key: str
+    text_prompt: str, edit_scope: float, initial_image: str, api_key: str, style_reference_image: str = ""
 ) -> dict[str, Any]:
     """Call Gemini API to analyze requirements and return structured JSON.
     When initial_image is a valid file path, sends the image to Gemini Vision (multimodal).
@@ -77,20 +78,34 @@ def _call_gemini_requirement_analyzer(
         )
 
         # Build content: image + text when image path is valid (Gemini Vision)
-        use_vision = _is_valid_image_path(initial_image)
-        if use_vision:
+        # 支援 style_reference_image 作為第二張圖
+        images = []
+        if _is_valid_image_path(initial_image):
             try:
                 uploaded_file = genai.upload_file(path=initial_image)
-                contents = [uploaded_file, prompt]
+                images.append(uploaded_file)
             except Exception:
-                # Fallback: inline image data (e.g. if upload_file fails or is unavailable)
                 path = Path(initial_image)
                 suffix = path.suffix.lower()
                 mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
                 mime_type = mime_map.get(suffix, "image/jpeg")
                 img_bytes = path.read_bytes()
                 image_part = {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(img_bytes).decode("ascii")}}
-                contents = [image_part, prompt]
+                images.append(image_part)
+        if style_reference_image and _is_valid_image_path(style_reference_image):
+            try:
+                uploaded_file = genai.upload_file(path=style_reference_image)
+                images.append(uploaded_file)
+            except Exception:
+                path = Path(style_reference_image)
+                suffix = path.suffix.lower()
+                mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
+                mime_type = mime_map.get(suffix, "image/jpeg")
+                img_bytes = path.read_bytes()
+                image_part = {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(img_bytes).decode("ascii")}}
+                images.append(image_part)
+        if images:
+            contents = images + [prompt]
         else:
             contents = prompt
 
@@ -123,7 +138,7 @@ def _call_gemini_requirement_analyzer(
         raise RuntimeError(f"Gemini API call failed: {e}")
 
 
-def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float) -> dict[str, Any]:
+def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float, style_reference_image: str = "") -> dict[str, Any]:
     """Fallback rule-based requirement analyzer: produce RequirementJSON structure."""
     text = text_prompt.lower()
 
@@ -181,7 +196,7 @@ def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float) -> dic
             "color_palette": [],
             "material_preferences": [],
             "style_strength": 0.7,
-            "reference_images": [],
+            "reference_images": [style_reference_image] if style_reference_image else [],
         },
         "layout_constraints": {
             "must_keep": [],
@@ -410,7 +425,6 @@ def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> No
 _sdxl_pipeline: Any = None
 _controlnet_pipeline: Any = None
 
-
 def _get_sdxl_pipeline():
     """Load SDXL pipeline once and cache it. GPU if available (~15–30s/image), else CPU (slower)."""
     global _sdxl_pipeline
@@ -479,7 +493,7 @@ def _render_hf_inference(prompt: str, out_path: Path, negative_prompt: str | Non
         image.save(str(out_path))
         return True
     except Exception as e:
-        print(f"⚠️  HF Inference render failed ({e})")
+        print(f"⚠️HF Inference render failed ({e})")
         return False
 
 
@@ -569,6 +583,16 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if seg_path:
         controlnet_inputs["segmentation"] = str(seg_path)
 
+    # 新增：以 style_reference_image 作為以圖生圖條件
+    user_input = state.get("user_input") or {}
+    style_reference_image = user_input.get("style_reference_image")
+    # 若有 style_reference_image，優先作為 control image
+    if style_reference_image and Path(style_reference_image).exists():
+        control_img = style_reference_image
+        controlnet_inputs["style_reference_image"] = str(style_reference_image)
+    else:
+        control_img = depth_path if depth_path and Path(depth_path).exists() else None
+
     # 1. Hugging Face Inference API (cloud SDXL; no local download)
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
         if _render_hf_inference(prompt, out_path, negative_prompt=negative_prompt):
@@ -576,9 +600,8 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
             generation_params["model"] = Config.SDXL_MODEL
             generation_params["provider"] = Config.HF_INFERENCE_PROVIDER
 
-    # 2. Local SDXL (with ControlNet if depth available)
+    # 2. Local SDXL (with ControlNet if depth available or style_reference_image)
     if backend == "placeholder" and Config.ENABLE_SDXL_FALLBACK:
-        control_img = depth_path if depth_path and Path(depth_path).exists() else None
         if _render_sdxl(
             prompt,
             out_path,
@@ -588,7 +611,11 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
             backend = "sdxl"
             generation_params["model"] = Config.SDXL_MODEL
             if control_img:
-                generation_params["controlnet"] = style_params.get("controlnet_type", "depth")
+                # 若是 style_reference_image 則標記
+                if style_reference_image and Path(style_reference_image).exists() and control_img == style_reference_image:
+                    generation_params["controlnet"] = "style_reference_image"
+                else:
+                    generation_params["controlnet"] = style_params.get("controlnet_type", "depth")
                 generation_params["controlnet_scale"] = Config.CONTROLNET_CONDITIONING_SCALE
         else:
             generation_params["sdxl_error"] = "SDXL render failed"
