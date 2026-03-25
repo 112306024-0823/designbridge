@@ -24,6 +24,7 @@ class UserInput(TypedDict):
     initial_image: NotRequired[str]  # image_path_or_id, optional for empty layout
     text_prompt: str
     edit_scope: float  # 0~1
+    style_profile_id: NotRequired[str]  # optional aggregated style profile to apply directly
 
 
 class DesignBridgeState(TypedDict):

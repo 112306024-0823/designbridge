@@ -10,6 +10,7 @@ from pathlib import Path
 import streamlit as st
 
 from designbridge import get_compiled_graph 
+from designbridge.style_apply import list_available_style_profiles
 
 st.set_page_config(page_title="DesignBridge Test Interface", page_icon="🏠", layout="wide")
 
@@ -33,6 +34,17 @@ edit_scope = st.sidebar.slider(
     value=0.6,
     step=0.1,
     help="0.0 = 最小改動（局部微調），1.0 = 大幅改動（完全重新設計）",
+)
+
+available_style_profiles = list_available_style_profiles()
+style_options = ["自動（依文字需求判斷）"] + [
+    f"{item['style_name']} ({item['style_id']})" for item in available_style_profiles
+]
+selected_style_option = st.sidebar.selectbox(
+    "套用聚合風格檔（方案 B）",
+    options=style_options,
+    index=0,
+    help="若選擇特定風格，系統會直接讀取 style_kb/aggregated 裡的聚合風格檔來組裝生成 prompt。",
 )
 
 # 圖片上傳：上傳檔案或留空表示從空布局開始
@@ -115,6 +127,9 @@ if run_button:
                 "text_prompt": text_prompt,
                 "edit_scope": edit_scope,
             }
+            if selected_style_option != "自動（依文字需求判斷）":
+                selected_style_id = selected_style_option.rsplit("(", 1)[-1].rstrip(")")
+                user_input["style_profile_id"] = selected_style_id
             if initial_image:
                 user_input["initial_image"] = initial_image
 
@@ -271,6 +286,24 @@ if run_button:
                     st.json(intermediate)
                 else:
                     st.info("無中間輸出")
+
+                st.subheader("🎨 套用風格參數")
+                style_params = result.get("style_params", {})
+                if style_params:
+                    scol1, scol2, scol3 = st.columns(3)
+                    with scol1:
+                        st.write("**風格檔**")
+                        st.code(style_params.get("style_profile_id", "N/A"))
+                    with scol2:
+                        st.write("**風格名稱**")
+                        st.code(style_params.get("style_profile_name", "N/A"))
+                    with scol3:
+                        st.write("**風格強度**")
+                        st.code(str(style_params.get("style_strength", "N/A")))
+                    with st.expander("🔍 完整 style_params"):
+                        st.json(style_params)
+                else:
+                    st.info("未載入聚合風格檔，將依文字需求與預設 prompt 生成。")
 
                 # Full state
                 with st.expander("🗂️ 完整 State JSON"):

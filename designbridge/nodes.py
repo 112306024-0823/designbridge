@@ -11,9 +11,10 @@ from typing import Any
 
 from designbridge.config import Config
 from designbridge.prompts import REQUIREMENT_ANALYZER_PROMPT
+from designbridge.style_apply import build_style_params
 from designbridge.state import DesignBridgeState, RoutingDecision
 from designbridge.vision import run_visual_preprocessing
-
+from designbridge.schemas import RequirementJSON, StyleParamsJSON
 
 def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     """
@@ -275,6 +276,7 @@ def design_director(state: DesignBridgeState) -> dict[str, Any]:
     return {"routing_decision": routing_decision}
 
 
+
 def layout_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     """Stub for Layout agent. Real impl: layout optimization + ControlNet, etc."""
     return {
@@ -286,11 +288,28 @@ def layout_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
 
 
 def style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
-    """Stub for Style agent. Real impl: LoRA / IP-Adapter, etc."""
+    """Quick style agent: load aggregated style profile and build prompt params."""
+    req = state.get("structured_requirement") or {}
+    user_input = state.get("user_input") or {}
+    style_params = build_style_params(req, user_input)
+
+    if not style_params:
+        return {
+            "intermediate_outputs": {
+                **(state.get("intermediate_outputs") or {}),
+                "style_agent": "no_aggregated_style_profile",
+            }
+        }
+
     return {
+        "style_params": style_params,
         "intermediate_outputs": {
             **(state.get("intermediate_outputs") or {}),
-            "style_agent": "stub_output",
+            "style_agent": {
+                "status": "aggregated_style_loaded",
+                "style_profile_id": style_params.get("style_profile_id"),
+                "style_profile_name": style_params.get("style_profile_name"),
+            },
         }
     }
 
@@ -306,27 +325,69 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
 
 
 def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
-    """Stub for Layout + Style collaboration. Real impl: both agents + rendering."""
+    """Quick layout+style agent: keep layout stub, but still attach style params."""
+    req = state.get("structured_requirement") or {}
+    user_input = state.get("user_input") or {}
+    style_params = build_style_params(req, user_input)
+
     return {
+        **({"style_params": style_params} if style_params else {}),
         "intermediate_outputs": {
             **(state.get("intermediate_outputs") or {}),
-            "layout_and_style_agent": "stub_output",
+            "layout_and_style_agent": {
+                "layout": "stub_output",
+                "style_profile_id": style_params.get("style_profile_id") if style_params else None,
+            },
         }
     }
 
 
-def _build_imagen_prompt_from_requirement(req: dict[str, Any]) -> str:
-    """Build an English text prompt for SDXL from structured_requirement."""
+def _build_imagen_prompt_from_requirement(
+    req: dict[str, Any],
+    style_params: dict[str, Any] | None = None,
+) -> str:
+    """Build an English text prompt for SDXL from structured_requirement and style params."""
     meta = req.get("meta") or {}
     style_prefs = req.get("style_preferences") or {}
     room_type = meta.get("room_type", "living_room").replace("_", " ")
     primary_style = style_prefs.get("primary_style", "modern")
     color_palette = style_prefs.get("color_palette") or []
     colors = ", ".join(str(c) for c in color_palette[:3]) if color_palette else "neutral tones"
-    return (
+    base_prompt = (
         f"Interior design visualization: a {room_type} room, {primary_style} style, "
         f"colors {colors}. Photorealistic, well-lit, high quality."
     )
+
+    if not style_params:
+        return base_prompt
+
+    color_guidance = style_params.get("color_guidance") or {}
+    visual_essence = color_guidance.get("visual_essence") or []
+    material_recommendations = style_params.get("material_recommendations") or []
+    style_prompt = style_params.get("style_prompt") or ""
+    summary = style_params.get("style_summary") or ""
+    strength = style_params.get("style_strength", 0.7)
+
+    extra_parts = [
+        f"Apply the style profile '{style_params.get('style_profile_name', primary_style)}' with strength {strength}.",
+    ]
+    if summary:
+        extra_parts.append(summary)
+    if visual_essence:
+        extra_parts.append("Key visual essence: " + ", ".join(str(item) for item in visual_essence[:4]) + ".")
+    if material_recommendations:
+        extra_parts.append("Preferred materials: " + ", ".join(str(item) for item in material_recommendations[:4]) + ".")
+    if color_guidance.get("primary_color"):
+        extra_parts.append(
+            "Target palette: "
+            f"primary {color_guidance.get('primary_color')}, "
+            f"secondary {color_guidance.get('secondary_color')}, "
+            f"accent {color_guidance.get('accent_color')}."
+        )
+    if style_prompt:
+        extra_parts.append(style_prompt)
+
+    return base_prompt + " " + " ".join(extra_parts)
 
 
 def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> None:
@@ -393,7 +454,7 @@ def _get_controlnet_pipeline():
     return _controlnet_pipeline
 
 
-def _render_hf_inference(prompt: str, out_path: Path) -> bool:
+def _render_hf_inference(prompt: str, out_path: Path, negative_prompt: str | None = None) -> bool:
     """
     Generate image via Hugging Face Inference API (e.g. nscale provider).
     No local model download. Returns True on success.
@@ -408,10 +469,10 @@ def _render_hf_inference(prompt: str, out_path: Path) -> bool:
             provider=Config.HF_INFERENCE_PROVIDER,
             api_key=api_key,
         )
-        image = client.text_to_image(
-            prompt,
-            model=Config.SDXL_MODEL,
-        )
+        kwargs: dict[str, Any] = {"model": Config.SDXL_MODEL}
+        if negative_prompt:
+            kwargs["negative_prompt"] = negative_prompt
+        image = client.text_to_image(prompt, **kwargs)
         if image is None:
             return False
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -422,7 +483,12 @@ def _render_hf_inference(prompt: str, out_path: Path) -> bool:
         return False
 
 
-def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None = None) -> bool:
+def _render_sdxl(
+    prompt: str,
+    out_path: Path,
+    control_image: str | Path | None = None,
+    negative_prompt: str | None = None,
+) -> bool:
     """
     Generate image with local SDXL. If control_image is provided and ControlNet is enabled,
     uses ControlNet pipeline with depth guidance. Returns True on success.
@@ -447,13 +513,18 @@ def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None =
             image = pipe(
                 prompt=prompt,
                 image=control_img,
+                negative_prompt=negative_prompt,
                 num_inference_steps=steps,
                 controlnet_conditioning_scale=Config.CONTROLNET_CONDITIONING_SCALE,
             ).images[0]
         else:
             # Fallback to standard SDXL without ControlNet
             pipe = _get_sdxl_pipeline()
-            image = pipe(prompt=prompt, num_inference_steps=steps).images[0]
+            image = pipe(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                num_inference_steps=steps,
+            ).images[0]
         
         image.save(str(out_path))
         return True
@@ -469,14 +540,24 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     """ 
     task_id = state.get("task_id") or str(uuid.uuid4())
     req = state.get("structured_requirement") or {}
+    style_params = state.get("style_params") or {}
     artifacts_root = Path(Config.ARTIFACTS_DIR)
     render_dir = artifacts_root / "render"
     render_dir.mkdir(parents=True, exist_ok=True)
     out_path = render_dir / f"{task_id}.png"
 
-    prompt = _build_imagen_prompt_from_requirement(req)
-    generation_params: dict[str, Any] = {"prompt_preview": prompt[:200]}
+    prompt = _build_imagen_prompt_from_requirement(req, style_params=style_params)
+    negative_prompt = style_params.get("negative_prompt") or None
+    generation_params: dict[str, Any] = {
+        "prompt_preview": prompt[:200],
+        "negative_prompt_preview": (negative_prompt or "")[:200],
+    }
     backend = "placeholder"
+
+    if style_params:
+        generation_params["style_profile_id"] = style_params.get("style_profile_id")
+        generation_params["style_profile_name"] = style_params.get("style_profile_name")
+        generation_params["style_strength"] = style_params.get("style_strength")
 
     # Get vision features for ControlNet (if available)
     vision = state.get("vision_features") or {}
@@ -490,7 +571,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
 
     # 1. Hugging Face Inference API (cloud SDXL; no local download)
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
-        if _render_hf_inference(prompt, out_path):
+        if _render_hf_inference(prompt, out_path, negative_prompt=negative_prompt):
             backend = "hf_inference"
             generation_params["model"] = Config.SDXL_MODEL
             generation_params["provider"] = Config.HF_INFERENCE_PROVIDER
@@ -498,11 +579,16 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     # 2. Local SDXL (with ControlNet if depth available)
     if backend == "placeholder" and Config.ENABLE_SDXL_FALLBACK:
         control_img = depth_path if depth_path and Path(depth_path).exists() else None
-        if _render_sdxl(prompt, out_path, control_image=control_img):
+        if _render_sdxl(
+            prompt,
+            out_path,
+            control_image=control_img,
+            negative_prompt=negative_prompt,
+        ):
             backend = "sdxl"
             generation_params["model"] = Config.SDXL_MODEL
             if control_img:
-                generation_params["controlnet"] = "depth"
+                generation_params["controlnet"] = style_params.get("controlnet_type", "depth")
                 generation_params["controlnet_scale"] = Config.CONTROLNET_CONDITIONING_SCALE
         else:
             generation_params["sdxl_error"] = "SDXL render failed"
