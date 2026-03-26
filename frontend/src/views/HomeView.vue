@@ -1,82 +1,75 @@
-<script setup>
+﻿<script setup>
 import { ref, onMounted } from 'vue'
+import { useImageField } from '@/composables/useImageField'
+import SidebarForm from '@/components/SidebarForm.vue'
+import ResultPanel from '@/components/ResultPanel.vue'
+
+const API_BASE = 'http://localhost:8000'
 
 
 const textPrompt = ref('')
 const editScope = ref(0.6)
 const modelType = ref('sdxl')
-const styleOptions = ref([{ label: '自動（依文字需求判斷）', value: 'auto' }])
 const selectedStyle = ref('auto')
+const styleOptions = ref([{ label: '自動', value: 'auto' }])
 const styleLoading = ref(false)
 const styleError = ref('')
-const imageFile = ref(null)
-const imagePreview = ref('')
 const manualImagePath = ref('')
 const showManualPath = ref(false)
+const spaceImage    = useImageField()   // 原始空間圖片
+const styleRefImage = useImageField()   // 風格參考圖
 const result = ref(null)
 const loading = ref(false)
 const error = ref('')
-const showStyleJson = ref(false)
 
-// 取得聚合風格列表
 async function fetchStyleOptions() {
   styleLoading.value = true
   styleError.value = ''
   try {
-    const res = await fetch('http://localhost:8000/api/style-profiles')
-    if (!res.ok) throw new Error('無法取得風格列表')
+    const res = await fetch(`${API_BASE}/api/style-profiles`)
+    if (!res.ok) throw new Error('載入風格選項失敗')
     const data = await res.json()
     styleOptions.value = [
-      { label: '自動（依文字需求判斷）', value: 'auto' },
-      ...data.map(item => ({
-        label: `${item.style_name} (${item.style_id})`,
-        value: item.style_id
-      }))
+      { label: '自動', value: 'auto' },
+      ...data.map(({ style_name, style_id }) => ({
+        label: `${style_name} (${style_id})`,
+        value: style_id,
+      })),
     ]
   } catch (e) {
-    styleError.value = e.message || '風格列表取得失敗'
-    styleOptions.value = [{ label: '自動（依文字需求判斷）', value: 'auto' }]
+    styleError.value = e.message || '載入風格選項失敗'
   } finally {
     styleLoading.value = false
   }
 }
-onMounted(fetchStyleOptions)
 
-
-function handleImageChange(e) {
-  const file = e.target.files[0]
-  if (!file) return
-  imageFile.value = file
-  imagePreview.value = URL.createObjectURL(file)
-  manualImagePath.value = ''
+async function uploadFile(file) {
+  const body = new FormData()
+  body.append('file', file)
+  const res = await fetch(`${API_BASE}/api/upload-image`, { method: 'POST', body })
+  if (!res.ok) throw new Error(`{res.status}`)
+  return (await res.json()).path
 }
-
-function removeImage() {
-  imageFile.value = null
-  imagePreview.value = ''
-}
-
 
 async function handleSubmit() {
-  if (!textPrompt.value.trim()) {
-    error.value = '請輸入文字需求'
+  const hasText = textPrompt.value.trim()
+  const hasStyle = selectedStyle.value !== 'auto'
+  const hasImage = spaceImage.file || manualImagePath.value.trim()
+  if (!hasText && !hasStyle && !hasImage) {
+    error.value = '請提供文字需求、風格選擇或圖片'
     return
   }
   error.value = ''
   result.value = null
   loading.value = true
-
-  // 處理圖片路徑
-  let initialImage = ''
-  if (imageFile.value) {
-    // 圖片檔案需用 FormData 上傳，這裡僅傳路徑給後端的話，需後端支援
-    initialImage = '' // 實際應根據後端API設計
-  } else if (manualImagePath.value.trim()) {
-    initialImage = manualImagePath.value.trim()
-  }
-
   try {
-    const response = await fetch('http://localhost:8000/api/generate', {
+    const initial_image_path = spaceImage.file
+      ? await uploadFile(spaceImage.file)
+      : manualImagePath.value.trim() || undefined
+    const style_reference_image_path = styleRefImage.file
+      ? await uploadFile(styleRefImage.file)
+      : undefined
+    const res = await fetch(`${API_BASE}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -84,239 +77,55 @@ async function handleSubmit() {
         edit_scope: editScope.value,
         model_type: modelType.value,
         style_profile_id: selectedStyle.value !== 'auto' ? selectedStyle.value : undefined,
-        initial_image: initialImage || undefined,
+        initial_image_path,
+        style_reference_image_path,
       }),
     })
-    if (!response.ok) throw new Error(`伺服器錯誤：${response.status}`)
-    result.value = await response.json()
+    if (!res.ok) throw new Error(`${res.status}`)
+    result.value = await res.json()
   } catch (e) {
     error.value = e.message
   } finally {
     loading.value = false
   }
 }
+
+onMounted(fetchStyleOptions)
 </script>
 
 <template>
   <div class="page">
-    <!-- 側欄 -->
     <aside class="sidebar">
       <div class="logo">
-        <span class="logo-icon">🏠</span>
+        
         <span class="logo-text">DesignBridge</span>
       </div>
-      <p class="logo-sub">室內設計 AI 助理</p>
 
-      <div class="form">
-        <!-- 文字需求 -->
-        <div class="field">
-          <label>✏️文字需求</label>
-          <textarea
-            v-model="textPrompt"
-            rows="5"
-            placeholder="例如：客廳想要北歐風格，希望動線順暢"
-          />
-        </div>
-
-        <!-- 改動幅度 -->
-        <div class="field">
-          <label>
-            改動幅度
-            <span class="value-badge">{{ editScope.toFixed(1) }}</span>
-          </label>
-          <input type="range" v-model.number="editScope" min="0" max="1" step="0.1" />
-          <div class="range-hint">
-            <span>局部微調</span>
-            <span>大幅改動</span>
-          </div>
-        </div>
-
-
-        <!-- 模型選擇 -->
-        <div class="field">
-          <label>生成模型</label>
-          <div class="radio-group">
-            <label :class="{ active: modelType === 'sdxl' }">
-              <input type="radio" v-model="modelType" value="sdxl" />
-              <div>
-                <strong>SDXL</strong>
-                <small>穩定，1024px</small>
-              </div>
-            </label>
-            <label :class="{ active: modelType === 'sd' }">
-              <input type="radio" v-model="modelType" value="sd" />
-              <div>
-                <strong>SD 3.5 Medium</strong>
-                <small>高品質</small>
-              </div>
-            </label>
-            <label :class="{ active: modelType === 'flux' }">
-              <input type="radio" v-model="modelType" value="flux" />
-              <div>
-                <strong>Flux.1 Schnell</strong>
-                <small>快速生成</small>
-              </div>
-            </label>
-          </div>
-        </div>
-
-        <!-- 風格檔選擇 -->
-        <div class="field">
-          <label>選擇裝潢風格</label>
-          <select v-model="selectedStyle" :disabled="styleLoading">
-            <option v-for="opt in styleOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
-          <div v-if="styleLoading" style="color:#a990d4;font-size:0.9em;margin-top:0.2em;">載入中...</div>
-          <div v-if="styleError" style="color:#c0392b;font-size:0.9em;margin-top:0.2em;">{{ styleError }}</div>
-        </div>
-
-
-        <!-- 圖片上傳 -->
-        <div class="field">
-          <label>原始圖片(Optional)</label>
-          <div v-if="imagePreview" class="image-preview">
-            <img :src="imagePreview" alt="預覽" />
-            <button class="remove-btn" @click="removeImage">✕</button>
-          </div>
-          <label v-else class="upload-area">
-            <input type="file" accept="image/*" @change="handleImageChange" hidden />
-            <span class="upload-icon">📁</span>
-            <span>點擊上傳圖片</span>
-            <small>JPG、PNG、WebP</small>
-          </label>
-          <div style="margin-top:0.5rem;">
-            <button type="button" @click="showManualPath = !showManualPath" style="background:none;border:none;color:#7c5cbf;cursor:pointer;font-size:0.9em;">{{ showManualPath ? '收合手動輸入' : '進階：手動輸入圖片路徑' }}</button>
-            <div v-if="showManualPath" style="margin-top:0.5rem;">
-              <input type="text" v-model="manualImagePath" placeholder="本機圖片路徑" style="width:100%;padding:0.5rem;border:1px solid #d4c4ef;border-radius:6px;" />
-            </div>
-          </div>
-        </div>
-
-        <button class="submit-btn" @click="handleSubmit" :disabled="loading">
-          <span v-if="loading" class="spinner"></span>
-          {{ loading ? '執行中...' : '▶ 執行工作流' }}
-        </button>
-
-        <p v-if="error" class="error">⚠️ {{ error }}</p>
-      </div>
+      <SidebarForm
+        v-model:textPrompt="textPrompt"
+        v-model:editScope="editScope"
+        v-model:modelType="modelType"
+        v-model:selectedStyle="selectedStyle"
+        v-model:manualImagePath="manualImagePath"
+        v-model:showManualPath="showManualPath"
+        :spaceImage="spaceImage"
+        :styleRefImage="styleRefImage"
+        :styleOptions="styleOptions"
+        :styleLoading="styleLoading"
+        :styleError="styleError"
+        :loading="loading"
+        :error="error"
+        @submit="handleSubmit"
+      />
     </aside>
 
-    <!-- 主內容區 -->
     <main class="content">
-      <div v-if="!result && !loading" class="placeholder">
-        <div class="placeholder-icon">✏️</div>
-        <h2>輸入設計需求</h2>
-        <p>在左側填寫需求後，點擊執行工作流</p>
-        <div class="flow-diagram">
-          
-        </div>
-      </div>
-
-      <div v-if="loading" class="loading-state">
-        <div class="loading-spinner"></div>
-        <p>工作流執行中，請稍候...</p>
-      </div>
-
-      <div v-if="result" class="result">
-        <div class="result-header">
-          <h2>執行結果</h2>
-          <div class="badges">
-            <span class="badge green">✓ 成功</span>
-            <span class="badge gray">⏱ {{ result.elapsed_time }}</span>
-            <span class="badge blue">{{ result.routing_decision }}</span>
-          </div>
-        </div>
-
-        <div v-if="result.generated_image_path" class="result-section">
-          <h3>🖼 生成圖</h3>
-          <p class="path">{{ result.generated_image_path }}</p>
-        </div>
-
-        <div v-if="result.structured_requirement" class="result-section">
-          <h3>📋 結構化需求</h3>
-          <div class="req-grid" v-if="result.structured_requirement.meta || result.structured_requirement.style_preferences">
-            <div class="req-item" v-if="result.structured_requirement.meta?.room_type">
-              <span class="req-label">房間類型</span>
-              <span class="req-value">{{ result.structured_requirement.meta.room_type }}</span>
-            </div>
-            <div class="req-item" v-if="result.structured_requirement.meta?.design_goal">
-              <span class="req-label">設計目標</span>
-              <span class="req-value">{{ result.structured_requirement.meta.design_goal }}</span>
-            </div>
-            <div class="req-item" v-if="result.structured_requirement.style_preferences?.primary_style">
-              <span class="req-label">主要風格</span>
-              <span class="req-value">{{ result.structured_requirement.style_preferences.primary_style }}</span>
-            </div>
-            <div class="req-item" v-if="result.structured_requirement.edit_scope?.scope_value !== undefined">
-              <span class="req-label">Edit Scope</span>
-              <span class="req-value">{{ Number(result.structured_requirement.edit_scope.scope_value).toFixed(1) }}</span>
-            </div>
-          </div>
-          <details class="json-details">
-            <summary>完整 JSON</summary>
-            <pre>{{ JSON.stringify(result.structured_requirement, null, 2) }}</pre>
-          </details>
-        </div>
-
-        <!-- 🎨 風格萃取結果 -->
-        <div v-if="result.style_params" class="result-section style-section">
-          <h3>🎨 套用風格參數</h3>
-          <div class="style-meta">
-            <span class="style-badge">{{ result.style_params.style_profile_id || result.style_params.style_id }}</span>
-            <span class="style-name">{{ result.style_params.style_profile_name || result.style_params.style_name }}</span>
-            <span v-if="result.style_params.style_strength !== undefined" class="style-strength">
-              強度 {{ result.style_params.style_strength }}
-            </span>
-          </div>
-
-          <!-- 色彩色票 -->
-          <div
-            v-if="result.style_params.visual_elements?.colors"
-            class="color-swatches"
-          >
-            <div
-              v-for="(hex, role) in result.style_params.visual_elements.colors"
-              :key="role"
-              class="swatch-item"
-            >
-              <div class="swatch" :style="{ background: hex }"></div>
-              <span class="swatch-label">{{ role }}</span>
-              <span class="swatch-hex">{{ hex }}</span>
-            </div>
-          </div>
-
-          <!-- 語意標籤 -->
-          <div v-if="result.style_params.semantic_tags?.length" class="style-tags">
-            <span v-for="tag in result.style_params.semantic_tags" :key="tag" class="tag">{{ tag }}</span>
-          </div>
-
-          <details class="json-details" @toggle="showStyleJson = $event.target.open">
-            <summary>完整 style_params JSON</summary>
-            <pre>{{ JSON.stringify(result.style_params, null, 2) }}</pre>
-          </details>
-        </div>
-        <div v-else-if="result" class="result-section style-section muted">
-          <h3>🎨 套用風格參數</h3>
-          <p class="muted-text">未載入聚合風格檔，將依文字需求與預設 prompt 生成。</p>
-        </div>
-      </div>
+      <ResultPanel :result="result" :loading="loading" />
     </main>
   </div>
 </template>
 
 <style scoped>
-/* 淡紫主題色 */
-:root {
-  --primary: #7c5cbf;
-  --primary-light: #f0ebfb;
-  --primary-hover: #6347a8;
-  --primary-border: #c9b8e8;
-}
-
-* {
-  box-sizing: border-box;
-}
-
 .page {
   display: flex;
   min-height: 100vh;
@@ -327,30 +136,13 @@ async function handleSubmit() {
     linear-gradient(135deg, #f3eeff 0%, #ede6fa 40%, #e6dff5 100%);
 }
 
-select {
-  padding: 0.7rem;
-  border: 1px solid #d4c4ef;
-  border-radius: 8px;
-  font-size: 0.95rem;
-  background: rgba(255,255,255,0.8);
-  color: #333;
-  margin-top: 0.2rem;
-  margin-bottom: 0.2rem;
-  transition: border-color 0.2s;
-}
-select:focus {
-  outline: none;
-  border-color: #7c5cbf;
-  background: #fff;
-}
-/* 側欄 */
 .sidebar {
   width: 400px;
   min-width: 400px;
   background: rgba(255, 255, 255, 0.75);
   backdrop-filter: blur(12px);
   border-right: 1px solid rgba(180, 150, 230, 0.3);
-  padding: 2rem 2rem;
+  padding: 2rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -366,499 +158,13 @@ select:focus {
   color: #6b3fa0;
   letter-spacing: -0.02em;
 }
+.logo-icon { font-size: 1.7rem; }
+.logo-sub  { color: #a990d4; font-size: 0.85rem; margin-bottom: 1rem; }
 
-.logo-icon {
-  font-size: 1.7rem;
-}
-
-.logo-sub {
-  color: #a990d4;
-  font-size: 0.85rem;
-  margin-bottom: 1.5rem;
-}
-
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 1.4rem;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.field > label {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #3d2b6e;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.value-badge {
-  background: var(--primary-light);
-  color: var(--primary);
-  padding: 0.1rem 0.55rem;
-  border-radius: 99px;
-  font-size: 0.8rem;
-  font-weight: 700;
-}
-
-textarea {
-  padding: 0.8rem;
-  border: 1px solid #d4c4ef;
-  border-radius: 8px;
-  resize: vertical;
-  font-size: 0.9rem;
-  color: #333;
-  line-height: 1.6;
-  transition: border-color 0.2s;
-  background: rgba(255,255,255,0.8);
-}
-
-textarea:focus {
-  outline: none;
-  border-color: var(--primary);
-  background: #fff;
-}
-
-input[type='range'] {
-  width: 100%;
-  accent-color: #7c5cbf;
-}
-
-.range-hint {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.75rem;
-  color: #b0a0cc;
-}
-
-/* 模型選擇 */
-.radio-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.radio-group label {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.65rem 0.9rem;
-  border: 1px solid #d4c4ef;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-weight: normal;
-  background: rgba(255,255,255,0.7);
-}
-
-.radio-group label.active {
-  border-color: var(--primary);
-  background: var(--primary-light);
-}
-
-.radio-group label div {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.radio-group strong {
-  font-size: 0.875rem;
-  color: #2e1a5e;
-}
-
-.radio-group small {
-  font-size: 0.75rem;
-  color: #a990d4;
-}
-
-/* 圖片上傳 */
-.upload-area {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 1.5rem;
-  border: 2px dashed #c9b8e8;
-  border-radius: 8px;
-  cursor: pointer;
-  color: #a990d4;
-  font-size: 0.85rem;
-  transition: all 0.2s;
-  font-weight: normal !important;
-  background: rgba(255,255,255,0.5);
-}
-
-.upload-area:hover {
-  border-color: var(--primary);
-  color: var(--primary);
-  background: var(--primary-light);
-}
-
-.upload-icon {
-  font-size: 1.6rem;
-}
-
-.image-preview {
-  position: relative;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.image-preview img {
-  width: 100%;
-  max-height: 200px;
-  object-fit: cover;
-  border-radius: 8px;
-  display: block;
-}
-
-.remove-btn {
-  position: absolute;
-  top: 0.4rem;
-  right: 0.4rem;
-  background: rgba(0,0,0,0.5);
-  color: white;
-  border: none;
-  border-radius: 99px;
-  width: 1.6rem;
-  height: 1.6rem;
-  cursor: pointer;
-  font-size: 0.75rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.error {
-  color: #c0392b;
-  font-size: 0.85rem;
-  background: #fff5f5;
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  border: 1px solid #f5c6c6;
-}
-
-.submit-btn {
-  padding: 1rem;
-  background: linear-gradient(135deg, #7c5cbf, #9b6dd6);
-  color: white;
-  border: none;
-  border-radius: 10px;
-  font-size: 1.05rem;
-  font-weight: 700;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  transition: all 0.2s;
-  letter-spacing: 0.03em;
-  box-shadow: 0 4px 14px rgba(124, 92, 191, 0.4);
-}
-
-.submit-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #6b4faa, #8a5ec5);
-  box-shadow: 0 6px 18px rgba(124, 92, 191, 0.5);
-  transform: translateY(-1px);
-}
-
-.submit-btn:disabled {
-  background: linear-gradient(135deg, #9b7ecb, #b49de0);
-  opacity: 0.65;
-  cursor: not-allowed;
-  box-shadow: none;
-  transform: none;
-}
-
-/* 主內容區 */
 .content {
   flex: 1;
   padding: 3rem 4rem;
   display: flex;
   flex-direction: column;
-}
-
-.placeholder {
-  margin: auto;
-  text-align: center;
-  color: #b0a0cc;
-}
-
-.placeholder-icon {
-  font-size: 4rem;
-  margin-bottom: 1rem;
-}
-
-.placeholder h2 {
-  font-size: 1.8rem;
-  color: #5a3d8a;
-  margin-bottom: 0.6rem;
-  font-weight: 700;
-}
-
-.placeholder p {
-  font-size: 0.95rem;
-  margin-bottom: 2.5rem;
-  color: #9880bb;
-}
-
-.flow-diagram {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.flow-step {
-  background: rgba(255,255,255,0.7);
-  border: 1px solid #d4c4ef;
-  border-radius: 10px;
-  padding: 0.6rem 1.2rem;
-  font-size: 0.875rem;
-  color: var(--primary);
-  backdrop-filter: blur(4px);
-}
-
-.flow-arrow {
-  color: #c9b8e8;
-  font-size: 1.2rem;
-}
-
-/* Loading */
-.loading-state {
-  margin: auto;
-  text-align: center;
-  color: #a990d4;
-}
-
-.loading-spinner {
-  width: 52px;
-  height: 52px;
-  border: 4px solid #e0d4f5;
-  border-top-color: var(--primary);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  margin: 0 auto 1rem;
-}
-
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(255,255,255,0.4);
-  border-top-color: white;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  display: inline-block;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* 結果 */
-.result-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-
-.result-header h2 {
-  font-size: 1.5rem;
-  color: #3d2b6e;
-}
-
-.badges {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.badge {
-  padding: 0.25rem 0.75rem;
-  border-radius: 99px;
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.badge.green { background: #e6f6ec; color: #276749; }
-.badge.gray  { background: rgba(255,255,255,0.7); color: #666; }
-.badge.blue  { background: var(--primary-light); color: var(--primary); }
-
-.result-section {
-  background: rgba(255,255,255,0.75);
-  backdrop-filter: blur(8px);
-  border: 1px solid #d4c4ef;
-  border-radius: 12px;
-  padding: 1.5rem;
-  margin-bottom: 1rem;
-}
-
-.result-section h3 {
-  font-size: 1rem;
-  margin-bottom: 0.75rem;
-  color: #3d2b6e;
-}
-
-.path {
-  font-size: 0.85rem;
-  color: #a990d4;
-  font-family: monospace;
-}
-
-pre {
-  background: rgba(240, 235, 251, 0.8);
-  padding: 1rem;
-  border-radius: 8px;
-  overflow-x: auto;
-  font-size: 0.8rem;
-  line-height: 1.6;
-  color: #3d2b6e;
-}
-
-/* 結構化需求格狀 */
-.req-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-.req-item {
-  background: var(--primary-light);
-  border-radius: 8px;
-  padding: 0.6rem 0.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-.req-label {
-  font-size: 0.7rem;
-  color: #a990d4;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.req-value {
-  font-size: 0.875rem;
-  color: #3d2b6e;
-  font-weight: 600;
-}
-
-/* 風格參數卡片 */
-.style-section {
-  border-color: #c9b8e8;
-}
-.style-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  margin-bottom: 1rem;
-}
-.style-badge {
-  background: var(--primary);
-  color: white;
-  padding: 0.2rem 0.7rem;
-  border-radius: 99px;
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-.style-name {
-  font-size: 1rem;
-  font-weight: 700;
-  color: #3d2b6e;
-}
-.style-strength {
-  background: rgba(124, 92, 191, 0.12);
-  color: #7c5cbf;
-  padding: 0.2rem 0.6rem;
-  border-radius: 99px;
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-
-/* 色票 */
-.color-swatches {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.75rem;
-}
-.swatch-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.25rem;
-}
-.swatch {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  border: 1px solid rgba(0,0,0,0.08);
-  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-}
-.swatch-label {
-  font-size: 0.65rem;
-  color: #a990d4;
-  font-weight: 600;
-  text-transform: capitalize;
-}
-.swatch-hex {
-  font-size: 0.65rem;
-  color: #7c5cbf;
-  font-family: monospace;
-}
-
-/* 語意標籤 */
-.style-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-bottom: 0.75rem;
-}
-.tag {
-  background: var(--primary-light);
-  color: var(--primary);
-  border: 1px solid #d4c4ef;
-  padding: 0.15rem 0.6rem;
-  border-radius: 99px;
-  font-size: 0.75rem;
-  font-weight: 500;
-}
-
-/* JSON details */
-.json-details {
-  margin-top: 0.5rem;
-}
-.json-details summary {
-  cursor: pointer;
-  font-size: 0.82rem;
-  color: #7c5cbf;
-  font-weight: 600;
-  user-select: none;
-  padding: 0.3rem 0;
-}
-.json-details summary:hover {
-  color: #5a3d8a;
-}
-
-/* muted 狀態 */
-.style-section.muted {
-  opacity: 0.65;
-}
-.muted-text {
-  font-size: 0.875rem;
-  color: #a990d4;
 }
 </style>
