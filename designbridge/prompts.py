@@ -67,13 +67,15 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
 
 ```json
 {{
+  "user_description_raw": "{text_prompt}"
   "meta": {{
     "room_type": "living_room",
     "design_goal": "renovation",
     "user_experience_level": "general"
   }},
   "space_info": {{
-    "estimated_size": {{"width": 5.0, "height": 3.0, "depth": 4.0}},
+    "stimated_size": {"width": float, "height": float, "depth": float} (單位：公尺)
+    "若使用者未提供具體尺寸，一律填預設值 {"width": 5.0, "height": 3.0, "depth": 4.0}，不可輸出空物件 "{}
     "windows": [],
     "doors": []
   }},
