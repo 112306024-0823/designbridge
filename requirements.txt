@@ -19,3 +19,6 @@ torchvision>=0.17.0
 # Local image generation (SDXL fallback when Imagen not available)
 diffusers>=0.30.0
 accelerate>=0.30.0
+
+fastapi
+uvicorn
