@@ -321,7 +321,7 @@ if run_button:
                 else:
                     st.info("無中間輸出")
 
-                st.subheader("🎨 套用風格參數")
+                st.subheader("套用風格參數")
                 style_params = result.get("style_params", {})
                 if style_params:
                     scol1, scol2, scol3 = st.columns(3)

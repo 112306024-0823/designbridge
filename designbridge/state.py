@@ -25,6 +25,7 @@ class UserInput(TypedDict):
     text_prompt: str
     edit_scope: float  # 0~1
     style_profile_id: NotRequired[str]  # optional aggregated style profile to apply directly
+    style_reference_image: NotRequired[str]  # optional style reference image path
 
 
 class DesignBridgeState(TypedDict):
