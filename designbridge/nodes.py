@@ -11,7 +11,7 @@ from typing import Any
 
 from designbridge.config import Config
 from designbridge.prompts import REQUIREMENT_ANALYZER_PROMPT
-from designbridge.style_apply import build_style_params
+from designbridge.style_apply import build_style_params, STYLE_NAME_TO_ID
 from designbridge.state import DesignBridgeState, RoutingDecision
 from designbridge.vision import run_visual_preprocessing
 from designbridge.schemas import RequirementJSON, StyleParamsJSON
@@ -45,6 +45,13 @@ def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     except (ValueError, Exception) as e:
         print(f"⚠️  Gemini API not available or failed ({e}), falling back to rule-based")
         structured_requirement = _rule_based_requirement_analyzer(text_prompt, edit_scope)
+
+    # If the user explicitly selected a style from the dropdown, override whatever
+    # Gemini / rule-based inferred from the text so the whole pipeline stays consistent.
+    explicit_style_id = (user.get("style_profile_id") or "").strip()
+    if explicit_style_id and explicit_style_id != "auto":
+        style_prefs = structured_requirement.setdefault("style_preferences", {})
+        style_prefs["primary_style"] = explicit_style_id
 
     return {
         "task_id": task_id,
@@ -148,8 +155,13 @@ def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float) -> dic
     else:
         room_type = "living_room"
 
-    styles = ["北歐", "現代", "工業", "簡約", "minimal", "modern", "scandinavian"]
-    primary_style = next((s for s in styles if s in text), "現代")
+    # Check specific styles first before generic "現代" to avoid false matches
+    # e.g. "帶有現代感的日式設計" should resolve to "日式" not "現代"
+    styles = ["北歐", "nordic", "scandinavian", "工業", "industrial", "日式", "japanese",
+              "鄉村", "country", "古典", "classic", "混搭", "mix", "美式", "american",
+              "奢華", "luxury", "新古典", "neoclassic", "簡約", "minimal",
+              "現代", "modern"]
+    primary_style = next((s for s in styles if s in text), None)
 
     # Detect hints
     hint_layout = any(kw in text for kw in ["動線", "布局", "layout", "空間配置"])
@@ -184,7 +196,7 @@ def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float) -> dic
             "doors": [],
         },
         "style_preferences": {
-            "primary_style": primary_style,
+            "primary_style": primary_style or "",
             "secondary_style": None,
             "color_palette": [],
             "material_preferences": [],
@@ -446,10 +458,30 @@ def _build_imagen_prompt_from_requirement(
     style_params: dict[str, Any] | None = None,
 ) -> str:
     """Build an English text prompt for SDXL from structured_requirement and style params."""
+    # Maps style_id to a descriptive English phrase for the image model
+    _STYLE_ID_TO_EN = {
+        "modern": "modern contemporary",
+        "country": "country rustic farmhouse",
+        "classic": "classical traditional",
+        "mix": "eclectic mixed style",
+        "nordic": "Nordic Scandinavian minimalist",
+        "industrial": "industrial loft",
+        "japanese": "Japanese minimalist Japandi",
+        "american": "American style",
+        "luxury": "luxury high-end glamour",
+        "neoclassic": "neoclassical",
+    }
     meta = req.get("meta") or {}
     style_prefs = req.get("style_preferences") or {}
     room_type = meta.get("room_type", "living_room").replace("_", " ")
-    primary_style = style_prefs.get("primary_style", "modern")
+    # Prefer the resolved style_profile_id from style_params (comes from explicit dropdown
+    # selection or profile resolution); fall back to text-inferred primary_style.
+    if style_params and style_params.get("style_profile_id"):
+        style_id = style_params["style_profile_id"].lower()
+    else:
+        raw_style = style_prefs.get("primary_style") or ""
+        style_id = STYLE_NAME_TO_ID.get(raw_style) or raw_style.lower()
+    primary_style = _STYLE_ID_TO_EN.get(style_id, style_id) or "interior"
     color_palette = style_prefs.get("color_palette") or []
     colors = ", ".join(str(c) for c in color_palette[:3]) if color_palette else "neutral tones"
     base_prompt = (
