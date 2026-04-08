@@ -6,7 +6,6 @@ STYLES = [
     ("modern", "現代"),
     ("country", "鄉村"),
     ("classic", "古典"),
-    ("mix", "混搭"),
     ("nordic", "北歐"),
     ("industrial", "工業"),
     ("japanese", "日式"),
