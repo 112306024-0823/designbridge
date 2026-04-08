@@ -1,15 +1,65 @@
 # DesignBridge
 
-使用 **LangGraph** 編排的多代理室內設計工作流（含 Streamlit 測試介面）。系統規格請見 `docs/DesignBridge.md`，Agent/JSON 規格請見 `docs/SCHEMAS.md`。
+使用 **LangGraph** 編排的多代理室內設計工作流。現在建議使用 **FastAPI + Vue**。系統規格請見 `docs/DesignBridge.md`，Agent/JSON 規格請見 `docs/SCHEMAS.md`。
 
-## 快速啟動（Streamlit）
+## 快速啟動（Vue + FastAPI）
+
+### 1) 安裝依賴
 
 在專案根目錄執行：
 
 ```bash
 pip install -r requirements.txt
-streamlit run app.py (若這個指令無效，應該是電腦設定的path沒有加到streamlit)，
-可跑跑看 python -m streamlit run app.py
+cd frontend
+npm install
+cd ..
+```
+
+### 2) 啟動後端（FastAPI）
+
+在專案根目錄執行：
+
+```bash
+uvicorn api:app --reload --host 0.0.0.0 --port 8000
+```
+
+後端啟動後可用：
+- `http://localhost:8000`
+- `http://localhost:8000/docs`（Swagger）
+
+### 3) 啟動前端（Vue）
+
+另開一個終端機，在專案根目錄執行：
+
+```bash
+cd frontend
+npm run dev
+```
+
+前端啟動後瀏覽器開 Vite 顯示的網址（通常是 `http://localhost:5173`）。
+
+### 4) 一鍵啟動（Windows）
+
+可直接執行：
+
+```bat
+start_app.bat
+```
+
+它會自動開兩個視窗，分別啟動 FastAPI 與 Vue。
+
+## 舊版啟動（Streamlit）
+
+若仍需使用舊測試介面，可在專案根目錄執行：
+
+```bash
+streamlit run app.py
+```
+
+若指令無效，可改用：
+
+```bash
+python -m streamlit run app.py
 ```
 
 啟動後瀏覽器開 `http://localhost:8501`。

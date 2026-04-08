@@ -11,10 +11,17 @@ from typing import Any
 
 from designbridge.config import Config
 from designbridge.prompts import REQUIREMENT_ANALYZER_PROMPT
-from designbridge.style_apply import build_style_params
+from designbridge.style_apply import build_style_params, STYLE_NAME_TO_ID
 from designbridge.state import DesignBridgeState, RoutingDecision
 from designbridge.vision import run_visual_preprocessing
 from designbridge.schemas import RequirementJSON, StyleParamsJSON
+from designbridge.inpaint import (
+    mask_from_segmentation,
+    fallback_center_mask,
+    build_inpaint_prompt,
+    run_inpainting,
+    run_hf_inpainting,
+)
 
 def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     """
@@ -39,6 +46,13 @@ def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     except (ValueError, Exception) as e:
         print(f"⚠️  Gemini API not available or failed ({e}), falling back to rule-based")
         structured_requirement = _rule_based_requirement_analyzer(text_prompt, edit_scope, style_reference_image=style_reference_image)
+
+    # If the user explicitly selected a style from the dropdown, override whatever
+    # Gemini / rule-based inferred from the text so the whole pipeline stays consistent.
+    explicit_style_id = (user.get("style_profile_id") or "").strip()
+    if explicit_style_id and explicit_style_id != "auto":
+        style_prefs = structured_requirement.setdefault("style_preferences", {})
+        style_prefs["primary_style"] = explicit_style_id
 
     return {
         "task_id": task_id,
@@ -156,8 +170,13 @@ def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float, style_
     else:
         room_type = "living_room"
 
-    styles = ["北歐", "現代", "工業", "簡約", "minimal", "modern", "scandinavian"]
-    primary_style = next((s for s in styles if s in text), "現代")
+    # Check specific styles first before generic "現代" to avoid false matches
+    # e.g. "帶有現代感的日式設計" should resolve to "日式" not "現代"
+    styles = ["北歐", "nordic", "scandinavian", "工業", "industrial", "日式", "japanese",
+              "鄉村", "country", "古典", "classic", "混搭", "mix", "美式", "american",
+              "奢華", "luxury", "新古典", "neoclassic", "簡約", "minimal",
+              "現代", "modern"]
+    primary_style = next((s for s in styles if s in text), None)
 
     # Detect hints
     hint_layout = any(kw in text for kw in ["動線", "布局", "layout", "空間配置"])
@@ -192,7 +211,7 @@ def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float, style_
             "doors": [],
         },
         "style_preferences": {
-            "primary_style": primary_style,
+            "primary_style": primary_style or "",
             "secondary_style": None,
             "color_palette": [],
             "material_preferences": [],
@@ -331,12 +350,103 @@ def style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
 
 
 def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
-    """Stub for Design Adjuster. Real impl: Inpainting, etc."""
+    """
+    Design Adjuster Agent：對初始圖片進行局部 inpainting。
+    觸發條件：edit_scope < 0.3 或 hint_adjuster = True。
+    """
+    from PIL import Image
+
+    task_id = state.get("task_id") or str(uuid.uuid4())
+    user_input = state.get("user_input") or {}
+    req = state.get("structured_requirement") or {}
+    vision = state.get("vision_features") or {}
+    style_params = state.get("style_params")
+
+    image_path = user_input.get("initial_image", "")
+    edit_scope = float(user_input.get("edit_scope", 0.2))
+
+    # 沒有原圖就無法 inpaint，跳過
+    if not image_path or not Path(image_path).is_file():
+        return {
+            "intermediate_outputs": {
+                **(state.get("intermediate_outputs") or {}),
+                "adjuster_agent": "no_initial_image_skipped",
+            }
+        }
+
+    # 決定要修改哪些物件
+    constraints = req.get("layout_constraints") or {}
+    must_remove = constraints.get("must_remove") or []
+    must_add = constraints.get("must_add") or []
+    # 要移除的物件 = mask 目標；要新增的物件 = prompt 目標
+    target_labels = must_remove if must_remove else ["furniture"]
+    target_objects = must_add if must_add else target_labels
+
+    # Mask 生成
+    seg_path = vision.get("segmentation")
+    seg_meta = vision.get("segmentation_meta")
+    original_img = Image.open(image_path)
+    img_size = original_img.size
+
+    if seg_path and seg_meta and Path(str(seg_path)).is_file() and Path(str(seg_meta)).is_file():
+        mask = mask_from_segmentation(str(seg_path), str(seg_meta), target_labels, img_size)
+        mask_source = "segmentation"
+    else:
+        mask = fallback_center_mask(img_size)
+        mask_source = "fallback_center"
+
+    # Prompt 組裝
+    prompt, negative_prompt = build_inpaint_prompt(req, style_params, target_objects)
+
+    # strength：edit_scope 越小改動越保守（0.4~0.85）
+    strength = max(0.4, min(0.85, edit_scope + 0.4))
+
+    out_path = Path(Config.ARTIFACTS_DIR) / "render" / f"{task_id}.png"
+    backend = "placeholder"
+
+    # 1. HF Inference API（雲端，不需本地模型）
+    if Config.HF_TOKEN:
+        if run_hf_inpainting(image_path, mask, prompt, out_path):
+            backend = "hf_inpainting"
+
+    # 2. 本地 SD Inpainting
+    if backend == "placeholder":
+        if run_inpainting(image_path, mask, prompt, negative_prompt, strength, out_path):
+            backend = "sd_inpainting"
+
+    # 3. Fallback：複製原圖
+    if backend == "placeholder":
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        original_img.save(str(out_path))
+
+    adjust_plan = {
+        "inpaint_regions": [{
+            "target_labels": target_labels,
+            "target_objects": target_objects,
+            "prompt": prompt,
+            "strength": strength,
+            "mask_source": mask_source,
+        }],
+        "consistency_guidance": (req.get("style_preferences") or {}).get("primary_style", ""),
+    }
+
     return {
+        "generated_image": str(out_path),
+        "render_result": {
+            "generated_image_path": str(out_path),
+            "generation_params": {
+                "backend": backend,
+                "model": "stable-diffusion-2-inpainting",
+                "strength": strength,
+                "mask_source": mask_source,
+                "prompt_preview": prompt[:150],
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
         "intermediate_outputs": {
             **(state.get("intermediate_outputs") or {}),
-            "adjuster_agent": "stub_output",
-        }
+            "adjuster_agent": adjust_plan,
+        },
     }
 
 
@@ -363,10 +473,30 @@ def _build_imagen_prompt_from_requirement(
     style_params: dict[str, Any] | None = None,
 ) -> str:
     """Build an English text prompt for SDXL from structured_requirement and style params."""
+    # Maps style_id to a descriptive English phrase for the image model
+    _STYLE_ID_TO_EN = {
+        "modern": "modern contemporary",
+        "country": "country rustic farmhouse",
+        "classic": "classical traditional",
+        "mix": "eclectic mixed style",
+        "nordic": "Nordic Scandinavian minimalist",
+        "industrial": "industrial loft",
+        "japanese": "Japanese minimalist Japandi",
+        "american": "American style",
+        "luxury": "luxury high-end glamour",
+        "neoclassic": "neoclassical",
+    }
     meta = req.get("meta") or {}
     style_prefs = req.get("style_preferences") or {}
     room_type = meta.get("room_type", "living_room").replace("_", " ")
-    primary_style = style_prefs.get("primary_style", "modern")
+    # Prefer the resolved style_profile_id from style_params (comes from explicit dropdown
+    # selection or profile resolution); fall back to text-inferred primary_style.
+    if style_params and style_params.get("style_profile_id"):
+        style_id = style_params["style_profile_id"].lower()
+    else:
+        raw_style = style_prefs.get("primary_style") or ""
+        style_id = STYLE_NAME_TO_ID.get(raw_style) or raw_style.lower()
+    primary_style = _STYLE_ID_TO_EN.get(style_id, style_id) or "interior"
     color_palette = style_prefs.get("color_palette") or []
     colors = ", ".join(str(c) for c in color_palette[:3]) if color_palette else "neutral tones"
     base_prompt = (
@@ -422,9 +552,10 @@ def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> No
     img.save(out_path)
 
 
-# Cached SDXL pipeline (loaded once, reused for subsequent renders)
+# Cached pipelines (loaded once, reused for subsequent renders)
 _sdxl_pipeline: Any = None
 _controlnet_pipeline: Any = None
+
 
 def _get_sdxl_pipeline():
     """Load SDXL pipeline once and cache it. GPU if available (~15–30s/image), else CPU (slower)."""
@@ -451,13 +582,13 @@ def _get_controlnet_pipeline():
     from diffusers import StableDiffusionXLControlNetPipeline, ControlNetModel
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+
     # Load ControlNet model (depth)
     controlnet = ControlNetModel.from_pretrained(
         Config.CONTROLNET_DEPTH_MODEL,
         torch_dtype=torch.float16 if device == "cuda" else torch.float32,
     )
-    
+
     # Load SDXL pipeline with ControlNet
     _controlnet_pipeline = StableDiffusionXLControlNetPipeline.from_pretrained(
         Config.SDXL_MODEL,
@@ -469,9 +600,9 @@ def _get_controlnet_pipeline():
     return _controlnet_pipeline
 
 
-def _render_hf_inference(prompt: str, out_path: Path, negative_prompt: str | None = None) -> bool:
+def _render_hf_inference(prompt: str, out_path: Path, model: str = "") -> bool:
     """
-    Generate image via Hugging Face Inference API (e.g. nscale provider).
+    Generate image via Hugging Face Inference API.
     No local model download. Returns True on success.
     """
     api_key = Config.HF_TOKEN
@@ -484,67 +615,96 @@ def _render_hf_inference(prompt: str, out_path: Path, negative_prompt: str | Non
             provider=Config.HF_INFERENCE_PROVIDER,
             api_key=api_key,
         )
-        kwargs: dict[str, Any] = {"model": Config.SDXL_MODEL}
-        if negative_prompt:
-            kwargs["negative_prompt"] = negative_prompt
-        image = client.text_to_image(prompt, **kwargs)
+        image = client.text_to_image(prompt, model=model)
         if image is None:
             return False
         out_path.parent.mkdir(parents=True, exist_ok=True)
         image.save(str(out_path))
         return True
     except Exception as e:
-        print(f"⚠️HF Inference render failed ({e})")
+        print(f"⚠️  HF Inference render failed ({e})")
         return False
 
 
-def _render_sdxl(
-    prompt: str,
-    out_path: Path,
-    control_image: str | Path | None = None,
-    negative_prompt: str | None = None,
-) -> bool:
+def _get_sd_pipeline():
+    """Load SD 3.5 pipeline once and cache it."""
+    global _sd_pipeline
+    if _sd_pipeline is not None:
+        return _sd_pipeline
+    from diffusers import StableDiffusion3Pipeline
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    kwargs: dict[str, Any] = {
+        "torch_dtype": torch.bfloat16 if device == "cuda" else torch.float32,
+    }
+    if Config.HF_TOKEN:
+        kwargs["token"] = Config.HF_TOKEN
+    _sd_pipeline = StableDiffusion3Pipeline.from_pretrained(Config.SD_MODEL, **kwargs).to(device)
+    return _sd_pipeline
+
+
+def _get_flux_pipeline():
+    """Load Flux.1 pipeline once and cache it."""
+    global _flux_pipeline
+    if _flux_pipeline is not None:
+        return _flux_pipeline
+    from diffusers import FluxPipeline
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    kwargs: dict[str, Any] = {
+        "torch_dtype": torch.bfloat16 if device == "cuda" else torch.float32,
+    }
+    if Config.HF_TOKEN:
+        kwargs["token"] = Config.HF_TOKEN
+    _flux_pipeline = FluxPipeline.from_pretrained(Config.FLUX_MODEL, **kwargs).to(device)
+    return _flux_pipeline
+
+
+def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None = None) -> bool:
     """
-    Generate image with local SDXL. If control_image is provided and ControlNet is enabled,
-    uses ControlNet pipeline with depth guidance. Returns True on success.
+    Generate image with local SD / SDXL / Flux based on Config.LOCAL_MODEL_TYPE.
+    Returns True on success.
     """
     try:
         import torch
         from PIL import Image
-        
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
         steps = Config.SDXL_STEPS
         if device == "cpu":
             steps = min(steps, 20)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Use ControlNet if enabled and control_image is provided
-        if Config.ENABLE_CONTROLNET and control_image and Path(control_image).exists():
-            pipe = _get_controlnet_pipeline()
-            control_img = Image.open(control_image).convert("RGB")
-            # Resize control image to match SDXL's expected resolution (1024x1024 or similar)
-            control_img = control_img.resize((1024, 1024), Image.Resampling.LANCZOS)
-            
-            image = pipe(
-                prompt=prompt,
-                image=control_img,
-                negative_prompt=negative_prompt,
-                num_inference_steps=steps,
-                controlnet_conditioning_scale=Config.CONTROLNET_CONDITIONING_SCALE,
-            ).images[0]
-        else:
-            # Fallback to standard SDXL without ControlNet
-            pipe = _get_sdxl_pipeline()
-            image = pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                num_inference_steps=steps,
-            ).images[0]
-        
+        model_type = Config.get_local_model_type()
+
+        if model_type == "flux":
+            pipe = _get_flux_pipeline()
+            image = pipe(prompt=prompt, num_inference_steps=steps, guidance_scale=0.0).images[0]
+
+        elif model_type == "sd":
+            pipe = _get_sd_pipeline()
+            image = pipe(prompt=prompt, num_inference_steps=steps).images[0]
+
+        else:  # sdxl (default)
+            if Config.ENABLE_CONTROLNET and control_image and Path(control_image).exists():
+                pipe = _get_controlnet_pipeline()
+                control_img = Image.open(control_image).convert("RGB")
+                control_img = control_img.resize((1024, 1024), Image.Resampling.LANCZOS)
+                image = pipe(
+                    prompt=prompt,
+                    image=control_img,
+                    num_inference_steps=steps,
+                    controlnet_conditioning_scale=Config.CONTROLNET_CONDITIONING_SCALE,
+                ).images[0]
+            else:
+                pipe = _get_sdxl_pipeline()
+                image = pipe(prompt=prompt, num_inference_steps=steps).images[0]
+
         image.save(str(out_path))
         return True
     except Exception as e:
-        print(f"⚠️  SDXL render failed ({e})")
+        import traceback
+        print(f"⚠️  render failed ({type(e).__name__}: {e})")
+        traceback.print_exc()
         return False
 
 
@@ -552,7 +712,12 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     """
     Renderer: generate image from structured_requirement.
     Uses Stable Diffusion XL only (with ControlNet if depth available), then placeholder on failure.
-    """ 
+    若 routing_decision 為 design_adjuster 且已有 generated_image，直接跳過不覆蓋。
+    """
+    # Adjuster 已產出 inpainted 圖片，renderer 不再重新生成
+    if state.get("routing_decision") == "design_adjuster" and state.get("generated_image"):
+        return {}
+
     task_id = state.get("task_id") or str(uuid.uuid4())
     req = state.get("structured_requirement") or {}
     style_params = state.get("style_params") or {}
@@ -584,25 +749,16 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if seg_path:
         controlnet_inputs["segmentation"] = str(seg_path)
 
-    # 新增：以 style_reference_image 作為以圖生圖條件
-    user_input = state.get("user_input") or {}
-    style_reference_image = user_input.get("style_reference_image")
-    # 若有 style_reference_image，優先作為 control image
-    if style_reference_image and Path(style_reference_image).exists():
-        control_img = style_reference_image
-        controlnet_inputs["style_reference_image"] = str(style_reference_image)
-    else:
-        control_img = depth_path if depth_path and Path(depth_path).exists() else None
-
     # 1. Hugging Face Inference API (cloud SDXL; no local download)
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
-        if _render_hf_inference(prompt, out_path, negative_prompt=negative_prompt):
+        if _render_hf_inference(prompt, out_path, model=hf_model_id):
             backend = "hf_inference"
-            generation_params["model"] = Config.SDXL_MODEL
+            generation_params["model"] = hf_model_id
             generation_params["provider"] = Config.HF_INFERENCE_PROVIDER
 
-    # 2. Local SDXL (with ControlNet if depth available or style_reference_image)
+    # 2. Local SDXL (with ControlNet if depth available)
     if backend == "placeholder" and Config.ENABLE_SDXL_FALLBACK:
+        control_img = depth_path if depth_path and Path(depth_path).exists() else None
         if _render_sdxl(
             prompt,
             out_path,
@@ -612,14 +768,10 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
             backend = "sdxl"
             generation_params["model"] = Config.SDXL_MODEL
             if control_img:
-                # 若是 style_reference_image 則標記
-                if style_reference_image and Path(style_reference_image).exists() and control_img == style_reference_image:
-                    generation_params["controlnet"] = "style_reference_image"
-                else:
-                    generation_params["controlnet"] = style_params.get("controlnet_type", "depth")
+                generation_params["controlnet"] = style_params.get("controlnet_type", "depth")
                 generation_params["controlnet_scale"] = Config.CONTROLNET_CONDITIONING_SCALE
         else:
-            generation_params["sdxl_error"] = "SDXL render failed"
+            generation_params["render_error"] = "local render failed"
 
     # 3. Fallback to placeholder
     if backend == "placeholder":

@@ -57,8 +57,10 @@ def resolve_style_profile_id(
     primary_style = str(style_prefs.get("primary_style") or "").strip()
     if not primary_style:
         return None
-    if primary_style in STYLE_ID_SET:
-        return primary_style
+    # Case-insensitive check for English style IDs (e.g. "Modern" → "modern")
+    primary_style_lower = primary_style.lower()
+    if primary_style_lower in STYLE_ID_SET:
+        return primary_style_lower
     return STYLE_NAME_TO_ID.get(primary_style)
 
 

@@ -21,15 +21,23 @@ class Config:
 
     # Image generation (Imagen) - same API key as Gemini; requires billing
     IMAGEN_MODEL: str = os.getenv("DESIGNBRIDGE_IMAGEN_MODEL", "imagen-4.0-generate-001")
-    # Local SDXL fallback (free); set DESIGNBRIDGE_SDXL_MODEL to use another model
+    # Local image generation backend: "sdxl" | "sd" | "flux" (read dynamically so runtime changes take effect)
+    @classmethod
+    def get_local_model_type(cls) -> str:
+        return os.getenv("DESIGNBRIDGE_LOCAL_MODEL_TYPE", "sdxl").lower()
+
+    # Model IDs for each backend
     SDXL_MODEL: str = os.getenv("DESIGNBRIDGE_SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0")
+    SD_MODEL: str = os.getenv("DESIGNBRIDGE_SD_MODEL", "stabilityai/stable-diffusion-3.5-medium")
+    FLUX_MODEL: str = os.getenv("DESIGNBRIDGE_FLUX_MODEL", "black-forest-labs/FLUX.1-schnell")
+
     SDXL_STEPS: int = int(os.getenv("DESIGNBRIDGE_SDXL_STEPS", "25"))
     ENABLE_SDXL_FALLBACK: bool = os.getenv("DESIGNBRIDGE_ENABLE_SDXL_FALLBACK", "true").lower() in ("1", "true", "yes")
 
     # Hugging Face Inference API (cloud SDXL; no local download). Tried first when HF_TOKEN set. Uses HF_TOKEN.
     ENABLE_HF_INFERENCE: bool = os.getenv("DESIGNBRIDGE_ENABLE_HF_INFERENCE", "true").lower() in ("1", "true", "yes")
     HF_TOKEN: str | None = os.getenv("HF_TOKEN")
-    HF_INFERENCE_PROVIDER: str = os.getenv("DESIGNBRIDGE_HF_INFERENCE_PROVIDER", "nscale")
+    HF_INFERENCE_PROVIDER: str = os.getenv("DESIGNBRIDGE_HF_INFERENCE_PROVIDER", "hf-inference")
     
     # ControlNet for SDXL (depth + segmentation guidance)
     ENABLE_CONTROLNET: bool = os.getenv("DESIGNBRIDGE_ENABLE_CONTROLNET", "true").lower() in ("1", "true", "yes")
