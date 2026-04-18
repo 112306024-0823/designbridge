@@ -24,7 +24,7 @@ app.mount("/artifacts", StaticFiles(directory=str(artifacts_dir)), name="artifac
 # 解決前後端跨域問題
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
