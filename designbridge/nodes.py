@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import json
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -108,19 +108,8 @@ def _call_gemini_requirement_analyzer(
             ),
         )
 
-        # Extract JSON from response
-        text = response.text.strip()
-        # Remove markdown code blocks if present
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
-
-        structured = json.loads(text)
-        return structured
+        nl_text = response.text.strip()
+        return _parse_nl_requirement(nl_text, edit_scope, text_prompt)
 
     except ImportError:
         raise ValueError(
@@ -128,6 +117,91 @@ def _call_gemini_requirement_analyzer(
         )
     except Exception as e:
         raise RuntimeError(f"Gemini API call failed: {e}")
+
+
+def _parse_nl_requirement(nl_text: str, edit_scope: float, text_prompt: str = "") -> dict[str, Any]:
+    """Parse natural language requirement report (labeled fields) into a compatible dict."""
+
+    def extract_field(field: str) -> str:
+        m = re.search(rf'^{re.escape(field)}:\s*(.+)$', nl_text, re.MULTILINE)
+        return m.group(1).strip() if m else ""
+
+    def extract_list(field: str) -> list[str]:
+        val = extract_field(field)
+        if not val or val.strip() in ("無", "none", ""):
+            return []
+        return [item.strip() for item in re.split(r'[,，]', val) if item.strip() not in ("", "無")]
+
+    room_type = extract_field("空間類型") or "living_room"
+    design_goal = extract_field("設計目標") or "renovation"
+    primary_style = extract_field("主要風格") or "現代"
+    secondary_style = extract_field("次要風格") or None
+    if secondary_style in ("無", ""):
+        secondary_style = None
+    color_palette = extract_list("色彩偏好")
+    material_preferences = extract_list("材質偏好")
+    must_keep = extract_list("必須保留")
+    must_add = extract_list("必須新增")
+    must_remove = extract_list("必須移除")
+    hint_layout = extract_field("涉及佈局") == "是"
+    hint_style = extract_field("涉及風格") == "是"
+    hint_adjuster = extract_field("僅局部微調") == "是" or edit_scope < 0.3
+    design_description = extract_field("設計描述") or ""
+
+    if edit_scope < 0.3:
+        allowed_ops = ["inpaint"]
+    elif edit_scope > 0.7:
+        allowed_ops = ["layout", "style"]
+    elif hint_layout and hint_style:
+        allowed_ops = ["layout", "style"]
+    elif hint_layout:
+        allowed_ops = ["layout"]
+    elif hint_style:
+        allowed_ops = ["style"]
+    else:
+        allowed_ops = ["layout", "style"]
+
+    return {
+        "user_description_raw": text_prompt or nl_text,
+        "design_description": design_description,
+        "meta": {
+            "room_type": room_type,
+            "design_goal": design_goal,
+            "user_experience_level": "general",
+        },
+        "space_info": {
+            "estimated_size": {"width": 5.0, "height": 3.0, "depth": 4.0},
+            "windows": [],
+            "doors": [],
+        },
+        "style_preferences": {
+            "primary_style": primary_style,
+            "secondary_style": secondary_style,
+            "color_palette": color_palette,
+            "material_preferences": material_preferences,
+            "style_strength": 0.7,
+            "reference_images": [],
+        },
+        "layout_constraints": {
+            "must_keep": must_keep,
+            "must_add": must_add,
+            "must_remove": must_remove,
+            "immutable_regions": [],
+            "functional_zones": [],
+        },
+        "edit_scope": {
+            "scope_value": edit_scope,
+            "allowed_operations": allowed_ops,
+        },
+        "priority_weights": {
+            "layout_rationality": 0.4,
+            "style_consistency": 0.4,
+            "novelty": 0.2,
+        },
+        "hint_layout": hint_layout,
+        "hint_style": hint_style,
+        "hint_adjuster": hint_adjuster,
+    }
 
 
 def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float) -> dict[str, Any]:
@@ -173,6 +247,7 @@ def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float) -> dic
     # Build RequirementJSON structure
     structured_requirement: dict[str, Any] = {
         "user_description_raw": text_prompt,
+        "design_description": "",
         "meta": {
             "room_type": room_type,
             "design_goal": "renovation",  # default
@@ -445,17 +520,23 @@ def _build_imagen_prompt_from_requirement(
     req: dict[str, Any],
     style_params: dict[str, Any] | None = None,
 ) -> str:
-    """Build an English text prompt for SDXL from structured_requirement and style params."""
-    meta = req.get("meta") or {}
-    style_prefs = req.get("style_preferences") or {}
-    room_type = meta.get("room_type", "living_room").replace("_", " ")
-    primary_style = style_prefs.get("primary_style", "modern")
-    color_palette = style_prefs.get("color_palette") or []
-    colors = ", ".join(str(c) for c in color_palette[:3]) if color_palette else "neutral tones"
-    base_prompt = (
-        f"Interior design visualization: a {room_type} room, {primary_style} style, "
-        f"colors {colors}. Photorealistic, well-lit, high quality."
-    )
+    """Build an English text prompt for image generation from structured_requirement and style params.
+    Prefers the natural-language design_description from Gemini when available.
+    """
+    design_description = (req.get("design_description") or "").strip()
+    if design_description:
+        base_prompt = design_description
+    else:
+        meta = req.get("meta") or {}
+        style_prefs = req.get("style_preferences") or {}
+        room_type = meta.get("room_type", "living_room").replace("_", " ")
+        primary_style = style_prefs.get("primary_style", "modern")
+        color_palette = style_prefs.get("color_palette") or []
+        colors = ", ".join(str(c) for c in color_palette[:3]) if color_palette else "neutral tones"
+        base_prompt = (
+            f"Interior design visualization: a {room_type} room, {primary_style} style, "
+            f"colors {colors}. Photorealistic, well-lit, high quality."
+        )
 
     if not style_params:
         return base_prompt
@@ -467,26 +548,26 @@ def _build_imagen_prompt_from_requirement(
     summary = style_params.get("style_summary") or ""
     strength = style_params.get("style_strength", 0.7)
 
-    extra_parts = [
-        f"Apply the style profile '{style_params.get('style_profile_name', primary_style)}' with strength {strength}.",
-    ]
+    extra_parts: list[str] = []
+    style_name = style_params.get("style_profile_name", "")
+    if style_name:
+        extra_parts.append(f"Style profile: {style_name} (strength {strength}).")
     if summary:
         extra_parts.append(summary)
     if visual_essence:
-        extra_parts.append("Key visual essence: " + ", ".join(str(item) for item in visual_essence[:4]) + ".")
+        extra_parts.append("Visual essence: " + ", ".join(str(item) for item in visual_essence[:4]) + ".")
     if material_recommendations:
-        extra_parts.append("Preferred materials: " + ", ".join(str(item) for item in material_recommendations[:4]) + ".")
+        extra_parts.append("Materials: " + ", ".join(str(item) for item in material_recommendations[:4]) + ".")
     if color_guidance.get("primary_color"):
         extra_parts.append(
-            "Target palette: "
-            f"primary {color_guidance.get('primary_color')}, "
+            f"Palette: primary {color_guidance.get('primary_color')}, "
             f"secondary {color_guidance.get('secondary_color')}, "
             f"accent {color_guidance.get('accent_color')}."
         )
     if style_prompt:
         extra_parts.append(style_prompt)
 
-    return base_prompt + " " + " ".join(extra_parts)
+    return (base_prompt + " " + " ".join(extra_parts)).strip()
 
 
 def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> None:
