@@ -101,3 +101,5 @@ dmypy.json
 .turbo
 .editorconfig
 .scratch
+
+.mcp.json
