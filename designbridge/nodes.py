@@ -141,6 +141,16 @@ def _call_gemini_requirement_analyzer(
             text = text[:-3]
         text = text.strip()
 
+        # 若 Gemini 回傳內容含前後雜訊，嘗試抓第一個完整 JSON 物件
+        if not text.startswith("{"):
+            start = text.find("{")
+            if start != -1:
+                text = text[start:]
+        if not text.endswith("}"):
+            end = text.rfind("}")
+            if end != -1:
+                text = text[: end + 1]
+
         structured = json.loads(text)
         return structured
 
@@ -552,7 +562,7 @@ def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> No
     img.save(out_path)
 
 
-# Cached pipelines (loaded once, reused for subsequent renders)
+# 快取模型，不用每次都載入
 _sdxl_pipeline: Any = None
 _controlnet_pipeline: Any = None
 
@@ -660,7 +670,7 @@ def _get_flux_pipeline():
     return _flux_pipeline
 
 
-def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None = None) -> bool:
+def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None = None, negative_prompt: str | None = None) -> bool:
     """
     Generate image with local SD / SDXL / Flux based on Config.LOCAL_MODEL_TYPE.
     Returns True on success.
@@ -697,13 +707,16 @@ def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None =
                 ).images[0]
             else:
                 pipe = _get_sdxl_pipeline()
-                image = pipe(prompt=prompt, num_inference_steps=steps).images[0]
+                kwargs = {"prompt": prompt, "num_inference_steps": steps}
+                if negative_prompt:
+                    kwargs["negative_prompt"] = negative_prompt
+                image = pipe(**kwargs).images[0]
 
         image.save(str(out_path))
         return True
     except Exception as e:
         import traceback
-        print(f"⚠️  render failed ({type(e).__name__}: {e})")
+        print(f"⚠️ Render failed ({type(e).__name__}: {e})")
         traceback.print_exc()
         return False
 
@@ -750,6 +763,12 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         controlnet_inputs["segmentation"] = str(seg_path)
 
     # 1. Hugging Face Inference API (cloud SDXL; no local download)
+    model_type = Config.get_local_model_type()
+    hf_model_id = {
+        "sd": Config.SD_MODEL,
+        "flux": Config.FLUX_MODEL,
+    }.get(model_type, Config.SDXL_MODEL)
+
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
         if _render_hf_inference(prompt, out_path, model=hf_model_id):
             backend = "hf_inference"
