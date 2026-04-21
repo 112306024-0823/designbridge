@@ -22,6 +22,7 @@ const result = ref(null)
 const loading = ref(false)
 const error = ref('')
 let currentRequestId = 0  // 用來丟棄過時的回應
+const submitKey = ref(0)  // 每次 submit 遞增，強制 ResultPanel 重新掛載
 const matchedStylePreview = ref(null)
 
 // 向量搜尋候選
@@ -118,6 +119,7 @@ async function handleSubmit() {
     return
   }
   const requestId = ++currentRequestId  // 每次提交拿到唯一 ID
+  submitKey.value++
   error.value = ''
   result.value = null
   loading.value = true
@@ -197,7 +199,7 @@ onMounted(fetchStyleOptions)
         @confirm="confirmedStyle = $event"
         @clear="confirmedStyle = null"
       />
-      <ResultPanel v-else :result="result" :loading="loading" />
+      <ResultPanel v-else :key="submitKey" :result="result" :loading="loading" />
     </main>
   </div>
 </template>
