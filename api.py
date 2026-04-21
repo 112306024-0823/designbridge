@@ -9,6 +9,9 @@ import time
 import shutil
 import uuid
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # 匯入設計引擎
 from designbridge import get_compiled_graph
@@ -25,10 +28,13 @@ style_images_dir = Path("style_kb/images")
 if style_images_dir.exists():
     app.mount("/style-images", StaticFiles(directory=str(style_images_dir)), name="style-images")
 
-# 解決前後端跨域問題
+# 解決前後端跨域問題 (具備彈性與擴充性的解法)
+cors_origins = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else []
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_origins=cors_origins,             # 讀取 .env 中的自訂網域 (適合正式上線環境)
+    allow_origin_regex=r"^https?://localhost:\d+$", # 允許所有 localhost 的開發埠號 (適合開發環境，不用再一直加 5174, 5175...)
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -58,27 +64,51 @@ async def upload_image(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, f)
     return {"path": str(dest)}
 
+_embedding_model = None
+_supabase_client = None
+
+def _get_embedding_model():
+    global _embedding_model
+    if _embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        _embedding_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+    return _embedding_model
+
+def _get_supabase():
+    global _supabase_client
+    if _supabase_client is None:
+        from supabase import create_client
+        _supabase_client = create_client(
+            os.environ["SUPABASE_URL"],
+            os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+        )
+    return _supabase_client
+
 @app.get("/api/style-preview")
 def get_style_preview(query: str = "", style_id: str = ""):
-    """根據文字語意搜尋最符合的風格參考圖，供前端即時預覽。"""
-    from designbridge.style_vector import is_vector_store_ready, query_style_images
-    if not is_vector_store_ready():
-        return {"image_url": None}
-    sid = style_id.strip() or None
+    """根據文字語意搜尋最符合的風格參考圖（Supabase pgvector），供前端即時預覽。"""
+    sid = style_id.strip() or ""
     q = query.strip() or sid or "interior design"
-    results = query_style_images(text_query=q, style_id=sid, top_k=1)
-    if not results or results[0].image_path == "N/A":
+    try:
+        model = _get_embedding_model()
+        embedding = model.encode(q, normalize_embeddings=True).tolist()
+        client = _get_supabase()
+        res = client.rpc("query_style_preview", {
+            "query_embedding": embedding,
+            "filter_style_id": sid,
+        }).execute()
+        if not res.data:
+            return {"image_url": None}
+        row = res.data[0]
+        style_name = (row.get("source_meta") or {}).get("style", row["style_id"])
+        return {
+            "image_url": row["image_url"],
+            "style_name": style_name,
+            "similarity": round(row["similarity"], 4),
+        }
+    except Exception as e:
+        print(f"⚠️ style-preview error: {e}")
         return {"image_url": None}
-    img_path = Path(results[0].image_path)
-    if not img_path.is_file():
-        return {"image_url": None}
-    # 取最後兩段 style_id/filename，對應 /style-images 掛載路徑
-    url = f"/style-images/{img_path.parent.name}/{img_path.name}"
-    return {
-        "image_url": url,
-        "style_name": results[0].style_name,
-        "similarity": results[0].similarity_score,
-    }
 
 
 @app.get("/")
