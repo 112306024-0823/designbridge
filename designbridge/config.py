@@ -15,9 +15,15 @@ dotenv.load_dotenv()  # Allow override from current working directory
 class Config:
     """DesignBridge configuration."""
 
-    GEMINI_MODEL: str = "gemini-1.5-flash"
+    GEMINI_MODEL: str = "gemini-3-flash"
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
     GEMINI_TEMPERATURE: float = 0.3
+
+    # LiteLLM unified model string (used by designbridge/llm.py).
+    # Format: "<provider>/<model-id>", e.g. "gemini/gemini-2.5-flash-lite", "gpt-4o",
+    # "claude-3-5-sonnet-20241022", "azure/gpt-4o".
+    LITELLM_MODEL: str = os.getenv("LITELLM_MODEL", "gemini/gemini-2.5-flash-lite")
+    LITELLM_FALLBACK_MODEL: str = os.getenv("LITELLM_FALLBACK_MODEL", "gemini/gemini-2.5-flash-lite")
 
     # Image generation (Imagen) - same API key as Gemini; requires billing
     IMAGEN_MODEL: str = os.getenv("DESIGNBRIDGE_IMAGEN_MODEL", "imagen-4.0-generate-001")

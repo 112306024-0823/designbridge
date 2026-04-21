@@ -1,9 +1,10 @@
 # DesignBridge FastAPI 後端
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import os
 import time
 import shutil
@@ -84,6 +85,67 @@ def _get_supabase():
         )
     return _supabase_client
 
+@app.get("/api/style-search")
+def search_styles(query: str = "", style_id: str = "", top_k: int = 3):
+    """向量搜尋最相似的風格參考圖，回傳多筆候選供使用者選擇。"""
+    from designbridge.style_supabase import _STYLE_PROMPTS
+    from style_kb.styles import STYLES
+    style_name_map = {sid: sname for sid, sname in STYLES}
+
+    sid = style_id.strip() or ""
+    q = query.strip() or sid or "interior design"
+    try:
+        model = _get_embedding_model()
+        embedding = model.encode(q, normalize_embeddings=True).tolist()
+        client = _get_supabase()
+
+        res = client.rpc("query_style_full", {
+            "query_embedding": embedding,
+            "filter_style_id": sid,
+            "top_k": min(top_k, 6),
+        }).execute()
+        if not res.data:
+            return []
+
+        # 批次取 style_kb（兩筆查詢，不用 N+1）
+        image_urls = [r["image_url"] for r in res.data]
+        kb_res = client.table("style_images").select("image_url,style_kb").in_("image_url", image_urls).execute()
+        kb_map = {r["image_url"]: r.get("style_kb") for r in (kb_res.data or [])}
+
+        candidates = []
+        for row in res.data:
+            url = row["image_url"]
+            s_id = row["style_id"]
+            style_kb = kb_map.get(url)
+            fallback = _STYLE_PROMPTS.get(s_id, _STYLE_PROMPTS.get("modern", {}))
+
+            description = None
+            positive_prompt = fallback.get("positive", "")
+            negative_prompt = fallback.get("negative", "")
+
+            if style_kb and isinstance(style_kb, dict):
+                description = style_kb.get("description")
+                ai = style_kb.get("ai_params") or {}
+                prompts = ai.get("prompts") or {}
+                positive_prompt = prompts.get("positive") or positive_prompt
+                negative_prompt = prompts.get("negative") or negative_prompt
+
+            source_meta = row.get("source_meta") or {}
+            candidates.append({
+                "style_id": s_id,
+                "style_name": style_name_map.get(s_id, source_meta.get("style", s_id)),
+                "image_url": url,
+                "similarity": round(float(row["similarity"]), 4),
+                "description": description,
+                "positive_prompt": positive_prompt,
+                "negative_prompt": negative_prompt,
+            })
+        return candidates
+    except Exception as e:
+        print(f"⚠️ style-search error: {e}")
+        return []
+
+
 @app.get("/api/style-preview")
 def get_style_preview(query: str = "", style_id: str = ""):
     """根據文字語意搜尋最符合的風格參考圖（Supabase pgvector），供前端即時預覽。"""
@@ -125,6 +187,54 @@ def get_style_profiles():
         return [{"style_id": s["style_id"], "style_name": s["style_name"]} for s in available]
     # fallback：回傳 STYLES 定義的完整清單
     return [{"style_id": sid, "style_name": sname} for sid, sname in STYLES]
+
+# ── Chat (LiteLLM) ───────────────────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str          # "user" | "assistant" | "system"
+    content: str
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+    model: Optional[str] = None        # 留空則用 Config.LITELLM_MODEL
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    stream: bool = False
+
+
+@app.post("/api/chat")
+async def chat(request: ChatRequest):
+    """通用 LLM chat endpoint，透過 LiteLLM 支援任意模型。
+
+    - stream=false（預設）：回傳 { "content": "..." }
+    - stream=true：Server-Sent Events，每個 chunk 為 data: <text>\\n\\n
+    """
+    from designbridge.llm import call_llm, call_llm_stream
+    from designbridge.config import Config
+
+    history = [{"role": m.role, "content": m.content} for m in request.messages[:-1]]
+    last = request.messages[-1]
+
+    kwargs = dict(
+        model=request.model or Config.LITELLM_MODEL,
+        history=history or None,
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
+    )
+
+    if request.stream:
+        def _sse_generator():
+            for chunk in call_llm_stream(last.content, **kwargs):
+                yield f"data: {chunk}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(_sse_generator(), media_type="text/event-stream")
+
+    try:
+        content = call_llm(last.content, **kwargs)
+        return {"content": content, "model": request.model or Config.LITELLM_MODEL}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # 3. 建立 POST 路由
 @app.post("/api/generate")

@@ -37,14 +37,13 @@ def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     task_id = state.get("task_id") or str(uuid.uuid4())
     iteration = state.get("iteration", 0)
 
-    # Try Gemini API first
+    # Try LLM (via LiteLLM) first, fall back to rule-based on failure
     try:
-        api_key = Config.get_gemini_api_key()
-        structured_requirement = _call_gemini_requirement_analyzer(
-            text_prompt, edit_scope, initial_image, api_key, style_reference_image=style_reference_image
+        structured_requirement = _call_llm_requirement_analyzer(
+            text_prompt, edit_scope, initial_image, style_reference_image=style_reference_image
         )
-    except (ValueError, Exception) as e:
-        print(f"⚠️  Gemini API not available or failed ({e}), falling back to rule-based")
+    except Exception as e:
+        print(f"⚠️  LLM call failed ({e}), falling back to rule-based")
         structured_requirement = _rule_based_requirement_analyzer(text_prompt, edit_scope, style_reference_image=style_reference_image)
 
     # If the user explicitly selected a style from the dropdown, override whatever
@@ -71,98 +70,53 @@ def _is_valid_image_path(image_path: str) -> bool:
     return Path(s).is_file()
 
 
-def _call_gemini_requirement_analyzer(
-    text_prompt: str, edit_scope: float, initial_image: str, api_key: str, style_reference_image: str = ""
+def _call_llm_requirement_analyzer(
+    text_prompt: str, edit_scope: float, initial_image: str, style_reference_image: str = ""
 ) -> dict[str, Any]:
-    """Call Gemini API to analyze requirements and return structured JSON.
-    When initial_image is a valid file path, sends the image to Gemini Vision (multimodal).
+    """Call LLM (via LiteLLM) to analyze requirements and return structured JSON.
+    Sends images inline when valid file paths are provided (multimodal).
     """
+    import json as _json
+    from designbridge.llm import call_llm
+
+    prompt = REQUIREMENT_ANALYZER_PROMPT.format(
+        text_prompt=text_prompt,
+        edit_scope=edit_scope,
+        initial_image=initial_image,
+    )
+
+    images: list[str] = []
+    if _is_valid_image_path(initial_image):
+        images.append(initial_image)
+    if style_reference_image and _is_valid_image_path(style_reference_image):
+        images.append(style_reference_image)
+
+    text = call_llm(prompt, images=images or None)
+    text = text.strip()
+
+    # Strip markdown code fences if present
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+
+    # Tolerate leading/trailing noise around the JSON object
+    if not text.startswith("{"):
+        start = text.find("{")
+        if start != -1:
+            text = text[start:]
+    if not text.endswith("}"):
+        end = text.rfind("}")
+        if end != -1:
+            text = text[: end + 1]
+
     try:
-        import base64
-
-        import google.generativeai as genai
-
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(Config.GEMINI_MODEL)
-
-        prompt = REQUIREMENT_ANALYZER_PROMPT.format(
-            text_prompt=text_prompt,
-            edit_scope=edit_scope,
-            initial_image=initial_image,
-        )
-
-        # Build content: image + text when image path is valid (Gemini Vision)
-        # 支援 style_reference_image 作為第二張圖
-        images = []
-        if _is_valid_image_path(initial_image):
-            try:
-                uploaded_file = genai.upload_file(path=initial_image)
-                images.append(uploaded_file)
-            except Exception:
-                path = Path(initial_image)
-                suffix = path.suffix.lower()
-                mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
-                mime_type = mime_map.get(suffix, "image/jpeg")
-                img_bytes = path.read_bytes()
-                image_part = {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(img_bytes).decode("ascii")}}
-                images.append(image_part)
-        if style_reference_image and _is_valid_image_path(style_reference_image):
-            try:
-                uploaded_file = genai.upload_file(path=style_reference_image)
-                images.append(uploaded_file)
-            except Exception:
-                path = Path(style_reference_image)
-                suffix = path.suffix.lower()
-                mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
-                mime_type = mime_map.get(suffix, "image/jpeg")
-                img_bytes = path.read_bytes()
-                image_part = {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(img_bytes).decode("ascii")}}
-                images.append(image_part)
-        if images:
-            contents = images + [prompt]
-        else:
-            contents = prompt
-
-        response = model.generate_content(
-            contents,
-            generation_config=genai.GenerationConfig(
-                temperature=Config.GEMINI_TEMPERATURE,
-            ),
-        )
-
-        # Extract JSON from response
-        text = response.text.strip()
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
-
-        # 若 Gemini 回傳內容含前後雜訊，嘗試抓第一個完整 JSON 物件
-        if not text.startswith("{"):
-            start = text.find("{")
-            if start != -1:
-                text = text[start:]
-        if not text.endswith("}"):
-            end = text.rfind("}")
-            if end != -1:
-                text = text[: end + 1]
-
-        try:
-            import json as _json
-            structured = _json.loads(text)
-            return structured
-        except Exception:
-            return _parse_nl_requirement(text, edit_scope, text_prompt)
-
-    except ImportError:
-        raise ValueError(
-            "google-generativeai not installed. Run: pip install google-generativeai"
-        )
-    except Exception as e:
-        raise RuntimeError(f"Gemini API call failed: {e}")
+        return _json.loads(text)
+    except Exception:
+        return _parse_nl_requirement(text, edit_scope, text_prompt)
 
 
 def _parse_nl_requirement(nl_text: str, edit_scope: float, text_prompt: str = "") -> dict[str, Any]:
@@ -876,7 +830,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     elif style_params and style_params.get("reference_image_path") and Path(style_params["reference_image_path"]).exists():
         control_img = style_params["reference_image_path"]
         controlnet_inputs["style_reference_image"] = control_img
-        print(f"🖼️  使用 Supabase 匹配圖作為風格參考：{Path(control_img).name}")
+        print(f"使用 Supabase 匹配圖作為風格參考：{Path(control_img).name}")
     else:
         control_img = depth_path if depth_path and Path(depth_path).exists() else None
 
