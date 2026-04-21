@@ -111,7 +111,7 @@ defineEmits(['submit'])
           AI 依描述自動選取：<strong>{{ matchedStylePreview.style_name }}</strong>
           <span class="score">相似度 {{ (matchedStylePreview.similarity * 100).toFixed(0) }}%</span>
         </div>
-        <img :src="`http://localhost:8000${matchedStylePreview.image_url}`" alt="風格參考圖" />
+        <img :src="`http://localhost:8000${matchedStylePreview.image_url}`" alt="風格參考圖" @error="$event.target.style.display='none'" />
       </div>
     </div>
 

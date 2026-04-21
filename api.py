@@ -70,6 +70,8 @@ def get_style_preview(query: str = "", style_id: str = ""):
     if not results or results[0].image_path == "N/A":
         return {"image_url": None}
     img_path = Path(results[0].image_path)
+    if not img_path.is_file():
+        return {"image_url": None}
     # 取最後兩段 style_id/filename，對應 /style-images 掛載路徑
     url = f"/style-images/{img_path.parent.name}/{img_path.name}"
     return {
