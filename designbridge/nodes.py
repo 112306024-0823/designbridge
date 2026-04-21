@@ -866,12 +866,17 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     else:
         hf_model_id = Config.SDXL_MODEL
 
-    # Use style_reference_image as control image if provided, otherwise fall back to depth
+    # Use style_reference_image as control image:
+    # priority: user upload > Supabase matched image > depth map
     user_input = state.get("user_input") or {}
     style_reference_image = user_input.get("style_reference_image")
     if style_reference_image and Path(style_reference_image).exists():
         control_img = style_reference_image
         controlnet_inputs["style_reference_image"] = str(style_reference_image)
+    elif style_params and style_params.get("reference_image_path") and Path(style_params["reference_image_path"]).exists():
+        control_img = style_params["reference_image_path"]
+        controlnet_inputs["style_reference_image"] = control_img
+        print(f"🖼️  使用 Supabase 匹配圖作為風格參考：{Path(control_img).name}")
     else:
         control_img = depth_path if depth_path and Path(depth_path).exists() else None
 

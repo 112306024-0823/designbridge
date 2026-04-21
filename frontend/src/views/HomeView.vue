@@ -9,7 +9,7 @@ const API_BASE = 'http://localhost:8000'
 
 const textPrompt = ref('')
 const editScope = ref(0.6)
-const modelType = ref('sdxl')
+const modelType = ref('flux')
 const selectedStyle = ref('auto')
 const styleOptions = ref([{ label: '自動', value: 'auto' }])
 const styleLoading = ref(false)
@@ -41,25 +41,32 @@ function schedulePreview() {
 
 watch([textPrompt, selectedStyle], schedulePreview)
 
-async function fetchStyleOptions() {
+async function fetchStyleOptions(retries = 5, delayMs = 1500) {
   styleLoading.value = true
   styleError.value = ''
-  try {
-    const res = await fetch(`${API_BASE}/api/style-profiles`)
-    if (!res.ok) throw new Error('載入風格選項失敗')
-    const data = await res.json()
-    styleOptions.value = [
-      { label: '自動', value: 'auto' },
-      ...data.map(({ style_name, style_id }) => ({
-        label: `${style_name} (${style_id})`,
-        value: style_id,
-      })),
-    ]
-  } catch (e) {
-    styleError.value = e.message || '載入風格選項失敗'
-  } finally {
-    styleLoading.value = false
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE}/api/style-profiles`)
+      if (!res.ok) throw new Error('載入風格選項失敗')
+      const data = await res.json()
+      styleOptions.value = [
+        { label: '自動', value: 'auto' },
+        ...data.map(({ style_name, style_id }) => ({
+          label: `${style_name} (${style_id})`,
+          value: style_id,
+        })),
+      ]
+      styleLoading.value = false
+      return
+    } catch (e) {
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, delayMs))
+      } else {
+        styleError.value = '無法連線後端，請確認伺服器是否已啟動'
+      }
+    }
   }
+  styleLoading.value = false
 }
 
 async function uploadFile(file) {

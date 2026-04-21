@@ -3,7 +3,7 @@ import ImageUpload from './ImageUpload.vue'
 
 const textPrompt      = defineModel('textPrompt',      { default: '' })
 const editScope       = defineModel('editScope',       { default: 0.6 })
-const modelType       = defineModel('modelType',       { default: 'sdxl' })
+const modelType       = defineModel('modelType',       { default: 'flux' })
 const selectedStyle   = defineModel('selectedStyle',   { default: 'auto' })
 const manualImagePath = defineModel('manualImagePath', { default: '' })
 const showManualPath  = defineModel('showManualPath',  { default: false })

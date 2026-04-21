@@ -52,39 +52,51 @@ def build_style_params(
     建立 Renderer 可用的風格參數。
 
     優先順序：
-    1. 向量庫語義搜尋（style_vector.py）
-    2. Fallback：舊版 aggregated JSON（若向量庫尚未建立）
+    1. Supabase pgvector 語義搜尋
+    2. 本地 ChromaDB（若 Supabase 不可用）
+    3. Fallback：aggregated JSON
     """
     style_profile_id = resolve_style_profile_id(req, user_input)
     text_query = (user_input or {}).get("text_prompt", "").strip()
+    query = text_query or style_profile_id or "interior design"
 
-    # ── 1. 向量庫搜尋 ─────────────────────────────────────────────────────────
+    # ── 1. Supabase pgvector 搜尋 ─────────────────────────────────────────────
+    try:
+        from designbridge.style_supabase import (
+            query_style_images_supabase,
+            blend_style_params_supabase,
+        )
+        results = query_style_images_supabase(
+            text_query=query,
+            style_id=style_profile_id,
+            top_k=3,
+        )
+        if results:
+            return blend_style_params_supabase(results)
+    except Exception as e:
+        print(f"⚠️  Supabase 向量搜尋失敗，嘗試本地向量庫：{e}")
+
+    # ── 2. 本地 ChromaDB 搜尋 ─────────────────────────────────────────────────
     try:
         from designbridge.style_vector import (
             is_vector_store_ready,
             query_style_images,
             blend_style_params,
         )
-
         if is_vector_store_ready():
-            query = text_query or style_profile_id or "interior design"
-            results = query_style_images(
+            results_local = query_style_images(
                 text_query=query,
                 style_id=style_profile_id,
                 top_k=3,
             )
-            if results:
-                params = blend_style_params(results)
-                print(
-                    f"✅ 向量搜尋：{style_profile_id} → "
-                    f"top-1 [{results[0].doc_id}] score={results[0].similarity_score}"
-                )
+            if results_local:
+                params = blend_style_params(results_local)
+                print(f"✅ 本地向量搜尋：top-1 [{results_local[0].doc_id}] score={results_local[0].similarity_score}")
                 return params
-
     except Exception as e:
-        print(f"⚠️  向量庫查詢失敗，使用 fallback：{e}")
+        print(f"⚠️  本地向量庫查詢失敗：{e}")
 
-    # ── 2. Fallback：aggregated JSON ──────────────────────────────────────────
+    # ── 3. Fallback：aggregated JSON ──────────────────────────────────────────
     if not style_profile_id:
         return None
 
