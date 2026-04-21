@@ -183,7 +183,7 @@ def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float, style_
     # Check specific styles first before generic "現代" to avoid false matches
     # e.g. "帶有現代感的日式設計" should resolve to "日式" not "現代"
     styles = ["北歐", "nordic", "scandinavian", "工業", "industrial", "日式", "japanese",
-              "鄉村", "country", "古典", "classic", "混搭", "mix", "美式", "american",
+              "鄉村", "country", "古典", "classic", "美式", "american",
               "奢華", "luxury", "新古典", "neoclassic", "簡約", "minimal",
               "現代", "modern"]
     primary_style = next((s for s in styles if s in text), None)
@@ -488,7 +488,6 @@ def _build_imagen_prompt_from_requirement(
         "modern": "modern contemporary",
         "country": "country rustic farmhouse",
         "classic": "classical traditional",
-        "mix": "eclectic mixed style",
         "nordic": "Nordic Scandinavian minimalist",
         "industrial": "industrial loft",
         "japanese": "Japanese minimalist Japandi",

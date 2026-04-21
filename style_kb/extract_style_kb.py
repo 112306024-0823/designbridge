@@ -10,7 +10,7 @@ Usage (from project root `DesignBridge`):
 Put input images under one folder per style (10 styles):
     style_kb/images/<style_id>/
 
-  style_id: modern, country, classic, mix, nordic, industrial, japanese, american, luxury, neoclassic
+  style_id: modern, country, classic, nordic, industrial, japanese, american, luxury, neoclassic
   (See style_kb.styles.STYLES for the full list and Chinese names.)
 
 Results will be written to:
