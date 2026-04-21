@@ -101,3 +101,8 @@ dmypy.json
 .turbo
 .editorconfig
 .scratch
+
+.mcp.json
+style_kb/vector_store/
+style_kb/images
+style_kb/raw

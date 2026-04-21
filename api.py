@@ -21,10 +21,14 @@ artifacts_dir = Path("artifacts")
 artifacts_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/artifacts", StaticFiles(directory=str(artifacts_dir)), name="artifacts")
 
+style_images_dir = Path("style_kb/images")
+if style_images_dir.exists():
+    app.mount("/style-images", StaticFiles(directory=str(style_images_dir)), name="style-images")
+
 # 解決前後端跨域問題
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -53,6 +57,27 @@ async def upload_image(file: UploadFile = File(...)):
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
     return {"path": str(dest)}
+
+@app.get("/api/style-preview")
+def get_style_preview(query: str = "", style_id: str = ""):
+    """根據文字語意搜尋最符合的風格參考圖，供前端即時預覽。"""
+    from designbridge.style_vector import is_vector_store_ready, query_style_images
+    if not is_vector_store_ready():
+        return {"image_url": None}
+    sid = style_id.strip() or None
+    q = query.strip() or sid or "interior design"
+    results = query_style_images(text_query=q, style_id=sid, top_k=1)
+    if not results or results[0].image_path == "N/A":
+        return {"image_url": None}
+    img_path = Path(results[0].image_path)
+    # 取最後兩段 style_id/filename，對應 /style-images 掛載路徑
+    url = f"/style-images/{img_path.parent.name}/{img_path.name}"
+    return {
+        "image_url": url,
+        "style_name": results[0].style_name,
+        "similarity": results[0].similarity_score,
+    }
+
 
 @app.get("/")
 def read_root():
@@ -119,4 +144,6 @@ async def generate_design(request: DesignRequest):
         }
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useImageField } from '@/composables/useImageField'
 import SidebarForm from '@/components/SidebarForm.vue'
 import ResultPanel from '@/components/ResultPanel.vue'
@@ -21,6 +21,25 @@ const styleRefImage = useImageField()   // 風格參考圖
 const result = ref(null)
 const loading = ref(false)
 const error = ref('')
+const matchedStylePreview = ref(null)  // { image_url, style_name, similarity }
+
+let previewTimer = null
+async function fetchStylePreview() {
+  if (styleRefImage.file) return  // 使用者已上傳，不蓋掉
+  const q = textPrompt.value.trim()
+  const sid = selectedStyle.value !== 'auto' ? selectedStyle.value : ''
+  if (!q && !sid) { matchedStylePreview.value = null; return }
+  try {
+    const res = await fetch(`${API_BASE}/api/style-preview?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}`)
+    if (res.ok) matchedStylePreview.value = await res.json()
+  } catch { /* 靜默失敗 */ }
+}
+function schedulePreview() {
+  clearTimeout(previewTimer)
+  previewTimer = setTimeout(fetchStylePreview, 500)
+}
+
+watch([textPrompt, selectedStyle], schedulePreview)
 
 async function fetchStyleOptions() {
   styleLoading.value = true
@@ -113,6 +132,7 @@ onMounted(fetchStyleOptions)
         :styleOptions="styleOptions"
         :styleLoading="styleLoading"
         :styleError="styleError"
+        :matchedStylePreview="matchedStylePreview"
         :loading="loading"
         :error="error"
         @submit="handleSubmit"
