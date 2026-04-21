@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import json
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -130,6 +130,7 @@ def _call_gemini_requirement_analyzer(
             ),
         )
 
+<<<<<<< HEAD
         # Extract JSON from response
         text = response.text.strip()
         # Remove markdown code blocks if present
@@ -153,6 +154,10 @@ def _call_gemini_requirement_analyzer(
 
         structured = json.loads(text)
         return structured
+=======
+        nl_text = response.text.strip()
+        return _parse_nl_requirement(nl_text, edit_scope, text_prompt)
+>>>>>>> d3ac6d6411e69c97884f2bf0aa8b44254d54d062
 
     except ImportError:
         raise ValueError(
@@ -160,6 +165,91 @@ def _call_gemini_requirement_analyzer(
         )
     except Exception as e:
         raise RuntimeError(f"Gemini API call failed: {e}")
+
+
+def _parse_nl_requirement(nl_text: str, edit_scope: float, text_prompt: str = "") -> dict[str, Any]:
+    """Parse natural language requirement report (labeled fields) into a compatible dict."""
+
+    def extract_field(field: str) -> str:
+        m = re.search(rf'^{re.escape(field)}:\s*(.+)$', nl_text, re.MULTILINE)
+        return m.group(1).strip() if m else ""
+
+    def extract_list(field: str) -> list[str]:
+        val = extract_field(field)
+        if not val or val.strip() in ("無", "none", ""):
+            return []
+        return [item.strip() for item in re.split(r'[,，]', val) if item.strip() not in ("", "無")]
+
+    room_type = extract_field("空間類型") or "living_room"
+    design_goal = extract_field("設計目標") or "renovation"
+    primary_style = extract_field("主要風格") or "現代"
+    secondary_style = extract_field("次要風格") or None
+    if secondary_style in ("無", ""):
+        secondary_style = None
+    color_palette = extract_list("色彩偏好")
+    material_preferences = extract_list("材質偏好")
+    must_keep = extract_list("必須保留")
+    must_add = extract_list("必須新增")
+    must_remove = extract_list("必須移除")
+    hint_layout = extract_field("涉及佈局") == "是"
+    hint_style = extract_field("涉及風格") == "是"
+    hint_adjuster = extract_field("僅局部微調") == "是" or edit_scope < 0.3
+    design_description = extract_field("設計描述") or ""
+
+    if edit_scope < 0.3:
+        allowed_ops = ["inpaint"]
+    elif edit_scope > 0.7:
+        allowed_ops = ["layout", "style"]
+    elif hint_layout and hint_style:
+        allowed_ops = ["layout", "style"]
+    elif hint_layout:
+        allowed_ops = ["layout"]
+    elif hint_style:
+        allowed_ops = ["style"]
+    else:
+        allowed_ops = ["layout", "style"]
+
+    return {
+        "user_description_raw": text_prompt or nl_text,
+        "design_description": design_description,
+        "meta": {
+            "room_type": room_type,
+            "design_goal": design_goal,
+            "user_experience_level": "general",
+        },
+        "space_info": {
+            "estimated_size": {"width": 5.0, "height": 3.0, "depth": 4.0},
+            "windows": [],
+            "doors": [],
+        },
+        "style_preferences": {
+            "primary_style": primary_style,
+            "secondary_style": secondary_style,
+            "color_palette": color_palette,
+            "material_preferences": material_preferences,
+            "style_strength": 0.7,
+            "reference_images": [],
+        },
+        "layout_constraints": {
+            "must_keep": must_keep,
+            "must_add": must_add,
+            "must_remove": must_remove,
+            "immutable_regions": [],
+            "functional_zones": [],
+        },
+        "edit_scope": {
+            "scope_value": edit_scope,
+            "allowed_operations": allowed_ops,
+        },
+        "priority_weights": {
+            "layout_rationality": 0.4,
+            "style_consistency": 0.4,
+            "novelty": 0.2,
+        },
+        "hint_layout": hint_layout,
+        "hint_style": hint_style,
+        "hint_adjuster": hint_adjuster,
+    }
 
 
 def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float, style_reference_image: str = "") -> dict[str, Any]:
@@ -210,6 +300,7 @@ def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float, style_
     # Build RequirementJSON structure
     structured_requirement: dict[str, Any] = {
         "user_description_raw": text_prompt,
+        "design_description": "",
         "meta": {
             "room_type": room_type,
             "design_goal": "renovation",  # default
@@ -482,8 +573,9 @@ def _build_imagen_prompt_from_requirement(
     req: dict[str, Any],
     style_params: dict[str, Any] | None = None,
 ) -> str:
-    """Build an English text prompt for SDXL from structured_requirement and style params."""
-    # Maps style_id to a descriptive English phrase for the image model
+    """Build an English text prompt for image generation from structured_requirement and style params.
+    Prefers the natural-language design_description from Gemini when available.
+    """
     _STYLE_ID_TO_EN = {
         "modern": "modern contemporary",
         "country": "country rustic farmhouse",
@@ -495,23 +587,25 @@ def _build_imagen_prompt_from_requirement(
         "luxury": "luxury high-end glamour",
         "neoclassic": "neoclassical",
     }
-    meta = req.get("meta") or {}
-    style_prefs = req.get("style_preferences") or {}
-    room_type = meta.get("room_type", "living_room").replace("_", " ")
-    # Prefer the resolved style_profile_id from style_params (comes from explicit dropdown
-    # selection or profile resolution); fall back to text-inferred primary_style.
-    if style_params and style_params.get("style_profile_id"):
-        style_id = style_params["style_profile_id"].lower()
+    design_description = (req.get("design_description") or "").strip()
+    if design_description:
+        base_prompt = design_description
     else:
-        raw_style = style_prefs.get("primary_style") or ""
-        style_id = STYLE_NAME_TO_ID.get(raw_style) or raw_style.lower()
-    primary_style = _STYLE_ID_TO_EN.get(style_id, style_id) or "interior"
-    color_palette = style_prefs.get("color_palette") or []
-    colors = ", ".join(str(c) for c in color_palette[:3]) if color_palette else "neutral tones"
-    base_prompt = (
-        f"Interior design visualization: a {room_type} room, {primary_style} style, "
-        f"colors {colors}. Photorealistic, well-lit, high quality."
-    )
+        meta = req.get("meta") or {}
+        style_prefs = req.get("style_preferences") or {}
+        room_type = meta.get("room_type", "living_room").replace("_", " ")
+        if style_params and style_params.get("style_profile_id"):
+            style_id = style_params["style_profile_id"].lower()
+        else:
+            raw_style = style_prefs.get("primary_style") or ""
+            style_id = STYLE_NAME_TO_ID.get(raw_style) or raw_style.lower()
+        primary_style = _STYLE_ID_TO_EN.get(style_id, style_id) or "interior"
+        color_palette = style_prefs.get("color_palette") or []
+        colors = ", ".join(str(c) for c in color_palette[:3]) if color_palette else "neutral tones"
+        base_prompt = (
+            f"Interior design visualization: a {room_type} room, {primary_style} style, "
+            f"colors {colors}. Photorealistic, well-lit, high quality."
+        )
 
     if not style_params:
         return base_prompt
@@ -523,26 +617,26 @@ def _build_imagen_prompt_from_requirement(
     summary = style_params.get("style_summary") or ""
     strength = style_params.get("style_strength", 0.7)
 
-    extra_parts = [
-        f"Apply the style profile '{style_params.get('style_profile_name', primary_style)}' with strength {strength}.",
-    ]
+    extra_parts: list[str] = []
+    style_name = style_params.get("style_profile_name", "")
+    if style_name:
+        extra_parts.append(f"Style profile: {style_name} (strength {strength}).")
     if summary:
         extra_parts.append(summary)
     if visual_essence:
-        extra_parts.append("Key visual essence: " + ", ".join(str(item) for item in visual_essence[:4]) + ".")
+        extra_parts.append("Visual essence: " + ", ".join(str(item) for item in visual_essence[:4]) + ".")
     if material_recommendations:
-        extra_parts.append("Preferred materials: " + ", ".join(str(item) for item in material_recommendations[:4]) + ".")
+        extra_parts.append("Materials: " + ", ".join(str(item) for item in material_recommendations[:4]) + ".")
     if color_guidance.get("primary_color"):
         extra_parts.append(
-            "Target palette: "
-            f"primary {color_guidance.get('primary_color')}, "
+            f"Palette: primary {color_guidance.get('primary_color')}, "
             f"secondary {color_guidance.get('secondary_color')}, "
             f"accent {color_guidance.get('accent_color')}."
         )
     if style_prompt:
         extra_parts.append(style_prompt)
 
-    return base_prompt + " " + " ".join(extra_parts)
+    return (base_prompt + " " + " ".join(extra_parts)).strip()
 
 
 def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> None:
@@ -631,7 +725,9 @@ def _render_hf_inference(prompt: str, out_path: Path, model: str = "") -> bool:
         image.save(str(out_path))
         return True
     except Exception as e:
-        print(f"⚠️  HF Inference render failed ({e})")
+        import traceback
+        print(f"⚠️  HF Inference render failed ({type(e).__name__}: {e})")
+        traceback.print_exc()
         return False
 
 
@@ -761,6 +857,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if seg_path:
         controlnet_inputs["segmentation"] = str(seg_path)
 
+<<<<<<< HEAD
     # 1. Hugging Face Inference API (cloud SDXL; no local download)
     model_type = Config.get_local_model_type()
     hf_model_id = {
@@ -768,25 +865,43 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         "flux": Config.FLUX_MODEL,
     }.get(model_type, Config.SDXL_MODEL)
 
+=======
+    # Resolve selected model type and corresponding HF model ID
+    model_type = Config.get_local_model_type()
+    if model_type == "flux":
+        hf_model_id = Config.FLUX_MODEL
+    elif model_type == "sd":
+        hf_model_id = Config.SD_MODEL
+    else:
+        hf_model_id = Config.SDXL_MODEL
+
+    # Use style_reference_image as control image if provided, otherwise fall back to depth
+    user_input = state.get("user_input") or {}
+    style_reference_image = user_input.get("style_reference_image")
+    if style_reference_image and Path(style_reference_image).exists():
+        control_img = style_reference_image
+        controlnet_inputs["style_reference_image"] = str(style_reference_image)
+    else:
+        control_img = depth_path if depth_path and Path(depth_path).exists() else None
+
+    # 1. Hugging Face Inference API (cloud; no local download)
+>>>>>>> d3ac6d6411e69c97884f2bf0aa8b44254d54d062
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
         if _render_hf_inference(prompt, out_path, model=hf_model_id):
             backend = "hf_inference"
             generation_params["model"] = hf_model_id
             generation_params["provider"] = Config.HF_INFERENCE_PROVIDER
 
-    # 2. Local SDXL (with ControlNet if depth available)
+    # 2. Local model (SD / SDXL / Flux)
     if backend == "placeholder" and Config.ENABLE_SDXL_FALLBACK:
-        control_img = depth_path if depth_path and Path(depth_path).exists() else None
-        if _render_sdxl(
-            prompt,
-            out_path,
-            control_image=control_img,
-            negative_prompt=negative_prompt,
-        ):
-            backend = "sdxl"
-            generation_params["model"] = Config.SDXL_MODEL
+        if _render_sdxl(prompt, out_path, control_image=control_img):
+            backend = model_type
+            generation_params["model"] = hf_model_id
             if control_img:
-                generation_params["controlnet"] = style_params.get("controlnet_type", "depth")
+                if style_reference_image and Path(style_reference_image).exists() and control_img == style_reference_image:
+                    generation_params["controlnet"] = "style_reference_image"
+                elif model_type == "sdxl":
+                    generation_params["controlnet"] = style_params.get("controlnet_type", "depth")
                 generation_params["controlnet_scale"] = Config.CONTROLNET_CONDITIONING_SCALE
         else:
             generation_params["render_error"] = "local render failed"

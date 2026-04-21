@@ -7,8 +7,7 @@ import tempfile
 import time
 from pathlib import Path
 import streamlit as st
-
-from designbridge import get_compiled_graph 
+from designbridge import get_compiled_graph
 from designbridge.style_apply import list_available_style_profiles
 
 
