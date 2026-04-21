@@ -130,10 +130,8 @@ def _call_gemini_requirement_analyzer(
             ),
         )
 
-<<<<<<< HEAD
         # Extract JSON from response
         text = response.text.strip()
-        # Remove markdown code blocks if present
         if text.startswith("```json"):
             text = text[7:]
         if text.startswith("```"):
@@ -152,12 +150,12 @@ def _call_gemini_requirement_analyzer(
             if end != -1:
                 text = text[: end + 1]
 
-        structured = json.loads(text)
-        return structured
-=======
-        nl_text = response.text.strip()
-        return _parse_nl_requirement(nl_text, edit_scope, text_prompt)
->>>>>>> d3ac6d6411e69c97884f2bf0aa8b44254d54d062
+        try:
+            import json as _json
+            structured = _json.loads(text)
+            return structured
+        except Exception:
+            return _parse_nl_requirement(text, edit_scope, text_prompt)
 
     except ImportError:
         raise ValueError(
@@ -658,6 +656,8 @@ def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> No
 # 快取模型，不用每次都載入
 _sdxl_pipeline: Any = None
 _controlnet_pipeline: Any = None
+_sd_pipeline: Any = None
+_flux_pipeline: Any = None
 
 
 def _get_sdxl_pipeline():
@@ -857,16 +857,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if seg_path:
         controlnet_inputs["segmentation"] = str(seg_path)
 
-<<<<<<< HEAD
     # 1. Hugging Face Inference API (cloud SDXL; no local download)
-    model_type = Config.get_local_model_type()
-    hf_model_id = {
-        "sd": Config.SD_MODEL,
-        "flux": Config.FLUX_MODEL,
-    }.get(model_type, Config.SDXL_MODEL)
-
-=======
-    # Resolve selected model type and corresponding HF model ID
     model_type = Config.get_local_model_type()
     if model_type == "flux":
         hf_model_id = Config.FLUX_MODEL
@@ -884,8 +875,6 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     else:
         control_img = depth_path if depth_path and Path(depth_path).exists() else None
 
-    # 1. Hugging Face Inference API (cloud; no local download)
->>>>>>> d3ac6d6411e69c97884f2bf0aa8b44254d54d062
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
         if _render_hf_inference(prompt, out_path, model=hf_model_id):
             backend = "hf_inference"
