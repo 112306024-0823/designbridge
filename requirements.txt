@@ -5,9 +5,8 @@ typing-extensions>=4.0.0
 streamlit>=1.30.0
 
 # Gemini API (text/vision)
-google-generativeai>=0.3.0
-# Imagen image generation (optional; uses same GEMINI_API_KEY)
 google-genai>=1.0.0
+# Imagen image generation (optional; uses same GEMINI_API_KEY)
 python-multipart
 requests>=2.31.0
 # Local vision inference (Depth Anything V2 + Segmentation)

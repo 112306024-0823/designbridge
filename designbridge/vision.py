@@ -50,7 +50,7 @@ def _load_depth_model(model_name: str) -> Any:
     """Load Depth Anything V2 model and processor once (cached)."""
     from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
-    processor = AutoImageProcessor.from_pretrained(model_name)
+    processor = AutoImageProcessor.from_pretrained(model_name, use_fast=False)
     model = AutoModelForDepthEstimation.from_pretrained(model_name)
 
     device, _ = _get_device()
@@ -108,7 +108,7 @@ def _load_upernet(model_name: str) -> Any:
     """Load UPerNet segmentation model and processor once (cached)."""
     from transformers import AutoImageProcessor, UperNetForSemanticSegmentation
 
-    processor = AutoImageProcessor.from_pretrained(model_name)
+    processor = AutoImageProcessor.from_pretrained(model_name, use_fast=False)
     model = UperNetForSemanticSegmentation.from_pretrained(model_name)
 
     device, _ = _get_device()

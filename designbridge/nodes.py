@@ -70,12 +70,10 @@ def _call_gemini_requirement_analyzer(
     When initial_image is a valid file path, sends the image to Gemini Vision (multimodal).
     """
     try:
-        import base64
+        from google import genai
+        from google.genai import types
 
-        import google.generativeai as genai
-
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(Config.GEMINI_MODEL)
+        client = genai.Client(api_key=api_key)
 
         prompt = REQUIREMENT_ANALYZER_PROMPT.format(
             text_prompt=text_prompt,
@@ -86,24 +84,26 @@ def _call_gemini_requirement_analyzer(
         # Build content: image + text when image path is valid (Gemini Vision)
         use_vision = _is_valid_image_path(initial_image)
         if use_vision:
-            try:
-                uploaded_file = genai.upload_file(path=initial_image)
-                contents = [uploaded_file, prompt]
-            except Exception:
-                # Fallback: inline image data (e.g. if upload_file fails or is unavailable)
-                path = Path(initial_image)
-                suffix = path.suffix.lower()
-                mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
-                mime_type = mime_map.get(suffix, "image/jpeg")
-                img_bytes = path.read_bytes()
-                image_part = {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(img_bytes).decode("ascii")}}
-                contents = [image_part, prompt]
+            path = Path(initial_image)
+            suffix = path.suffix.lower()
+            mime_map = {
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".png": "image/png",
+                ".webp": "image/webp",
+                ".gif": "image/gif",
+            }
+            mime_type = mime_map.get(suffix, "image/jpeg")
+            img_bytes = path.read_bytes()
+            image_part = types.Part.from_bytes(data=img_bytes, mime_type=mime_type)
+            contents = [image_part, prompt]
         else:
             contents = prompt
 
-        response = model.generate_content(
-            contents,
-            generation_config=genai.GenerationConfig(
+        response = client.models.generate_content(
+            model=Config.GEMINI_MODEL,
+            contents=contents,
+            config=types.GenerateContentConfig(
                 temperature=Config.GEMINI_TEMPERATURE,
             ),
         )
@@ -124,7 +124,7 @@ def _call_gemini_requirement_analyzer(
 
     except ImportError:
         raise ValueError(
-            "google-generativeai not installed. Run: pip install google-generativeai"
+            "google-genai not installed. Run: pip install google-genai"
         )
     except Exception as e:
         raise RuntimeError(f"Gemini API call failed: {e}")
@@ -588,7 +588,7 @@ def _get_sd_pipeline():
     global _sd_pipeline
     if _sd_pipeline is not None:
         return _sd_pipeline
-    from diffusers import StableDiffusion3Pipeline
+    from diffusers import DiffusionPipeline
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
     kwargs: dict[str, Any] = {
@@ -596,7 +596,7 @@ def _get_sd_pipeline():
     }
     if Config.HF_TOKEN:
         kwargs["token"] = Config.HF_TOKEN
-    _sd_pipeline = StableDiffusion3Pipeline.from_pretrained(Config.SD_MODEL, **kwargs).to(device)
+    _sd_pipeline = DiffusionPipeline.from_pretrained(Config.SD_MODEL, **kwargs).to(device)
     return _sd_pipeline
 
 

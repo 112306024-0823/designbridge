@@ -16,10 +16,16 @@ It will:
 
 from __future__ import annotations
 
+import os
 import sys
-from typing import Any
+from pathlib import Path
 
 import requests
+
+# Allow running this script from the test/ folder directly.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from designbridge.config import Config
 
@@ -40,21 +46,22 @@ def main() -> None:
 
     # 2) Try a minimal Gemini call
     try:
-        import google.generativeai as genai  # type: ignore[import]
+        from google import genai  # type: ignore[import]
+        from google.genai import types  # type: ignore[import]
     except ImportError:
-        print("[ERROR] google-generativeai is not installed.")
-        print("Run: pip install google-generativeai")
+        print("[ERROR] google-genai is not installed.")
+        print("Run: pip install google-genai")
         sys.exit(1)
 
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(Config.GEMINI_MODEL)
+        client = genai.Client(api_key=api_key)
 
         prompt = "你是一個測試用 API，請只回覆：\"OK\"。"
         print(f"[INFO] Calling Gemini model: {Config.GEMINI_MODEL!r} ...")
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
+        response = client.models.generate_content(
+            model=Config.GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
                 temperature=Config.GEMINI_TEMPERATURE,
             ),
         )
@@ -77,7 +84,7 @@ def main() -> None:
 
     # 3) Validate HF token (for HF Inference API usage)
     print("\n=== Hugging Face Token Test ===")
-    hf_token = Config.get_env("HF_TOKEN", "").strip()
+    hf_token = (Config.HF_TOKEN or os.getenv("HF_TOKEN", "")).strip()
     if not hf_token:
         print("[WARN] HF_TOKEN is not set. Skipping HF verification.")
     else:

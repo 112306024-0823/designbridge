@@ -28,7 +28,7 @@ class Config:
 
     # Model IDs for each backend
     SDXL_MODEL: str = os.getenv("DESIGNBRIDGE_SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0")
-    SD_MODEL: str = os.getenv("DESIGNBRIDGE_SD_MODEL", "stabilityai/stable-diffusion-3.5-medium")
+    SD_MODEL: str = os.getenv("DESIGNBRIDGE_SD_MODEL", "stabilityai/stable-diffusion-xl-base-1.0") #stabilityai/stable-diffusion-3.5-medium
     FLUX_MODEL: str = os.getenv("DESIGNBRIDGE_FLUX_MODEL", "black-forest-labs/FLUX.1-schnell")
 
     SDXL_STEPS: int = int(os.getenv("DESIGNBRIDGE_SDXL_STEPS", "25"))
