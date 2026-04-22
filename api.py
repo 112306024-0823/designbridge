@@ -68,6 +68,7 @@ class DesignRequest(BaseModel):
     style_profile_id: Optional[str] = None
     initial_image_path: Optional[str] = None
     style_reference_image_path: Optional[str] = None
+    no_style_reference: bool = False
 
 # 2. 快取 Graph 實例
 graph = get_compiled_graph()
@@ -273,6 +274,8 @@ async def generate_design(request: DesignRequest):
             user_input["initial_image"] = request.initial_image_path
         if request.style_reference_image_path:
             user_input["style_reference_image"] = request.style_reference_image_path
+        if request.no_style_reference:
+            user_input["no_style_reference"] = True
 
         initial_state = {"user_input": user_input}
 

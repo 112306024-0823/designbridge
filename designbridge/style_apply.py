@@ -56,6 +56,9 @@ def build_style_params(
     2. 本地 ChromaDB（若 Supabase 不可用）
     3. Fallback：aggregated JSON
     """
+    if (user_input or {}).get("no_style_reference"):
+        return None
+
     style_profile_id = resolve_style_profile_id(req, user_input)
     text_query = (user_input or {}).get("text_prompt", "").strip()
     query = text_query or style_profile_id or "interior design"
