@@ -1,99 +1,190 @@
 # DesignBridge
 
-使用 **LangGraph** 編排的多代理室內設計工作流（含 Streamlit 測試介面）。系統規格請見 `docs/DesignBridge.md`，Agent/JSON 規格請見 `docs/SCHEMAS.md`。
+以 **LangGraph** 為骨幹的多 Agent 室內設計 AI 系統。使用者輸入文字描述（可選上傳參考圖），系統自動分析需求、語意路由到對應 Agent，最後生成室內設計圖。
 
-## 快速啟動（Streamlit）
+系統規格請見 `docs/DesignBridge.md`，Agent/JSON 規格請見 `docs/SCHEMAS.md`，Agent 能力文件請見 `skills/`。
 
-在專案根目錄執行：
+---
+
+## 系統架構
+
+```
+使用者輸入（文字 + 可選圖片）
+    ↓
+requirement_analyzer     → LiteLLM（Gemini）解析需求，輸出 RequirementJSON
+    ↓
+visual_preprocessing     → 本地 Depth Anything V2 + UPerNet 分割（有圖才有效）
+    ↓
+design_director          → 語意路由決策
+  ├─ rule-based（預設）：依 hint_layout / hint_style / edit_scope 判斷
+  └─ LLM-based（可開啟）：Gemini 讀 SKILL.md 自行語意判斷
+    ↓
+  layout_agent │ style_agent │ adjuster_agent │ layout_and_style_agent
+    ↓
+renderer                 → HF Inference API（Flux/SDXL）→ 本地模型 → 佔位圖
+```
+
+---
+
+## 快速啟動
+
+### 1. 安裝依賴
 
 ```bash
 pip install -r requirements.txt
-streamlit run app.py (若這個指令無效，應該是電腦設定的path沒有加到streamlit)，
-可跑跑看 python -m streamlit run app.py
+pip install supabase litellm
+cd frontend && npm install && cd ..
 ```
 
-啟動後瀏覽器開 `http://localhost:8501`。
+### 2. 設定 `.env`
 
-## API 設定（Gemini）
-
-Requirement Analyzer 會優先用 **Google Gemini API** 解析需求；若未設定或失敗，會自動 fallback 到規則式解析。
-
-### 1) 安裝依賴
-
-```bash
-pip install -r requirements.txt
-
-pip install google-generativeai
-```
-
-### 2) 取得 API Key
-
-- 到 `https://makersuite.google.com/app/apikey` 建立並複製 API key
-
-### 3) 設定 `GEMINI_API_KEY`
-
-**方式 A：寫入 `.env`（推薦）**
-
-在專案根目錄新增/編輯 `.env`：
+在專案根目錄（有 `api.py` 的那層）新增 `.env`：
 
 ```env
-GEMINI_API_KEY=YOUR_API_KEY_HERE
+PYTHONUTF8=1
+
+# LLM（必填）
+GEMINI_API_KEY=你的_gemini_api_key
+
+# 圖片生成：雲端 HF Inference（有 token 就不需要本地 GPU）
+HF_TOKEN=你的_hf_token
+
+# Supabase 風格向量庫（必填，才能用語意風格搜尋）
+SUPABASE_URL=https://你的專案.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=你的_service_role_key
+
+# 圖片生成模型：flux | sdxl | sd（預設 sdxl）
+DESIGNBRIDGE_LOCAL_MODEL_TYPE=flux
+
+# 動態 routing（選填，開啟後 design_director 改用 LLM 讀 SKILL.md 決策）
+# DESIGNBRIDGE_ENABLE_DYNAMIC_ROUTING=true
 ```
 
-**方式 B：臨時環境變數**
+> **PYTHONUTF8=1 在 Windows 必填**，否則中文 emoji print 會 crash。
 
-PowerShell：
+### 3. 啟動
 
-```powershell
-$env:GEMINI_API_KEY="YOUR_API_KEY_HERE"
+**Windows 一鍵啟動：**
+```bat
+start_app.bat
 ```
 
-CMD：
+會同時開兩個視窗：FastAPI（port 8000）＋ Vue 前端（port 5173）。
 
-```cmd
-set GEMINI_API_KEY=YOUR_API_KEY_HERE
-```
-
-## 雲端圖生（Hugging Face Inference API，預設優先）
-
-**預設會先用雲端**生成圖片（Hugging Face Inference API，例如 nscale），無需下載 5GB 本機 SDXL；失敗再 fallback 本機 SDXL 或佔位圖。
-
-1. 在 [Hugging Face](https://huggingface.co/settings/tokens) 建立 Access Token（Read 權限即可）。
-2. 在 `.env` 加上：
-   ```env
-   HF_TOKEN=hf_你的token
-   ```
-3. 重啟 app 後即會優先使用雲端 SDXL。若想改回本機優先，可設 `DESIGNBRIDGE_ENABLE_HF_INFERENCE=false`。
-
-## 測試工作流（CLI）
-
+**手動啟動：**
 ```bash
-python scripts/run_designbridge.py
+# 視窗 1：後端
+uvicorn api:app --reload --host 0.0.0.0 --port 8000
+
+# 視窗 2：前端
+cd frontend && npm run dev
 ```
 
-若 console 出現：
-- ✅ 正常輸出結構化 JSON：Gemini 解析成功
-- ⚠️ `falling back to rule-based`：API key 未設或呼叫失敗，已退回規則解析
+瀏覽器開 `http://localhost:5173`
+
+---
+
+## API Keys 申請
+
+| Key | 申請位置 | 用途 |
+|---|---|---|
+| `GEMINI_API_KEY` | [Google AI Studio](https://makersuite.google.com/app/apikey) | LLM 需求分析 + 動態 routing |
+| `HF_TOKEN` | [Hugging Face Settings](https://huggingface.co/settings/tokens)（Read 權限）| 雲端圖片生成（Flux/SDXL），免本地 GPU |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Supabase 專案設定 | 風格向量庫搜尋 |
+
+---
+
+## 功能說明
+
+### 動態 Routing（SKILL.md 語意調度）
+
+`skills/` 目錄下每個 Agent 都有一份 `SKILL.md`，描述它的能力與適用場景。
+
+- **預設（rule-based）**：根據 `hint_layout`、`hint_style`、`edit_scope` 的數值做 IF-ELSE 判斷
+- **LLM-based**：設定 `DESIGNBRIDGE_ENABLE_DYNAMIC_ROUTING=true` 後，由 Gemini 閱讀 SKILL.md 自行語意判斷
+
+LLM routing 的優勢：能理解語意模糊的請求（「讓客廳更有質感」、英文輸入）、處理 edit_scope 與語意衝突的情況，任何失敗自動 fallback 回 rule-based。
+
+### 圖片生成後端優先序
+
+```
+1. HF Inference API（有 HF_TOKEN，雲端，不需下載模型）
+2. 本地 Flux / SDXL / SD（需 GPU，由 DESIGNBRIDGE_LOCAL_MODEL_TYPE 決定）
+3. PIL 佔位圖（開發用 fallback）
+```
+
+### 風格搜尋優先序
+
+```
+1. Supabase pgvector 語意搜尋（需 SUPABASE_URL + KEY）
+2. 本地 ChromaDB 向量庫（需先建立索引）
+3. Aggregated JSON fallback（目前只有 modern / country / luxury）
+```
+
+---
 
 ## 專案結構
 
 ```
-DesignBridge/
-├── app.py                  # Streamlit UI
-├── designbridge/           # LangGraph graph/nodes/config
-├── scripts/
-│   └── run_designbridge.py # CLI 測試入口
-├── docs/                   # 規格與文件
-└── artifacts/              # 產出（depth/seg/render）
+designbridge/
+├── api.py                      # FastAPI 後端
+├── app.py                      # Streamlit 測試 UI（舊版）
+├── start_app.bat               # Windows 一鍵啟動
+├── .env                        # API Keys（不進 git）
+├── requirements.txt
+├── designbridge/               # 核心模組
+│   ├── graph.py                # LangGraph 工作流定義
+│   ├── nodes.py                # 所有 Agent 節點實作
+│   ├── config.py               # 設定與 feature flags
+│   ├── llm.py                  # LiteLLM 統一 LLM 介面
+│   ├── router.py               # LLM-based 動態 routing
+│   ├── skill_registry.py       # 讀取 SKILL.md 供 Router 使用
+│   ├── prompts.py              # Prompt 模板
+│   ├── state.py                # LangGraph State schema
+│   ├── schemas.py              # 所有 TypedDict 定義
+│   ├── style_apply.py          # 風格參數建立（Supabase → ChromaDB → JSON）
+│   ├── style_supabase.py       # Supabase 向量搜尋
+│   ├── vision.py               # 深度估測 + 語意分割
+│   └── inpaint.py              # SD Inpainting 工具
+├── skills/                     # Agent 能力文件（SKILL.md）
+│   ├── design-director/
+│   ├── requirement-analyzer/
+│   ├── layout-planner/
+│   ├── style-advisor/
+│   ├── design-adjuster/
+│   ├── image-renderer/
+│   └── visual-preprocessor/
+├── style_kb/                   # 風格知識庫
+│   ├── aggregated/             # 預聚合 JSON（modern / country / luxury）
+│   └── styles.py               # 風格 ID 清單
+├── frontend/                   # Vue 前端
+└── artifacts/                  # 產出（depth / segmentation / render）
 ```
 
-## 參考文件
+---
 
-- `docs/DesignBridge.md`：工作流與 State 定義
-- `docs/SCHEMAS.md`：各 Agent 的輸入/輸出 JSON 規格
+## 常見問題
 
-## 根目錄需創建env, env格式
-GEMINI_API_KEY=************
-HF_TOKEN=************
+**Q：Windows 執行報 UnicodeEncodeError**
+→ 確認 `.env` 有 `PYTHONUTF8=1`，且用 `start_app.bat` 啟動（而非直接 `python`）
 
-自行更換Token，如果爆掉可以再用其他google帳號申請免費Token
+**Q：style_params 是 None，沒有風格**
+→ 確認 `SUPABASE_URL` 和 `SUPABASE_SERVICE_ROLE_KEY` 有設定，且 `pip install supabase` 已執行
+
+**Q：generated_image 是 placeholder（純白圖）**
+→ 確認 `HF_TOKEN` 有設定；或本地有 GPU 且 `DESIGNBRIDGE_ENABLE_SDXL_FALLBACK=true`
+
+**Q：動態 routing 沒有作用**
+→ 確認 `.env` 有 `DESIGNBRIDGE_ENABLE_DYNAMIC_ROUTING=true`，且 terminal 輸出有 `[design_director] LLM router: ...`
+
+---
+
+## 舊版 Streamlit 介面
+
+```bash
+streamlit run app.py
+# 或
+python -m streamlit run app.py
+```
+
+開啟 `http://localhost:8501`

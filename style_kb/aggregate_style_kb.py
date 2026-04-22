@@ -107,7 +107,7 @@ def aggregate_statistics(json_files: list[Path]) -> dict[str, Any]:
                     if "ip_adapter_weight" in ai_params["adapter_config"]:
                         ip_weights.append(ai_params["adapter_config"]["ip_adapter_weight"])
         except Exception as e:
-            print(f"  ⚠️  讀取 {json_path.name} 失敗: {e}")
+            print(f" 讀取 {json_path.name} 失敗: {e}")
 
     # 統計結果
     stats = {
@@ -146,15 +146,15 @@ def aggregate_statistics(json_files: list[Path]) -> dict[str, Any]:
 def call_gemini_aggregate(stats: dict[str, Any], style_id: str, style_name: str) -> dict[str, Any]:
     """Use Gemini to create intelligent aggregation from statistics."""
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
     except ImportError as exc:  # noqa: BLE001
         raise RuntimeError(
-            "google-generativeai 未安裝。請先執行: pip install google-generativeai"
+            "google-genai 未安裝。請先執行: pip install google-genai"
         ) from exc
 
     api_key = Config.get_gemini_api_key()
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(Config.GEMINI_MODEL)
+    client = genai.Client(api_key=api_key)
 
     prompt = f"""分析以下室內設計風格的統計數據，這些數據來自 {stats['successfully_read']} 個 {style_name}（{style_id}）風格的室內設計案例。
 
@@ -180,9 +180,10 @@ def call_gemini_aggregate(stats: dict[str, Any], style_id: str, style_name: str)
 
 請確保輸出是有效的 JSON，可以直接被 Python json.loads() 解析。"""
 
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(
+    response = client.models.generate_content(
+        model=Config.GEMINI_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
             temperature=Config.GEMINI_TEMPERATURE,
         ),
     )

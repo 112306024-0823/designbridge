@@ -37,15 +37,15 @@ def _call_gemini_style_kb(
 ) -> dict[str, Any]:
     """Use current Gemini configuration to extract Style KB JSON for a single image."""
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
     except ImportError as exc:  # noqa: BLE001
         raise RuntimeError(
-            "google-generativeai 未安裝。請先執行: pip install google-generativeai"
+            "google-genai 未安裝。請先執行: pip install google-genai"
         ) from exc
 
     api_key = Config.get_gemini_api_key()
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(Config.GEMINI_MODEL)
+    client = genai.Client(api_key=api_key)
 
     prompt = STYLE_KB_PROMPT.format(
         style_id=style_id,
@@ -53,12 +53,23 @@ def _call_gemini_style_kb(
         user_hint=user_hint,
     )
 
-    # 上傳圖片給 Gemini（與 requirement_analyzer 的做法類似）
-    uploaded = genai.upload_file(path=str(image_path))
+    suffix = image_path.suffix.lower()
+    mime_map = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
+    image_part = types.Part.from_bytes(
+        data=image_path.read_bytes(),
+        mime_type=mime_map.get(suffix, "image/jpeg"),
+    )
 
-    response = model.generate_content(
-        [uploaded, prompt],
-        generation_config=genai.GenerationConfig(
+    response = client.models.generate_content(
+        model=Config.GEMINI_MODEL,
+        contents=[image_part, prompt],
+        config=types.GenerateContentConfig(
             temperature=Config.GEMINI_TEMPERATURE,
         ),
     )

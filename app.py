@@ -6,9 +6,7 @@ import json
 import tempfile
 import time
 from pathlib import Path
-
 import streamlit as st
-
 from designbridge import get_compiled_graph
 from designbridge.style_apply import list_available_style_profiles
 
@@ -65,11 +63,21 @@ available_style_profiles = list_available_style_profiles()
 style_options = ["自動（依文字需求判斷）"] + [
     f"{item['style_name']} ({item['style_id']})" for item in available_style_profiles
 ]
+
 selected_style_option = st.sidebar.selectbox(
     "套用聚合風格檔（方案 B）",
     options=style_options,
     index=0,
     help="若選擇特定風格，系統會直接讀取 style_kb/aggregated 裡的聚合風格檔來組裝生成 prompt。",
+)
+
+# 風格參考圖上傳欄位（移到聚合風格檔下方）
+st.sidebar.markdown("**風格參考圖（可選）**")
+style_reference_file = st.sidebar.file_uploader(
+    "上傳風格參考圖",
+    type=["jpg", "jpeg", "png", "webp"],
+    help="可上傳一張作為風格參考的圖片。",
+    key="style_reference_image_unique"
 )
 
 # 圖片上傳：上傳檔案或留空表示從空布局開始
@@ -103,6 +111,7 @@ else:
         if manual_path and manual_path.strip():
             initial_image = manual_path.strip()
 
+
 run_button = st.sidebar.button("▶️ 執行工作流", type="primary", width="stretch")
 
 # Example prompts
@@ -122,6 +131,19 @@ for name, prompt in example_prompts.items():
 if "example_prompt" in st.session_state:
     text_prompt = st.session_state["example_prompt"]
     del st.session_state["example_prompt"]
+
+
+# 風格參考圖處理（應放在 sidebar 輸入區段）
+style_reference_image = ""
+if style_reference_file is not None:
+    suffix = Path(style_reference_file.name).suffix or ".png"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(style_reference_file.getvalue())
+        style_reference_image = tmp.name
+    st.sidebar.image(style_reference_file, caption="風格參考圖預覽", width="stretch")
+    st.sidebar.caption(f"路徑：`{style_reference_image}`")
+else:
+    st.sidebar.caption("未上傳風格參考圖")
 
 # Main content: 工作流圖示（Mermaid，可收合）
 with st.expander("Workflow Diagram", expanded=True):
@@ -148,20 +170,28 @@ with st.expander("Workflow Diagram", expanded=True):
 st.markdown("---")
 
 if run_button:
-    if not text_prompt.strip():
-        st.error("❌ 請輸入文字需求")
+    # 只要三者任一有值即可
+    has_text = bool(text_prompt.strip())
+    has_style = selected_style_option != "自動（依文字需求判斷）"
+    has_image = bool(initial_image)
+    has_style_reference = bool(style_reference_image)
+    if not (has_text or has_style or has_image):
+        st.error("❌ 請至少輸入文字需求、選擇風格，或上傳圖片（任一即可）")
     else:
         with st.spinner("🔄 執行 DesignBridge 工作流..."):
             # Build initial state
             user_input = {
-                "text_prompt": text_prompt,
                 "edit_scope": edit_scope,
             }
-            if selected_style_option != "自動（依文字需求判斷）":
+            if has_text:
+                user_input["text_prompt"] = text_prompt
+            if has_style:
                 selected_style_id = selected_style_option.rsplit("(", 1)[-1].rstrip(")")
                 user_input["style_profile_id"] = selected_style_id
-            if initial_image:
+            if has_image:
                 user_input["initial_image"] = initial_image
+            if has_style_reference:
+                user_input["style_reference_image"] = style_reference_image
 
             initial_state = {"user_input": user_input}
 
@@ -174,7 +204,6 @@ if run_button:
 
                 # Display results
                 st.success(f"工作流執行完成！（耗時 {elapsed:.2f} 秒）")
-
                 # Key results in columns
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
@@ -321,7 +350,7 @@ if run_button:
                 else:
                     st.info("無中間輸出")
 
-                st.subheader("🎨 套用風格參數")
+                st.subheader("套用風格參數")
                 style_params = result.get("style_params", {})
                 if style_params:
                     scol1, scol2, scol3 = st.columns(3)

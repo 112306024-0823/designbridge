@@ -101,7 +101,7 @@ def download_style_image(image_url: str) -> Path | None:
         local_path.write_bytes(resp.content)
         return local_path
     except Exception as e:
-        print(f"⚠️  下載風格參考圖失敗：{e}")
+        print(f"[WARN] style_supabase: download failed: {e}")
         return None
 
 
@@ -132,7 +132,7 @@ def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str,
     style_name_map = {sid: sname for sid, sname in STYLES}
 
     print(
-        f"✅ Supabase 向量搜尋 → {dominant_style_id} "
+        f"[OK] Supabase vector search -> {dominant_style_id} "
         f"(score={top.similarity:.3f}, ref_image={'OK' if ref_path else 'FAILED'})"
     )
 
