@@ -87,13 +87,15 @@ def build_router_prompt(structured_requirement: dict, skill_descriptions: str) -
 def call_llm_router(
     structured_requirement: dict,
     vision_features: dict,
-    api_key: str,
-    gemini_model: str,
-    gemini_temperature: float = 0.0,
+    temperature: float = 0.0,
     registry: Optional["SkillRegistry"] = None,
+    # Deprecated: kept for backward compat, ignored (LiteLLM handles auth)
+    api_key: str = "",
+    gemini_model: str = "",
+    gemini_temperature: float | None = None,
 ) -> RoutingDecision:
     """
-    Call Gemini to decide routing based on structured_requirement and skill descriptions.
+    Call LLM (via LiteLLM) to decide routing based on structured_requirement and skill descriptions.
 
     Raises RouterLLMError if the LLM output cannot be parsed into a RoutingDecision.
     """
@@ -101,26 +103,17 @@ def call_llm_router(
         from designbridge.skill_registry import get_registry
         registry = get_registry()
 
+    # gemini_temperature kept for backward compat; takes precedence if explicitly passed
+    resolved_temperature = gemini_temperature if gemini_temperature is not None else temperature
+
     skill_descriptions = registry.format_for_prompt()
     prompt = build_router_prompt(structured_requirement, skill_descriptions)
 
     try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=gemini_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=gemini_temperature,
-            ),
-        )
-        llm_output = response.text.strip()
-    except ImportError:
-        raise RouterLLMError("google-genai not installed. Run: pip install google-genai")
+        from designbridge.llm import call_llm
+        llm_output = call_llm(prompt, temperature=resolved_temperature)
     except Exception as e:
-        raise RouterLLMError(f"Gemini API call failed: {e}")
+        raise RouterLLMError(f"LLM call failed: {e}")
 
     decision = _safe_parse_decision(llm_output)
     if decision is None:

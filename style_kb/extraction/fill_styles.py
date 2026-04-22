@@ -20,16 +20,16 @@ import sys; sys.stdout.reconfigure(encoding="utf-8")
 import time
 from pathlib import Path
 
-from style_kb.quality_filter import filter_style
-from style_kb.scraper_100 import (
+from style_kb.collection.quality_filter import filter_style
+from style_kb.scrapper.scraper_100 import (
     STYLE_CATEGORY_MAP, _create_session, _download_image,
     REQUEST_INTERVAL, PER_PAGE, MAX_PAGES, API_URL, REQUEST_TIMEOUT
 )
-from style_kb.sort_raw_images import STYLE_MAP, IMAGE_EXTS
+from style_kb.collection.sort_raw_images import STYLE_MAP, IMAGE_EXTS
 from style_kb.styles import STYLES
 
-IMAGES_DIR = Path(__file__).resolve().parent / "images"
-RAW_STAGE = Path(__file__).resolve().parent / "raw" / "_fill_stage"
+IMAGES_DIR = Path(__file__).resolve().parent.parent / "images"
+RAW_STAGE = Path(__file__).resolve().parent.parent / "raw" / "_fill_stage"
 
 # API style_cn → style_id 反查
 ZH_TO_ID = {zh: sid for zh, sid in STYLE_MAP.items()}

@@ -119,7 +119,5 @@ def main() -> None:
     if not gemini_ok:
         sys.exit(1)
 
-
 if __name__ == "__main__":
     main()
-

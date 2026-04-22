@@ -4,7 +4,8 @@
       "Bash(python -c ':*)",
       "Bash(python -c \"from api import app; print\\('api loads ok'\\)\")",
       "Bash(python -m style_kb.quality_filter)",
-      "Bash(python -m style_kb.embed_supabase)"
+      "Bash(python -m style_kb.embed_supabase)",
+      "Bash(python -c \"from style_kb.styles import STYLES; print\\('OK', STYLES[:2]\\)\")"
     ]
   }
 }

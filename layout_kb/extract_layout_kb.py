@@ -134,8 +134,8 @@ def main() -> None:
             sa = layout["space_analysis"]
             rec = layout["layout_recommendation"]
             cands = layout["furniture_candidates"]
-            print(f"  ✅ {json_out.name}")
-            print(f"     空間類型：{sa['space_type']}  "
+            print(f" {json_out.name}")
+            print(f" 空間類型：{sa['space_type']}  "
                   f"開放度：{sa['spatial_metrics']['openness_score']:.0%}  "
                   f"路由建議：{rec['routing_hint']}")
             if cands:

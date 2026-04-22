@@ -1,0 +1,153 @@
+"""Supabase-backed style vector search.
+
+Embeds query text, calls pgvector RPC, downloads the matched image,
+and passes it as the style reference image for generation.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+_embedding_model = None
+_supabase_client = None
+
+STYLE_REF_DIR = Path(__file__).resolve().parent.parent / "artifacts" / "style_ref"
+
+_STYLE_PROMPTS: dict[str, dict[str, str]] = {
+    "modern":     {"positive": "modern contemporary interior, clean lines, neutral tones, minimalist, photorealistic, high quality", "negative": "cluttered, dark, vintage, rustic"},
+    "nordic":     {"positive": "Nordic Scandinavian interior, white walls, light wood, cozy minimalist, natural light, photorealistic, high quality", "negative": "cluttered, dark, tropical, ornate"},
+    "japanese":   {"positive": "Japanese minimalist Japandi interior, tatami, shoji, natural wood, wabi-sabi, photorealistic, high quality", "negative": "cluttered, colorful, western, ornate"},
+    "industrial": {"positive": "industrial loft interior, exposed brick, metal, raw concrete, Edison bulbs, photorealistic, high quality", "negative": "cozy, traditional, pastel, ornate"},
+    "american":   {"positive": "American style interior, warm wood, comfortable furniture, traditional, welcoming, photorealistic, high quality", "negative": "minimalist, industrial, cold"},
+    "classic":    {"positive": "classical traditional interior, symmetry, rich fabrics, crown molding, warm lighting, photorealistic, high quality", "negative": "minimalist, industrial, raw"},
+    "country":    {"positive": "country rustic farmhouse interior, warm wood, linen, natural materials, cozy, photorealistic, high quality", "negative": "minimalist, industrial, cold, sterile"},
+    "luxury":     {"positive": "luxury high-end interior, marble, gold accents, velvet, opulent, photorealistic, high quality", "negative": "minimalist, rustic, budget"},
+    "neoclassic": {"positive": "neoclassical interior, elegant columns, symmetry, refined details, warm tones, photorealistic, high quality", "negative": "minimalist, industrial, rustic"},
+}
+
+
+def _get_embedding_model():
+    global _embedding_model
+    if _embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        _embedding_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+    return _embedding_model
+
+
+def _get_supabase():
+    global _supabase_client
+    if _supabase_client is None:
+        from supabase import create_client
+        _supabase_client = create_client(
+            os.environ["SUPABASE_URL"],
+            os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+        )
+    return _supabase_client
+
+
+@dataclass
+class SupabaseStyleResult:
+    style_id: str
+    image_url: str
+    style_name: str
+    similarity: float
+
+
+def query_style_images_supabase(
+    text_query: str,
+    style_id: str | None = None,
+    top_k: int = 3,
+) -> list[SupabaseStyleResult]:
+    """Embed text_query and search Supabase pgvector for closest style images."""
+    q = text_query.strip() or style_id or "interior design"
+    model = _get_embedding_model()
+    embedding = model.encode(q, normalize_embeddings=True).tolist()
+    client = _get_supabase()
+    res = client.rpc("query_style_full", {
+        "query_embedding": embedding,
+        "filter_style_id": style_id or "",
+        "top_k": top_k,
+    }).execute()
+    if not res.data:
+        return []
+    results = []
+    for row in res.data:
+        style_name = (row.get("source_meta") or {}).get("style", row["style_id"])
+        results.append(SupabaseStyleResult(
+            style_id=row["style_id"],
+            image_url=row["image_url"],
+            style_name=style_name,
+            similarity=round(float(row["similarity"]), 4),
+        ))
+    return results
+
+
+def download_style_image(image_url: str) -> Path | None:
+    """Download image from Supabase Storage to local artifacts/style_ref/. Cached by URL hash."""
+    STYLE_REF_DIR.mkdir(parents=True, exist_ok=True)
+    url_hash = hashlib.md5(image_url.encode()).hexdigest()[:12]
+    suffix = Path(image_url.split("?")[0]).suffix or ".jpg"
+    local_path = STYLE_REF_DIR / f"{url_hash}{suffix}"
+    if local_path.exists():
+        return local_path
+    try:
+        import httpx
+        resp = httpx.get(image_url, timeout=15, follow_redirects=True)
+        resp.raise_for_status()
+        local_path.write_bytes(resp.content)
+        return local_path
+    except Exception as e:
+        print(f"[WARN] style_supabase: download failed: {e}")
+        return None
+
+
+def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str, Any] | None:
+    """
+    Build style params from Supabase search results.
+    - Downloads top-1 matched image as style reference
+    - Uses style_id to select text prompt
+    """
+    if not results:
+        return None
+
+    top = results[0]
+
+    # Dominant style by weighted similarity vote
+    weights: dict[str, float] = {}
+    for r in results:
+        weights[r.style_id] = weights.get(r.style_id, 0.0) + r.similarity
+    dominant_style_id = max(weights, key=lambda k: weights[k])
+
+    # Download the top matched image
+    ref_path = download_style_image(top.image_url)
+
+    # Text prompts based on style_id
+    prompts = _STYLE_PROMPTS.get(dominant_style_id, _STYLE_PROMPTS["modern"])
+
+    from style_kb.styles import STYLES
+    style_name_map = {sid: sname for sid, sname in STYLES}
+
+    print(
+        f"[OK] Supabase vector search -> {dominant_style_id} "
+        f"(score={top.similarity:.3f}, ref_image={'OK' if ref_path else 'FAILED'})"
+    )
+
+    return {
+        "style_profile_id": dominant_style_id,
+        "style_profile_name": style_name_map.get(dominant_style_id, dominant_style_id),
+        "style_prompt": prompts["positive"],
+        "negative_prompt": prompts["negative"],
+        "style_strength": 0.8,
+        "color_guidance": {},
+        "controlnet_type": "depth",
+        "style_summary": "",
+        "material_recommendations": [],
+        "reference_image_url": top.image_url,
+        "reference_image_path": str(ref_path) if ref_path else None,
+        "top_similarity": top.similarity,
+        "source": "supabase_vector",
+    }
