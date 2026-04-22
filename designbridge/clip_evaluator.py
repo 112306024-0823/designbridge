@@ -34,7 +34,7 @@ def compute_clip_score(image_path: str, text_prompt: str) -> float:
     model, processor = _load_model()
     image = Image.open(path).convert("RGB")
 
-    inputs = processor(text=[text_prompt], images=[image], return_tensors="pt", padding=True)
+    inputs = processor(text=[text_prompt], images=[image], return_tensors="pt", padding=True, truncation=True, max_length=77)
     with torch.no_grad():
         outputs = model(**inputs)
         image_emb = outputs.image_embeds  # (1, D)
