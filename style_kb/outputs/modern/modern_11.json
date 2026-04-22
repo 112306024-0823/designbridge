@@ -1,0 +1,76 @@
+{
+  "style_info": {
+    "style_id": "modern",
+    "name": "現代",
+    "tags": [
+      "簡約",
+      "開放式",
+      "自然光",
+      "質感",
+      "優雅"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#D0D0D0",
+      "secondary": "#302828",
+      "accent": "#F5DEB3"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "dark wood",
+        "finish": "herringbone parquet, matte"
+      },
+      {
+        "target": "主牆面",
+        "type": "textured plaster",
+        "finish": "dark grey, matte"
+      },
+      {
+        "target": "其他牆面",
+        "type": "painted drywall",
+        "finish": "light grey, matte"
+      },
+      {
+        "target": "天花板",
+        "type": "plasterboard",
+        "finish": "light grey, matte"
+      },
+      {
+        "target": "天花板樑",
+        "type": "stained wood",
+        "finish": "dark brown, matte"
+      },
+      {
+        "target": "沙發",
+        "type": "fabric",
+        "finish": "light grey, soft texture"
+      },
+      {
+        "target": "吊燈",
+        "type": "metal mesh",
+        "finish": "white/silver, matte"
+      },
+      {
+        "target": "書櫃",
+        "type": "dark wood",
+        "finish": "glass, matte"
+      }
+    ],
+    "lighting": {
+      "type": "abundant natural light from large floor-to-ceiling windows, supplemented by warm sculptural pendant lights, recessed ceiling lights, and integrated shelf lighting",
+      "color_temp": 2900
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "Modern living room, spacious, open concept, large floor-to-ceiling windows with lush green outdoor view, light grey modular L-shaped sofa, dark wood herringbone parquet flooring, unique sculptural mesh pendant lights with warm LED strings, dark textured feature wall, sleek floating TV console, built-in dark bookshelves with integrated lighting, minimalist round coffee table, sheer white curtains, warm ambient lighting, clean lines, sophisticated, elegant, inviting atmosphere.",
+      "negative": "Cluttered, messy, outdated furniture, bright saturated colors, harsh lighting, small windows, traditional decor, poor composition, low quality, cartoon, illustration, painting, drawing, ugly, deformed, disfigured, bad anatomy."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

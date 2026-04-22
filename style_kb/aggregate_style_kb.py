@@ -107,7 +107,7 @@ def aggregate_statistics(json_files: list[Path]) -> dict[str, Any]:
                     if "ip_adapter_weight" in ai_params["adapter_config"]:
                         ip_weights.append(ai_params["adapter_config"]["ip_adapter_weight"])
         except Exception as e:
-            print(f" 讀取 {json_path.name} 失敗: {e}")
+            print(f"  ⚠️  讀取 {json_path.name} 失敗: {e}")
 
     # 統計結果
     stats = {

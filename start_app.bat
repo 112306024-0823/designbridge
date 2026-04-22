@@ -1,6 +1,4 @@
 @echo off
-REM Start DesignBridge (FastAPI backend + Vue frontend)
-echo Starting DesignBridge API...
-start cmd /k "python -m uvicorn api:app"
-echo Starting DesignBridge Frontend...
-start cmd /k "cd frontend && npm run dev"
+REM Start DesignBridge Streamlit app
+echo Starting DesignBridge Test Interface...
+streamlit run app.py

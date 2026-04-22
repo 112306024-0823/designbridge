@@ -1,0 +1,72 @@
+{
+  "style_info": {
+    "style_id": "modern",
+    "name": "現代",
+    "tags": [
+      "極簡",
+      "明亮",
+      "中性色",
+      "大理石",
+      "木質",
+      "開放式"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#F5F5F5",
+      "secondary": "#362C2A",
+      "accent": "#6B8E23"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "polished concrete",
+        "finish": "matte"
+      },
+      {
+        "target": "牆面",
+        "type": "painted drywall",
+        "finish": "matte"
+      },
+      {
+        "target": "牆面",
+        "type": "marble",
+        "finish": "polished"
+      },
+      {
+        "target": "家具",
+        "type": "linen fabric",
+        "finish": "soft"
+      },
+      {
+        "target": "家具",
+        "type": "dark wood",
+        "finish": "matte"
+      },
+      {
+        "target": "家具",
+        "type": "glass",
+        "finish": "clear"
+      },
+      {
+        "target": "天花板",
+        "type": "light wood veneer",
+        "finish": "smooth"
+      }
+    ],
+    "lighting": {
+      "type": "bright natural light, neutral recessed and surface-mounted spotlights",
+      "color_temp": 4000
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "Modern minimalist living room, bright and airy, clean lines, white walls, large format grey floor, striking green and white veined marble accent wall, light beige fabric sofas, dark wood TV console, glass coffee table, wall-mounted television, recessed and surface-mounted spotlights, natural light, subtle wooden accents, colorful abstract elephant painting.",
+      "negative": "Cluttered, messy, traditional, ornate, dark room, saturated colors, old furniture, poor lighting, low quality, blurry."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

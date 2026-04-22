@@ -1,0 +1,56 @@
+{
+  "style_info": {
+    "style_id": "minimalist_japandi_bright_01",
+    "name": "現代極簡日式風",
+    "tags": [
+      "極簡",
+      "明亮",
+      "木質",
+      "寧靜",
+      "大地色"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#F8F8F5",
+      "secondary": "#E0D0C0",
+      "accent": "#A8B4A4"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "light oak wood",
+        "finish": "matte"
+      },
+      {
+        "target": "牆面",
+        "type": "painted drywall",
+        "finish": "matte"
+      },
+      {
+        "target": "沙發",
+        "type": "linen fabric",
+        "finish": "soft"
+      },
+      {
+        "target": "層架/茶几",
+        "type": "light wood",
+        "finish": "matte"
+      }
+    ],
+    "lighting": {
+      "type": "abundant natural daylight from large windows, supplemented by warm recessed ceiling lights",
+      "color_temp": 3800
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "A bright and airy modern minimalist living room, Japandi style, featuring light oak wood flooring, off-white painted walls, a light beige linen sectional sofa, a large open modular light wood shelving unit, two round minimalist light wood coffee tables, abundant natural light streaming through large windows, soft warm recessed ceiling lights, subtle green plant accents, clean lines, serene and spacious atmosphere, Scandinavian influence.",
+      "negative": "Cluttered, dark, messy, vibrant saturated colors, heavy ornate furniture, traditional patterns, poor lighting, industrial style, rustic, maximalist."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

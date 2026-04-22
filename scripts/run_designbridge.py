@@ -2,7 +2,8 @@
 # run_designbridge.py
 # 啟動指令 python -m scripts.run_designbridge
 
-#測試designbridge工作流
+"""Run DesignBridge workflow with sample user input."""
+
 from designbridge import get_compiled_graph
 
 # Sample input: user_input only (Requirement Analyzer + Design Director will fill the rest)

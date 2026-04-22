@@ -1,14 +1,5 @@
 @import './base.css';
 
-:root {
-  --primary:       #7c5cbf;
-  --primary-light: #f0ebfb;
-  --primary-hover: #6347a8;
-  --primary-border:#c9b8e8;
-}
-
-*, *::before, *::after { box-sizing: border-box; }
-
 #app {
   width: 100%;
   min-height: 100vh;

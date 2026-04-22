@@ -1,0 +1,47 @@
+{
+  "style_info": {
+    "style_id": "country",
+    "name": "鄉村",
+    "tags": [
+      "溫馨",
+      "花卉",
+      "木質",
+      "田園",
+      "拱門",
+      "復古"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#F8F8F8",
+      "secondary": "#FDF5E6",
+      "accent": "#5C4033"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "wood laminate",
+        "finish": "matte"
+      },
+      {
+        "target": "牆面",
+        "type": "painted wood paneling",
+        "finish": "matte"
+      }
+    ],
+    "lighting": {
+      "type": "warm recessed ceiling lights and wall sconces",
+      "color_temp": 3200
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "Cozy country style living room, floral patterned sofa, white wainscoting, arched decorative windows, warm lighting, dark wood laminate floor, cute animal cushions, rustic charm, inviting atmosphere, soft color palette, traditional elements, natural light.",
+      "negative": "Modern, minimalist, industrial, cold lighting, cluttered, dark saturated colors, sleek, metallic, abstract art, no plants, harsh shadows."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

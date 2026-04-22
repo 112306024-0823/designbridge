@@ -1,0 +1,76 @@
+{
+  "style_info": {
+    "style_id": "country",
+    "name": "鄉村",
+    "tags": [
+      "現代經典",
+      "優雅",
+      "中性色",
+      "舒適",
+      "自然光"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#D9D5D0",
+      "secondary": "#F5F5F0",
+      "accent": "#A36B4F"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "light grey large format tile",
+        "finish": "matte"
+      },
+      {
+        "target": "牆面",
+        "type": "painted plaster with boiserie molding",
+        "finish": "matte"
+      },
+      {
+        "target": "沙發",
+        "type": "linen blend fabric",
+        "finish": "soft"
+      },
+      {
+        "target": "單椅",
+        "type": "bouclé fabric",
+        "finish": "textured"
+      },
+      {
+        "target": "咖啡桌",
+        "type": "dark wood",
+        "finish": "matte"
+      },
+      {
+        "target": "邊桌",
+        "type": "polished metal",
+        "finish": "reflective"
+      },
+      {
+        "target": "電視櫃",
+        "type": "light oak wood",
+        "finish": "matte"
+      },
+      {
+        "target": "書櫃",
+        "type": "glass and painted wood",
+        "finish": "clear and matte"
+      }
+    ],
+    "lighting": {
+      "type": "diffused natural light from large windows, supplemented by warm recessed ceiling lights",
+      "color_temp": 3200
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "A serene and elegant living room in a modern classic style, featuring light greige walls with sophisticated boiserie molding. A comfortable cream linen blend sofa adorned with textured pillows, complemented by a cozy off-white bouclé armchair. Abundant natural light streams through large windows, softened by sheer white curtains. The space includes a dark organic-shaped coffee table, a textured rug with warm brown and grey tones, and subtle metallic accents. The overall ambiance is refined, calm, and inviting.",
+      "negative": "Overly rustic, cluttered, harsh artificial lighting, bright primary colors, cheap materials, cold and uninviting atmosphere, traditional country farmhouse elements."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "style_info": {
+    "style_id": "modern",
+    "name": "現代",
+    "tags": [
+      "簡約",
+      "溫馨",
+      "質感",
+      "開放式",
+      "都會"
+    ]
+  },
+  "visual_elements": {
+    "colors": {
+      "primary": "#E0DED7",
+      "secondary": "#D3D3D3",
+      "accent": "#362F2F"
+    },
+    "materials": [
+      {
+        "target": "地板",
+        "type": "淺色木地板",
+        "finish": "霧面"
+      },
+      {
+        "target": "牆面",
+        "type": "灰色大理石",
+        "finish": "霧面"
+      },
+      {
+        "target": "牆面",
+        "type": "木格柵板",
+        "finish": "霧面"
+      },
+      {
+        "target": "家具",
+        "type": "深色木材",
+        "finish": "霧面"
+      },
+      {
+        "target": "家具",
+        "type": "米白色層板",
+        "finish": "霧面"
+      },
+      {
+        "target": "家具",
+        "type": "棕色皮革",
+        "finish": "光滑"
+      },
+      {
+        "target": "家具",
+        "type": "白色大理石",
+        "finish": "拋光"
+      },
+      {
+        "target": "家具",
+        "type": "黑色金屬",
+        "finish": "霧面"
+      }
+    ],
+    "lighting": {
+      "type": "嵌入式吸頂燈, 溫暖LED燈帶",
+      "color_temp": 3000
+    }
+  },
+  "ai_params": {
+    "prompts": {
+      "positive": "Modern minimalist open-plan living and dining space, light wood flooring, grey marble feature wall, integrated cabinetry with light beige panels and dark wood slatted accents, warm LED display lighting, large wall-mounted television, dark wood coffee table, brown leather sofa, white marble dining table with black metal frame, clean lines, sophisticated, contemporary, warm ambient lighting.",
+      "negative": "Cluttered, messy, outdated, traditional, rustic, bright saturated colors, poor lighting, busy patterns, low quality materials."
+    },
+    "adapter_config": {
+      "ip_adapter_weight": 0.85,
+      "controlnet": "depth"
+    }
+  }
+}
