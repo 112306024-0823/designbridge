@@ -8,6 +8,7 @@ from langgraph.graph import StateGraph
 
 from designbridge.nodes import (
     adjuster_agent_stub,
+    clip_evaluator_node,
     design_director,
     layout_agent_stub,
     layout_and_style_agent_stub,
@@ -48,6 +49,7 @@ def build_graph() -> StateGraph:
     graph.add_node("adjuster_agent", adjuster_agent_stub)
     graph.add_node("layout_and_style_agent", layout_and_style_agent_stub)
     graph.add_node("renderer", renderer)
+    graph.add_node("clip_evaluator", clip_evaluator_node)
 
     graph.add_edge(START, "requirement_analyzer")
     graph.add_edge("requirement_analyzer", "visual_preprocessing")
@@ -66,7 +68,8 @@ def build_graph() -> StateGraph:
     graph.add_edge("style_agent", "renderer")
     graph.add_edge("adjuster_agent", "renderer")
     graph.add_edge("layout_and_style_agent", "renderer")
-    graph.add_edge("renderer", END)
+    graph.add_edge("renderer", "clip_evaluator")
+    graph.add_edge("clip_evaluator", END)
 
     return graph
 

@@ -891,3 +891,24 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         "generated_image": path_str,
         "render_result": render_result,
     }
+
+
+def clip_evaluator_node(state: DesignBridgeState) -> dict[str, Any]:
+    """Run CLIP evaluation on the generated image against the user's text prompt."""
+    image_path = state.get("generated_image")
+    user = state.get("user_input") or {}
+    text_prompt = (user.get("text_prompt") or "").strip()
+
+    if not image_path or not Path(image_path).is_file():
+        return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no generated image", "issues_found": [], "suggestions": []}}
+
+    if not text_prompt:
+        return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no text prompt", "issues_found": [], "suggestions": []}}
+
+    try:
+        from designbridge.clip_evaluator import evaluate
+        result = evaluate(image_path, text_prompt)
+    except Exception as e:
+        result = {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": f"CLIP evaluation failed: {e}", "issues_found": [], "suggestions": []}
+
+    return {"evaluation_result": result}

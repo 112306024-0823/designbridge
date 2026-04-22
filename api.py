@@ -283,6 +283,7 @@ async def generate_design(request: DesignRequest):
             "vision_features": result.get("vision_features"),
             "intermediate_outputs": result.get("intermediate_outputs"),
             "style_params": result.get("style_params"),
+            "evaluation_result": result.get("evaluation_result"),
         }
 
     except Exception as e:
