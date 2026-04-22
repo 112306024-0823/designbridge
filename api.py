@@ -14,6 +14,25 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import json
+import threading
+
+_history_lock = threading.Lock()
+_history_file = Path(__file__).parent / "artifacts" / "history.json"
+
+def _save_history(record: dict) -> None:
+    """Append a generation record to artifacts/history.json (thread-safe)."""
+    with _history_lock:
+        if _history_file.exists():
+            try:
+                history = json.loads(_history_file.read_text(encoding="utf-8"))
+            except Exception:
+                history = []
+        else:
+            history = []
+        history.append(record)
+        _history_file.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+
 # 匯入設計引擎
 from designbridge import get_compiled_graph
 from designbridge.style_apply import list_available_style_profiles
@@ -269,8 +288,7 @@ async def generate_design(request: DesignRequest):
                 generated_image_url = f"http://localhost:8000/{normalized}"
 
 
-        # 回傳結果（過濾掉不必要的內部狀態，只給前端需要的）
-        return {
+        response = {
             "status": "success",
             "elapsed_time": f"{elapsed:.2f}s",
             "routing_decision": result.get("routing_decision"),
@@ -284,6 +302,23 @@ async def generate_design(request: DesignRequest):
             "intermediate_outputs": result.get("intermediate_outputs"),
             "style_params": result.get("style_params"),
         }
+
+        # 儲存生成紀錄
+        _save_history({
+            "task_id": result.get("task_id"),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "elapsed_seconds": round(elapsed, 2),
+            "text_prompt": request.text_prompt,
+            "model_type": request.model_type,
+            "style_profile_id": request.style_profile_id,
+            "style_reference_image_path": request.style_reference_image_path,
+            "routing_decision": result.get("routing_decision"),
+            "generated_image_path": generated_image_path,
+            "generated_image_url": generated_image_url,
+            "style_params": result.get("style_params"),
+        })
+
+        return response
 
     except Exception as e:
         import traceback

@@ -113,8 +113,9 @@ def call_llm(
     if max_tokens is not None:
         completion_kwargs["max_tokens"] = max_tokens
 
-    # Inject API keys from env so LiteLLM picks them up automatically
-    _inject_api_keys(resolved_model)
+    api_key = _resolve_api_key(resolved_model)
+    if api_key:
+        completion_kwargs["api_key"] = api_key
 
     response = litellm.completion(**completion_kwargs)
     return response.choices[0].message.content or ""
@@ -141,7 +142,6 @@ def call_llm_stream(
     resolved_temp = temperature if temperature is not None else Config.GEMINI_TEMPERATURE
 
     messages = build_messages(prompt, images=images, system=system, history=history)
-    _inject_api_keys(resolved_model)
 
     completion_kwargs: dict[str, Any] = {
         "model": resolved_model,
@@ -153,39 +153,34 @@ def call_llm_stream(
     if max_tokens is not None:
         completion_kwargs["max_tokens"] = max_tokens
 
+    api_key = _resolve_api_key(resolved_model)
+    if api_key:
+        completion_kwargs["api_key"] = api_key
+
     for chunk in litellm.completion(**completion_kwargs):
         delta = chunk.choices[0].delta.content
         if delta:
             yield delta
 
 
-def _inject_api_keys(model: str) -> None:
-    """Set LiteLLM API key / base URL based on env and provider."""
+def _resolve_api_key(model: str) -> str | None:
+    """Return the API key to pass directly into litellm.completion().
+
+    Priority:
+      1. LITELLM_API_KEY  (proxy key, works without a base URL)
+      2. Provider-specific key derived from model string
+    """
     import os
-    import litellm
 
-    # LiteLLM proxy key takes precedence over all provider-specific keys
     proxy_key = os.getenv("LITELLM_API_KEY", "")
-    proxy_base = os.getenv("LITELLM_API_BASE", "")
     if proxy_key:
-        litellm.api_key = proxy_key
-        os.environ["LITELLM_API_KEY"] = proxy_key
-    if proxy_base:
-        litellm.api_base = proxy_base
-        os.environ["LITELLM_API_BASE"] = proxy_base
+        return proxy_key
 
-    # Provider-specific keys (only applied when no proxy is configured)
-    if not proxy_key:
-        model_lower = model.lower()
-        if model_lower.startswith("gemini/") or model_lower.startswith("google/"):
-            key = Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
-            if key:
-                os.environ.setdefault("GEMINI_API_KEY", key)
-        elif model_lower.startswith("gpt") or model_lower.startswith("openai/"):
-            key = os.getenv("OPENAI_API_KEY", "")
-            if key:
-                os.environ.setdefault("OPENAI_API_KEY", key)
-        elif model_lower.startswith("claude") or model_lower.startswith("anthropic/"):
-            key = os.getenv("ANTHROPIC_API_KEY", "")
-            if key:
-                os.environ.setdefault("ANTHROPIC_API_KEY", key)
+    model_lower = model.lower()
+    if model_lower.startswith("gemini/") or model_lower.startswith("google/"):
+        return Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY") or None
+    if model_lower.startswith("gpt") or model_lower.startswith("openai/"):
+        return os.getenv("OPENAI_API_KEY") or None
+    if model_lower.startswith("claude") or model_lower.startswith("anthropic/"):
+        return os.getenv("ANTHROPIC_API_KEY") or None
+    return None
