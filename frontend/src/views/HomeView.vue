@@ -14,8 +14,9 @@ const selectedStyle = ref('auto')
 const styleOptions = ref([{ label: '自動', value: 'auto' }])
 const styleLoading = ref(false)
 const styleError = ref('')
-const manualImagePath = ref('')
-const showManualPath = ref(false)
+const manualImagePath  = ref('')
+const showManualPath   = ref(false)
+const noStyleReference = ref(false)
 const spaceImage    = useImageField()
 const styleRefImage = useImageField()
 const result = ref(null)
@@ -130,10 +131,12 @@ async function handleSubmit() {
 
     // 優先用使用者手動上傳的風格參考圖；其次用向量搜尋確認的候選圖
     let style_reference_image_path = undefined
-    if (styleRefImage.file) {
-      style_reference_image_path = await uploadFile(styleRefImage.file)
-    } else if (confirmedStyle.value?.image_url) {
-      style_reference_image_path = confirmedStyle.value.image_url
+    if (!noStyleReference.value) {
+      if (styleRefImage.file) {
+        style_reference_image_path = await uploadFile(styleRefImage.file)
+      } else if (confirmedStyle.value?.image_url) {
+        style_reference_image_path = confirmedStyle.value.image_url
+      }
     }
 
     const res = await fetch(`${API_BASE}/api/generate`, {
@@ -143,11 +146,12 @@ async function handleSubmit() {
         text_prompt: textPrompt.value,
         edit_scope: editScope.value,
         model_type: modelType.value,
-        style_profile_id: selectedStyle.value !== 'auto'
+        style_profile_id: !noStyleReference.value && selectedStyle.value !== 'auto'
           ? selectedStyle.value
-          : confirmedStyle.value?.style_id || undefined,
+          : !noStyleReference.value ? confirmedStyle.value?.style_id || undefined : undefined,
         initial_image_path,
         style_reference_image_path,
+        no_style_reference: noStyleReference.value,
       }),
     })
     if (!res.ok) throw new Error(`${res.status}`)
@@ -178,6 +182,7 @@ onMounted(fetchStyleOptions)
         v-model:selectedStyle="selectedStyle"
         v-model:manualImagePath="manualImagePath"
         v-model:showManualPath="showManualPath"
+        v-model:noStyleReference="noStyleReference"
         :spaceImage="spaceImage"
         :styleRefImage="styleRefImage"
         :styleOptions="styleOptions"
@@ -245,5 +250,10 @@ onMounted(fetchStyleOptions)
   padding: 3rem 4rem;
   display: flex;
   flex-direction: column;
+}
+
+.content{
+  padding-left: 0;
+  padding-right: 0;
 }
 </style>

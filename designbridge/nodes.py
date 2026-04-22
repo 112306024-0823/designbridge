@@ -37,14 +37,23 @@ def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     task_id = state.get("task_id") or str(uuid.uuid4())
     iteration = state.get("iteration", 0)
 
-    # Try LLM (via LiteLLM) first, fall back to rule-based on failure
+    # Try LLM (via LiteLLM) first, fall back to passing prompt directly on failure
     try:
         structured_requirement = _call_llm_requirement_analyzer(
             text_prompt, edit_scope, initial_image, style_reference_image=style_reference_image
         )
     except Exception as e:
-        print(f"⚠️  LLM call failed ({e}), falling back to rule-based")
-        structured_requirement = _rule_based_requirement_analyzer(text_prompt, edit_scope, style_reference_image=style_reference_image)
+        print(f"⚠️  LLM call failed ({e}), passing prompt directly to renderer")
+        structured_requirement = {
+            "user_description_raw": text_prompt,
+            "design_description": text_prompt,
+            "meta": {"room_type": "living_room", "design_goal": "renovation", "user_experience_level": "general"},
+            "space_info": {"estimated_size": {"width": 5.0, "height": 3.0, "depth": 4.0}, "windows": [], "doors": []},
+            "style_preferences": {"primary_style": "", "secondary_style": None, "color_palette": [], "material_preferences": [], "style_strength": 0.7, "reference_images": []},
+            "layout_constraints": {"must_keep": [], "must_add": [], "must_remove": [], "immutable_regions": [], "functional_zones": []},
+            "edit_scope": {"scope_value": edit_scope, "allowed_operations": ["layout", "style"]},
+            "priority_weights": {"layout_rationality": 0.4, "style_consistency": 0.4, "user_preference": 0.2},
+        }
 
     # If the user explicitly selected a style from the dropdown, override whatever
     # Gemini / rule-based inferred from the text so the whole pipeline stays consistent.
