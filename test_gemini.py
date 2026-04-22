@@ -40,24 +40,18 @@ def main() -> None:
 
     # 2) Try a minimal Gemini call
     try:
-        import google.generativeai as genai  # type: ignore[import]
+        from google import genai  # type: ignore[import]
     except ImportError:
-        print("[ERROR] google-generativeai is not installed.")
-        print("Run: pip install google-generativeai")
+        print("[ERROR] google-genai is not installed.")
+        print("Run: pip install google-genai")
         sys.exit(1)
 
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(Config.GEMINI_MODEL)
-
+        client = genai.Client(api_key=api_key)
+        model_name = "gemini-2.0-flash"
         prompt = "你是一個測試用 API，請只回覆：\"OK\"。"
-        print(f"[INFO] Calling Gemini model: {Config.GEMINI_MODEL!r} ...")
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=Config.GEMINI_TEMPERATURE,
-            ),
-        )
+        print(f"[INFO] Calling Gemini model: {model_name!r} ...")
+        response = client.models.generate_content(model=model_name, contents=prompt)
 
         text: str = (response.text or "").strip()
         print("\n=== Gemini Response ===")
@@ -77,7 +71,8 @@ def main() -> None:
 
     # 3) Validate HF token (for HF Inference API usage)
     print("\n=== Hugging Face Token Test ===")
-    hf_token = Config.get_env("HF_TOKEN", "").strip()
+    import os
+    hf_token = (os.getenv("HF_TOKEN") or Config.HF_TOKEN or "").strip()
     if not hf_token:
         print("[WARN] HF_TOKEN is not set. Skipping HF verification.")
     else:

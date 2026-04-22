@@ -150,9 +150,10 @@ class RenderResultJSON(TypedDict):
 class EvalFeedbackJSON(TypedDict):
     """Output of Evaluator: scores and decision."""
 
-    scores: dict[str, float]  # {"layout_rationality": ..., "style_consistency": ..., "novelty": ...}
+    scores: dict[str, float]  # {"layout_rationality": ..., "style_consistency": ..., "novelty": ..., "clip_similarity": ...}
     weighted_score: float
     decision: Literal["continue", "stop"]
     feedback: str
     issues_found: NotRequired[list[str]]
     suggestions: NotRequired[list[str]]
+    clip_score: NotRequired[float]  # CLIP cosine similarity between generated image and text prompt
