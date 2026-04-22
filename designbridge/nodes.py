@@ -746,7 +746,8 @@ def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None =
 
         if model_type == "flux":
             pipe = _get_flux_pipeline()
-            image = pipe(prompt=prompt, num_inference_steps=steps, guidance_scale=0.0).images[0]
+            generator = torch.Generator(device=device).manual_seed(torch.randint(0, 2**32, (1,)).item())
+            image = pipe(prompt=prompt, num_inference_steps=steps, guidance_scale=0.0, generator=generator).images[0]
 
         elif model_type == "sd":
             pipe = _get_sd_pipeline()
