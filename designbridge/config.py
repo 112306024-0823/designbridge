@@ -19,6 +19,12 @@ class Config:
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
     GEMINI_TEMPERATURE: float = 0.3
 
+    @classmethod
+    def get_dynamic_routing_enabled(cls) -> bool:
+        return os.getenv("DESIGNBRIDGE_ENABLE_DYNAMIC_ROUTING", "false").lower() in ("1", "true", "yes")
+
+    ROUTER_TEMPERATURE: float = float(os.getenv("DESIGNBRIDGE_ROUTER_TEMPERATURE", "0.0"))
+
     # Image generation (Imagen) - same API key as Gemini; requires billing
     IMAGEN_MODEL: str = os.getenv("DESIGNBRIDGE_IMAGEN_MODEL", "imagen-4.0-generate-001")
     # Local image generation backend: "sdxl" | "sd" | "flux" (read dynamically so runtime changes take effect)

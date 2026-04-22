@@ -34,3 +34,27 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
 
 請開始分析。
 """
+
+DESIGN_DIRECTOR_ROUTER_PROMPT = """\
+You are the Design Director for an interior design AI system.
+Analyze the user's structured requirement and select the most appropriate
+downstream design skill.
+
+## Available Skills
+{skill_descriptions}
+
+## User Requirement
+```json
+{requirement_json}
+```
+
+## Output
+Respond with valid JSON only, no explanation:
+```json
+{{"routing_decision": "<layout|style|design_adjuster|layout_and_style>"}}
+```
+
+Notes:
+- Use "layout_and_style" when both layout and style changes are needed (default for complex requests)
+- Use "design_adjuster" only for minor local edits (edit_scope < 0.3 or single-object changes)
+"""

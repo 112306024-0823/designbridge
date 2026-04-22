@@ -402,10 +402,27 @@ def _route_decision(state: DesignBridgeState) -> RoutingDecision:
 
 def design_director(state: DesignBridgeState) -> dict[str, Any]:
     """
-    Design Director: route task to Layout / Style / Adjuster / Layout+Style
-    based on structured_requirement and vision_features.
+    動態調度：ENABLE_DYNAMIC_ROUTING=true 時由 Gemini 讀 SKILL.md 決策；
+    否則使用原本的 rule-based routing。任何 LLM 失敗都自動 fallback。
     """
-    routing_decision = _route_decision(state)
+    if Config.get_dynamic_routing_enabled():
+        try:
+            from designbridge.router import call_llm_router, RouterLLMError
+            api_key = Config.get_gemini_api_key()
+            routing_decision = call_llm_router(
+                structured_requirement=state.get("structured_requirement") or {},
+                vision_features=state.get("vision_features") or {},
+                api_key=api_key,
+                gemini_model=Config.GEMINI_MODEL,
+                gemini_temperature=Config.ROUTER_TEMPERATURE,
+            )
+            print(f"[design_director] LLM router: {routing_decision}")
+        except Exception as e:
+            print(f"[design_director] LLM routing failed ({e}), fallback to rule-based")
+            routing_decision = _route_decision(state)
+    else:
+        routing_decision = _route_decision(state)
+
     return {"routing_decision": routing_decision}
 
 
