@@ -671,6 +671,8 @@ def _render_hf_inference(prompt: str, out_path: Path, model: str = "") -> bool:
     Generate image via Hugging Face Inference API.
     No local model download. Returns True on success.
     """
+    import secrets
+
     api_key = Config.HF_TOKEN
     if not api_key:
         return False
@@ -681,7 +683,11 @@ def _render_hf_inference(prompt: str, out_path: Path, model: str = "") -> bool:
             provider=Config.HF_INFERENCE_PROVIDER,
             api_key=api_key,
         )
-        image = client.text_to_image(prompt, model=model)
+        # secrets.randbelow 使用 OS 真隨機源（/dev/urandom），
+        # 避免 random 在多 worker / fork 下重複相同序列
+        seed = secrets.randbelow(2**31)
+        print(f"🎲 HF Inference seed: {seed}")
+        image = client.text_to_image(prompt, model=model, seed=seed)
         if image is None:
             return False
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -795,7 +801,9 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     artifacts_root = Path(Config.ARTIFACTS_DIR)
     render_dir = artifacts_root / "render"
     render_dir.mkdir(parents=True, exist_ok=True)
-    out_path = render_dir / f"{task_id}.png"
+    # 加入隨機短碼，確保每次生成都是獨立新檔案（避免 task_id 相同時回傳舊圖）
+    render_suffix = uuid.uuid4().hex[:8]
+    out_path = render_dir / f"{task_id}_{render_suffix}.png"
 
     prompt = _build_imagen_prompt_from_requirement(req, style_params=style_params)
     negative_prompt = style_params.get("negative_prompt") or None
