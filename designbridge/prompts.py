@@ -7,24 +7,24 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
 文字需求: {text_prompt}
 改動幅度 (edit_scope): {edit_scope}（0.0 = 最小改動, 1.0 = 大幅改動）
 初始圖片: {initial_image}
+（若附有第二張圖片，請視為風格參考圖，分析其風格、色彩與材質特徵，並反映在主要風格與設計描述中）
 
-## 任務
-若訊息附有空間圖片，請根據圖片內容（空間配置、既有家具、風格等）與文字需求一併分析。
-請依照下列格式逐行輸出分析報告（純文字，每行一個欄位，不要輸出 JSON 或 markdown 區塊）：
+## 輸出格式
+請依照以下格式逐行輸出，每行一個欄位，直接填入值，不要加方括號、JSON 或 markdown 區塊：
 
-空間類型: [living_room / bedroom / kitchen / study 等英文識別碼]
-設計目標: [new_design 或 renovation]
-主要風格: [主要設計風格，如北歐、現代、工業、簡約等]
-次要風格: [次要風格，沒有則填無]
-色彩偏好: [偏好顏色，以逗號分隔，沒有則填無]
-材質偏好: [偏好材質，以逗號分隔，沒有則填無]
-必須保留: [必須保留的家具或元素，以逗號分隔，沒有則填無]
-必須新增: [需要新增的家具或功能，以逗號分隔，沒有則填無]
-必須移除: [需要移除的元素，以逗號分隔，沒有則填無]
-涉及佈局: [是 或 否]
-涉及風格: [是 或 否]
-僅局部微調: [是 或 否]
-設計描述: [完整的英文圖像生成描述，涵蓋空間類型、風格、材質、色彩、氛圍、光線等細節，適合直接作為 image generation prompt]
+空間類型: 英文識別碼，如 living_room、bedroom、kitchen、study
+設計目標: new_design 或 renovation
+主要風格: 主要設計風格，如北歐、現代、工業、簡約
+次要風格: 次要風格，沒有則填無
+色彩偏好: 偏好顏色，以逗號分隔，沒有則填無
+材質偏好: 偏好材質，以逗號分隔，沒有則填無
+必須保留: 必須保留的家具或元素，以逗號分隔，沒有則填無
+必須新增: 需要新增的家具或功能，以逗號分隔，沒有則填無
+必須移除: 需要移除的元素，以逗號分隔，沒有則填無
+涉及佈局: 是 或 否
+涉及風格: 是 或 否
+僅局部微調: 是 或 否
+設計描述: 完整的英文圖像生成描述，請在同一行內完整填寫，涵蓋空間類型、風格、材質、色彩、氛圍、光線等細節
 
 ## 隱式需求推導
 - 「常在家工作」→ 必須新增包含書桌，涉及佈局: 是
@@ -33,4 +33,28 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
 - 「光線不足」→ 設計描述強調自然採光
 
 請開始分析。
+"""
+
+DESIGN_DIRECTOR_ROUTER_PROMPT = """\
+You are the Design Director for an interior design AI system.
+Analyze the user's structured requirement and select the most appropriate
+downstream design skill.
+
+## Available Skills
+{skill_descriptions}
+
+## User Requirement
+```json
+{requirement_json}
+```
+
+## Output
+Respond with valid JSON only, no explanation:
+```json
+{{"routing_decision": "<layout|style|design_adjuster|layout_and_style>"}}
+```
+
+Notes:
+- Use "layout_and_style" when both layout and style changes are needed (default for complex requests)
+- Use "design_adjuster" only for minor local edits (edit_scope < 0.3 or single-object changes)
 """

@@ -23,3 +23,16 @@ accelerate>=0.30.0
 
 fastapi
 uvicorn
+python-dotenv>=1.0.0
+python-multipart
+
+# LLM proxy
+litellm>=1.40.0
+
+# Supabase (vector search + storage)
+supabase>=2.4.0
+httpx>=0.27.0
+
+# Vector store (Style KB)
+chromadb>=0.5.0
+sentence-transformers>=3.0.0

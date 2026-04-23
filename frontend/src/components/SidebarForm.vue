@@ -3,19 +3,21 @@ import ImageUpload from './ImageUpload.vue'
 
 const textPrompt      = defineModel('textPrompt',      { default: '' })
 const editScope       = defineModel('editScope',       { default: 0.6 })
-const modelType       = defineModel('modelType',       { default: 'sdxl' })
+const modelType       = defineModel('modelType',       { default: 'flux' })
 const selectedStyle   = defineModel('selectedStyle',   { default: 'auto' })
-const manualImagePath = defineModel('manualImagePath', { default: '' })
-const showManualPath  = defineModel('showManualPath',  { default: false })
+const manualImagePath  = defineModel('manualImagePath',  { default: '' })
+const showManualPath   = defineModel('showManualPath',   { default: false })
+const noStyleReference = defineModel('noStyleReference', { default: false })
 
 defineProps({
   spaceImage:    { type: Object, required: true },
   styleRefImage: { type: Object, required: true },
   styleOptions:  { type: Array,  default: () => [] },
   styleLoading:  { type: Boolean, default: false },
-  styleError:    { type: String,  default: '' },
-  loading:       { type: Boolean, default: false },
-  error:         { type: String,  default: '' },
+  styleError:          { type: String,  default: '' },
+  matchedStylePreview: { type: Object,  default: null },
+  loading:             { type: Boolean, default: false },
+  error:               { type: String,  default: '' },
 })
 
 defineEmits(['submit'])
@@ -95,7 +97,14 @@ defineEmits(['submit'])
 
     <!-- 6. 風格參考圖 -->
     <div class="field">
-      <label class="field-label">🎨 風格參考圖（Optional）</label>
+      <div class="field-label-row">
+        <label class="field-label">🎨 風格參考圖</label>
+        <label class="toggle-label">
+          <input type="checkbox" v-model="noStyleReference" />
+          <span>不套用風格</span>
+        </label>
+      </div>
+      <template v-if="!noStyleReference">
       <ImageUpload
         label="點擊上傳風格參考圖"
         icon="🖼️"
@@ -104,6 +113,16 @@ defineEmits(['submit'])
         @change="styleRefImage.onChange"
         @remove="styleRefImage.remove"
       />
+      <!-- 無上傳圖時，顯示向量搜尋到的參考圖 -->
+      <div v-if="!styleRefImage.preview && matchedStylePreview?.image_url" class="matched-preview">
+        <div class="matched-label">
+          AI 依描述自動選取：<strong>{{ matchedStylePreview.style_name }}</strong>
+          <span class="score">相似度 {{ (matchedStylePreview.similarity * 100).toFixed(0) }}%</span>
+        </div>
+        <img :src="`http://localhost:8000${matchedStylePreview.image_url}`" alt="風格參考圖" @error="$event.target.style.display='none'" />
+      </div>
+      </template>
+      <div v-else class="no-style-hint">純文字 prompt 生圖，不套用風格參考圖</div>
     </div>
 
     <button class="submit-btn" @click="$emit('submit')" :disabled="loading">
@@ -227,5 +246,60 @@ select:focus { outline: none; border-color: var(--primary); background: #fff; }
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
   border: 1px solid #f5c6c6;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: #7c5cbf;
+  cursor: pointer;
+  font-weight: 600;
+}
+.toggle-label input[type='checkbox'] { accent-color: #7c5cbf; cursor: pointer; }
+.no-style-hint {
+  font-size: 0.78rem;
+  color: #b0a0cc;
+  padding: 0.5rem 0.75rem;
+  background: rgba(180, 150, 230, 0.08);
+  border-radius: 8px;
+  border: 1px dashed #d4c4ef;
+}
+
+.matched-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+.matched-preview img {
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1.5px solid #c9b8e8;
+  display: block;
+}
+.matched-label {
+  font-size: 0.78rem;
+  color: #7c5cbf;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.score {
+  background: var(--primary-light);
+  color: var(--primary);
+  padding: 0.05rem 0.45rem;
+  border-radius: 99px;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 </style>

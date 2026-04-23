@@ -37,15 +37,23 @@ def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     task_id = state.get("task_id") or str(uuid.uuid4())
     iteration = state.get("iteration", 0)
 
-    # Try Gemini API first
+    # Try LLM (via LiteLLM) first, fall back to passing prompt directly on failure
     try:
-        api_key = Config.get_gemini_api_key()
-        structured_requirement = _call_gemini_requirement_analyzer(
-            text_prompt, edit_scope, initial_image, api_key, style_reference_image=style_reference_image
+        structured_requirement = _call_llm_requirement_analyzer(
+            text_prompt, edit_scope, initial_image, style_reference_image=style_reference_image
         )
-    except (ValueError, Exception) as e:
-        print(f"⚠️  Gemini API not available or failed ({e}), falling back to rule-based")
-        structured_requirement = _rule_based_requirement_analyzer(text_prompt, edit_scope, style_reference_image=style_reference_image)
+    except Exception as e:
+        print(f"⚠️  LLM call failed ({e}), passing prompt directly to renderer")
+        structured_requirement = {
+            "user_description_raw": text_prompt,
+            "design_description": text_prompt,
+            "meta": {"room_type": "living_room", "design_goal": "renovation", "user_experience_level": "general"},
+            "space_info": {"estimated_size": {"width": 5.0, "height": 3.0, "depth": 4.0}, "windows": [], "doors": []},
+            "style_preferences": {"primary_style": "", "secondary_style": None, "color_palette": [], "material_preferences": [], "style_strength": 0.7, "reference_images": []},
+            "layout_constraints": {"must_keep": [], "must_add": [], "must_remove": [], "immutable_regions": [], "functional_zones": []},
+            "edit_scope": {"scope_value": edit_scope, "allowed_operations": ["layout", "style"]},
+            "priority_weights": {"layout_rationality": 0.4, "style_consistency": 0.4, "user_preference": 0.2},
+        }
 
     # If the user explicitly selected a style from the dropdown, override whatever
     # Gemini / rule-based inferred from the text so the whole pipeline stays consistent.
@@ -71,74 +79,53 @@ def _is_valid_image_path(image_path: str) -> bool:
     return Path(s).is_file()
 
 
-def _call_gemini_requirement_analyzer(
-    text_prompt: str, edit_scope: float, initial_image: str, api_key: str, style_reference_image: str = ""
+def _call_llm_requirement_analyzer(
+    text_prompt: str, edit_scope: float, initial_image: str, style_reference_image: str = ""
 ) -> dict[str, Any]:
-    """Call Gemini API to analyze requirements and return structured JSON.
-    When initial_image is a valid file path, sends the image to Gemini Vision (multimodal).
+    """Call LLM (via LiteLLM) to analyze requirements and return structured JSON.
+    Sends images inline when valid file paths are provided (multimodal).
     """
+    import json as _json
+    from designbridge.llm import call_llm
+
+    prompt = REQUIREMENT_ANALYZER_PROMPT.format(
+        text_prompt=text_prompt,
+        edit_scope=edit_scope,
+        initial_image=initial_image,
+    )
+
+    images: list[str] = []
+    if _is_valid_image_path(initial_image):
+        images.append(initial_image)
+    if style_reference_image and _is_valid_image_path(style_reference_image):
+        images.append(style_reference_image)
+
+    text = call_llm(prompt, images=images or None)
+    text = text.strip()
+
+    # Strip markdown code fences if present
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+
+    # Tolerate leading/trailing noise around the JSON object
+    if not text.startswith("{"):
+        start = text.find("{")
+        if start != -1:
+            text = text[start:]
+    if not text.endswith("}"):
+        end = text.rfind("}")
+        if end != -1:
+            text = text[: end + 1]
+
     try:
-        import base64
-
-        import google.generativeai as genai
-
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(Config.GEMINI_MODEL)
-
-        prompt = REQUIREMENT_ANALYZER_PROMPT.format(
-            text_prompt=text_prompt,
-            edit_scope=edit_scope,
-            initial_image=initial_image,
-        )
-
-        # Build content: image + text when image path is valid (Gemini Vision)
-        # 支援 style_reference_image 作為第二張圖
-        images = []
-        if _is_valid_image_path(initial_image):
-            try:
-                uploaded_file = genai.upload_file(path=initial_image)
-                images.append(uploaded_file)
-            except Exception:
-                path = Path(initial_image)
-                suffix = path.suffix.lower()
-                mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
-                mime_type = mime_map.get(suffix, "image/jpeg")
-                img_bytes = path.read_bytes()
-                image_part = {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(img_bytes).decode("ascii")}}
-                images.append(image_part)
-        if style_reference_image and _is_valid_image_path(style_reference_image):
-            try:
-                uploaded_file = genai.upload_file(path=style_reference_image)
-                images.append(uploaded_file)
-            except Exception:
-                path = Path(style_reference_image)
-                suffix = path.suffix.lower()
-                mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
-                mime_type = mime_map.get(suffix, "image/jpeg")
-                img_bytes = path.read_bytes()
-                image_part = {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(img_bytes).decode("ascii")}}
-                images.append(image_part)
-        if images:
-            contents = images + [prompt]
-        else:
-            contents = prompt
-
-        response = model.generate_content(
-            contents,
-            generation_config=genai.GenerationConfig(
-                temperature=Config.GEMINI_TEMPERATURE,
-            ),
-        )
-
-        nl_text = response.text.strip()
-        return _parse_nl_requirement(nl_text, edit_scope, text_prompt)
-
-    except ImportError:
-        raise ValueError(
-            "google-generativeai not installed. Run: pip install google-generativeai"
-        )
-    except Exception as e:
-        raise RuntimeError(f"Gemini API call failed: {e}")
+        return _json.loads(text)
+    except Exception:
+        return _parse_nl_requirement(text, edit_scope, text_prompt)
 
 
 def _parse_nl_requirement(nl_text: str, edit_scope: float, text_prompt: str = "") -> dict[str, Any]:
@@ -247,7 +234,7 @@ def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float, style_
     # Check specific styles first before generic "現代" to avoid false matches
     # e.g. "帶有現代感的日式設計" should resolve to "日式" not "現代"
     styles = ["北歐", "nordic", "scandinavian", "工業", "industrial", "日式", "japanese",
-              "鄉村", "country", "古典", "classic", "混搭", "mix", "美式", "american",
+              "鄉村", "country", "古典", "classic", "美式", "american",
               "奢華", "luxury", "新古典", "neoclassic", "簡約", "minimal",
               "現代", "modern"]
     primary_style = next((s for s in styles if s in text), None)
@@ -379,10 +366,27 @@ def _route_decision(state: DesignBridgeState) -> RoutingDecision:
 
 def design_director(state: DesignBridgeState) -> dict[str, Any]:
     """
-    Design Director: route task to Layout / Style / Adjuster / Layout+Style
-    based on structured_requirement and vision_features.
+    動態調度：ENABLE_DYNAMIC_ROUTING=true 時由 Gemini 讀 SKILL.md 決策；
+    否則使用原本的 rule-based routing。任何 LLM 失敗都自動 fallback。
     """
-    routing_decision = _route_decision(state)
+    if Config.get_dynamic_routing_enabled():
+        try:
+            from designbridge.router import call_llm_router, RouterLLMError
+            api_key = Config.get_gemini_api_key()
+            routing_decision = call_llm_router(
+                structured_requirement=state.get("structured_requirement") or {},
+                vision_features=state.get("vision_features") or {},
+                api_key=api_key,
+                gemini_model=Config.GEMINI_MODEL,
+                gemini_temperature=Config.ROUTER_TEMPERATURE,
+            )
+            print(f"[design_director] LLM router: {routing_decision}")
+        except Exception as e:
+            print(f"[design_director] LLM routing failed ({e}), fallback to rule-based")
+            routing_decision = _route_decision(state)
+    else:
+        routing_decision = _route_decision(state)
+
     return {"routing_decision": routing_decision}
 
 
@@ -554,7 +558,6 @@ def _build_imagen_prompt_from_requirement(
         "modern": "modern contemporary",
         "country": "country rustic farmhouse",
         "classic": "classical traditional",
-        "mix": "eclectic mixed style",
         "nordic": "Nordic Scandinavian minimalist",
         "industrial": "industrial loft",
         "japanese": "Japanese minimalist Japandi",
@@ -630,7 +633,7 @@ def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> No
     img.save(out_path)
 
 
-# Cached pipelines (loaded once, reused for subsequent renders)
+# 快取模型，不用每次都載入
 _sdxl_pipeline: Any = None
 _controlnet_pipeline: Any = None
 
@@ -711,7 +714,7 @@ def _get_sd_pipeline():
     global _sd_pipeline
     if _sd_pipeline is not None:
         return _sd_pipeline
-    from diffusers import StableDiffusion3Pipeline
+    from diffusers import DiffusionPipeline
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
     kwargs: dict[str, Any] = {
@@ -719,7 +722,7 @@ def _get_sd_pipeline():
     }
     if Config.HF_TOKEN:
         kwargs["token"] = Config.HF_TOKEN
-    _sd_pipeline = StableDiffusion3Pipeline.from_pretrained(Config.SD_MODEL, **kwargs).to(device)
+    _sd_pipeline = DiffusionPipeline.from_pretrained(Config.SD_MODEL, **kwargs).to(device)
     return _sd_pipeline
 
 
@@ -740,7 +743,7 @@ def _get_flux_pipeline():
     return _flux_pipeline
 
 
-def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None = None) -> bool:
+def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None = None, negative_prompt: str | None = None) -> bool:
     """
     Generate image with local SD / SDXL / Flux based on Config.LOCAL_MODEL_TYPE.
     Returns True on success.
@@ -777,13 +780,16 @@ def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None =
                 ).images[0]
             else:
                 pipe = _get_sdxl_pipeline()
-                image = pipe(prompt=prompt, num_inference_steps=steps).images[0]
+                kwargs = {"prompt": prompt, "num_inference_steps": steps}
+                if negative_prompt:
+                    kwargs["negative_prompt"] = negative_prompt
+                image = pipe(**kwargs).images[0]
 
         image.save(str(out_path))
         return True
     except Exception as e:
         import traceback
-        print(f"⚠️  render failed ({type(e).__name__}: {e})")
+        print(f"⚠️ Render failed ({type(e).__name__}: {e})")
         traceback.print_exc()
         return False
 
@@ -829,7 +835,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if seg_path:
         controlnet_inputs["segmentation"] = str(seg_path)
 
-    # Resolve selected model type and corresponding HF model ID
+    # 1. Hugging Face Inference API (cloud SDXL; no local download)
     model_type = Config.get_local_model_type()
     if model_type == "flux":
         hf_model_id = Config.FLUX_MODEL
@@ -838,16 +844,20 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     else:
         hf_model_id = Config.SDXL_MODEL
 
-    # Use style_reference_image as control image if provided, otherwise fall back to depth
+    # Use style_reference_image as control image:
+    # priority: user upload > Supabase matched image > depth map
     user_input = state.get("user_input") or {}
     style_reference_image = user_input.get("style_reference_image")
     if style_reference_image and Path(style_reference_image).exists():
         control_img = style_reference_image
         controlnet_inputs["style_reference_image"] = str(style_reference_image)
+    elif style_params and style_params.get("reference_image_path") and Path(style_params["reference_image_path"]).exists():
+        control_img = style_params["reference_image_path"]
+        controlnet_inputs["style_reference_image"] = control_img
+        print(f"使用 Supabase 匹配圖作為風格參考：{Path(control_img).name}")
     else:
         control_img = depth_path if depth_path and Path(depth_path).exists() else None
 
-    # 1. Hugging Face Inference API (cloud; no local download)
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
         if _render_hf_inference(prompt, out_path, model=hf_model_id):
             backend = "hf_inference"
@@ -888,3 +898,24 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         "generated_image": path_str,
         "render_result": render_result,
     }
+
+
+def clip_evaluator_node(state: DesignBridgeState) -> dict[str, Any]:
+    """Run CLIP evaluation on the generated image against the user's text prompt."""
+    image_path = state.get("generated_image")
+    user = state.get("user_input") or {}
+    text_prompt = (user.get("text_prompt") or "").strip()
+
+    if not image_path or not Path(image_path).is_file():
+        return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no generated image", "issues_found": [], "suggestions": []}}
+
+    if not text_prompt:
+        return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no text prompt", "issues_found": [], "suggestions": []}}
+
+    try:
+        from designbridge.clip_evaluator import evaluate
+        result = evaluate(image_path, text_prompt)
+    except Exception as e:
+        result = {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": f"CLIP evaluation failed: {e}", "issues_found": [], "suggestions": []}
+
+    return {"evaluation_result": result}
