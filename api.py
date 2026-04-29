@@ -132,7 +132,7 @@ def search_styles(
         results = query_style_images_supabase(
             text_query=q,
             style_id=sid or None,
-            top_k=min(top_k, 6),
+            top_k=min(top_k, 10),
             retrieval_mode=retrieval_mode,
         )
         if not results:
