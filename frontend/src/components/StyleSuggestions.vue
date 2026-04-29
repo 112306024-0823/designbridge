@@ -3,9 +3,10 @@ const props = defineProps({
   candidates:  { type: Array,  default: () => [] },  // [{ style_id, style_name, image_url, similarity, description }]
   confirmed:   { type: Object, default: null },       // 使用者選中的那筆
   loading:     { type: Boolean, default: false },
+  retrievalMode: { type: String, default: 'text-to-image' },
 })
 
-const emit = defineEmits(['confirm', 'clear'])
+const emit = defineEmits(['confirm', 'clear', 'change-mode'])
 
 function similarityLabel(score) {
   if (score >= 0.85) return '非常符合'
@@ -18,8 +19,32 @@ function similarityLabel(score) {
 <template>
   <div class="suggestions">
     <div class="header">
-      <h2>AI 推薦風格參考</h2>
+      <div class="header-top">
+        <h2>AI 推薦風格參考</h2>
+        <div class="mode-switch" role="group" aria-label="retrieval mode">
+          <button
+            type="button"
+            class="mode-btn"
+            :class="{ active: retrievalMode === 'text-to-image' }"
+            @click="emit('change-mode', 'text-to-image')"
+          >
+            圖像比對
+          </button>
+          <button
+            type="button"
+            class="mode-btn"
+            :class="{ active: retrievalMode === 'text-to-text' }"
+            @click="emit('change-mode', 'text-to-text')"
+          >
+            文字比對
+          </button>
+        </div>
+      </div>
       <p class="subtitle">根據你的文字描述，找到以下相似風格圖片，選擇一張套用其風格參數</p>
+      <p class="mode-caption">
+        目前模式：
+        <strong>{{ retrievalMode === 'text-to-text' ? '文字比對（style_kb）' : '圖像比對（向量圖庫）' }}</strong>
+      </p>
     </div>
 
     <!-- 骨架載入 -->
@@ -32,6 +57,11 @@ function similarityLabel(score) {
           <div class="skeleton-line medium"></div>
         </div>
       </div>
+    </div>
+
+    <!-- 無結果 -->
+    <div v-else-if="!candidates.length" class="empty-state">
+      找不到相符的風格參考，請嘗試更換關鍵字或選擇特定風格
     </div>
 
     <!-- 候選卡片 -->
@@ -88,11 +118,69 @@ function similarityLabel(score) {
   font-size: 1.4rem;
   font-weight: 800;
   color: #3d2b6e;
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.1rem;
 }
 .subtitle {
   font-size: 0.875rem;
   color: #9880bb;
+  margin-bottom: 0.2rem;
+}
+
+.mode-caption {
+  margin: 0;
+  font-size: 0.76rem;
+  color: #8a75af;
+}
+
+.mode-caption strong {
+  color: #6e4fa6;
+  font-weight: 700;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.3rem;
+}
+
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #d8c9ef;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 0.2rem;
+  gap: 0.15rem;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
+}
+
+.mode-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #7a5bab;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1;
+  min-width: 72px;
+  height: 30px;
+  padding: 0 0.72rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.mode-btn:hover {
+  color: #694598;
+  background: rgba(124, 92, 191, 0.1);
+}
+
+.mode-btn.active {
+  background: linear-gradient(135deg, #7c5cbf 0%, #9f73d8 100%);
+  color: #fff;
+  border-color: rgba(124, 92, 191, 0.35);
+  box-shadow: 0 3px 10px rgba(124, 92, 191, 0.28);
 }
 
 /* Grid */
@@ -200,6 +288,16 @@ function similarityLabel(score) {
   overflow: hidden;
 }
 .description.muted { color: #b0a0cc; }
+
+.empty-state {
+  padding: 2rem;
+  text-align: center;
+  color: #9880bb;
+  font-size: 0.9rem;
+  background: rgba(255,255,255,0.6);
+  border: 1px dashed #d4c4ef;
+  border-radius: 12px;
+}
 
 .apply-btn {
   margin-top: auto;
