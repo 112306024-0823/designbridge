@@ -306,6 +306,51 @@ def download_style_image(image_url: str) -> Path | None:
         print(f"下載風格參考圖失敗：{e}")
         return None
 
+
+def _load_style_kb_for_result(result: SupabaseStyleResult) -> dict[str, Any] | None:
+    """Load style_kb for top matched image from Supabase table."""
+    try:
+        client = _get_supabase()
+        rows = (
+            client.table("style_images")
+            .select("style_kb")
+            .eq("image_url", result.image_url)
+            .eq("style_id", result.style_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if not rows:
+            return None
+        style_kb = rows[0].get("style_kb")
+        return style_kb if isinstance(style_kb, dict) else None
+    except Exception as e:
+        print(f"⚠️讀取 style_kb 失敗：{e}")
+        return None
+
+
+def _extract_material_recommendations(style_kb: dict[str, Any]) -> list[str]:
+    """Extract compact material recommendation list from style_kb."""
+    visual = style_kb.get("visual_elements")
+    if not isinstance(visual, dict):
+        return []
+    materials = visual.get("materials")
+    if not isinstance(materials, list):
+        return []
+
+    output: list[str] = []
+    for item in materials:
+        if not isinstance(item, dict):
+            continue
+        material_type = str(item.get("type", "")).strip()
+        finish = str(item.get("finish", "")).strip()
+        target = str(item.get("target", "")).strip()
+        label = " ".join(v for v in [material_type, finish, target] if v)
+        if label:
+            output.append(label)
+    return output[:6]
+
 def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str, Any] | None:
     """
     Build style params from Supabase search results.
@@ -316,40 +361,62 @@ def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str,
         return None
 
     top = results[0]
-
-    # Dominant style by weighted similarity vote
-    weights: dict[str, float] = {}
-    for r in results:
-        weights[r.style_id] = weights.get(r.style_id, 0.0) + r.similarity
-    dominant_style_id = max(weights, key=lambda k: weights[k])
+    style_id = top.style_id
 
     # Download the top matched image
     ref_path = download_style_image(top.image_url)
 
-    # Text prompts based on style_id
-    prompts = _STYLE_PROMPTS.get(dominant_style_id, _STYLE_PROMPTS["modern"])
+    # Priority 1: use the matched image's style_kb directly
+    style_kb = _load_style_kb_for_result(top)
+    ai_params = style_kb.get("ai_params") if isinstance(style_kb, dict) else {}
+    prompts_from_kb = ai_params.get("prompts") if isinstance(ai_params, dict) else {}
+    pos_from_kb = (
+        str(prompts_from_kb.get("positive", "")).strip()
+        if isinstance(prompts_from_kb, dict)
+        else ""
+    )
+    neg_from_kb = (
+        str(prompts_from_kb.get("negative", "")).strip()
+        if isinstance(prompts_from_kb, dict)
+        else ""
+    )
+
+    # Priority 2: fallback to style_id-based static prompts
+    prompts = _STYLE_PROMPTS.get(style_id, _STYLE_PROMPTS["modern"])
+    style_prompt = pos_from_kb or prompts["positive"]
+    negative_prompt = neg_from_kb or prompts["negative"]
+
+    summary = ""
+    if isinstance(style_kb, dict):
+        summary = str(style_kb.get("description", "")).strip()
+
+    style_strength = 0.8
+    if isinstance(ai_params, dict):
+        kb_strength = ai_params.get("recommended_ip_adapter_weight")
+        if isinstance(kb_strength, (int, float)):
+            style_strength = float(max(0.0, min(1.0, kb_strength)))
 
     from style_kb.styles import STYLES
     style_name_map = {sid: sname for sid, sname in STYLES}
 
     print(
-        f"[OK] Supabase vector search -> {dominant_style_id} "
+        f"[OK] Supabase vector search -> {style_id} "
         f"(score={top.similarity:.3f}, ref_image={'OK' if ref_path else 'FAILED'})"
     )
 
     return {
-        "style_profile_id": dominant_style_id,
-        "style_profile_name": style_name_map.get(dominant_style_id, dominant_style_id),
-        "style_prompt": prompts["positive"],
-        "negative_prompt": prompts["negative"],
-        "style_strength": 0.8,
+        "style_profile_id": style_id,
+        "style_profile_name": style_name_map.get(style_id, style_id),
+        "style_prompt": style_prompt,
+        "negative_prompt": negative_prompt,
+        "style_strength": style_strength,
         "color_guidance": {},
         "controlnet_type": "depth",
-        "style_summary": "",
-        "material_recommendations": [],
+        "style_summary": summary,
+        "material_recommendations": _extract_material_recommendations(style_kb or {}),
         "reference_image_url": top.image_url,
         "reference_image_path": str(ref_path) if ref_path else None,
         "top_similarity": top.similarity,
-        "source": "supabase_vector",
+        "source": "supabase_style_kb" if style_kb else "supabase_vector",
     }
 

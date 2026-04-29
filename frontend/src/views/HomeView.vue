@@ -10,6 +10,7 @@ const API_BASE = 'http://localhost:8000'
 const textPrompt = ref('')
 const editScope = ref(0.6)
 const modelType = ref('flux')
+const outputAspect = ref('auto')
 const selectedStyle = ref('auto')
 const styleOptions = ref([{ label: '自動', value: 'auto' }])
 const styleLoading = ref(false)
@@ -53,19 +54,23 @@ async function fetchStyleCandidates() {
   candidatesLoading.value = true
   try {
     const res = await fetch(
-      `${API_BASE}/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=3&retrieval_mode=${encodeURIComponent(styleRetrievalMode.value)}`
+      `${API_BASE}/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=10&retrieval_mode=${encodeURIComponent(styleRetrievalMode.value)}`
     )
     if (res.ok) {
       const data = await res.json()
-      styleCandidates.value = data
-      matchedStylePreview.value = data[0]
-        ? { image_url: data[0].image_url, style_name: data[0].style_name, similarity: data[0].similarity }
+      const sorted = (Array.isArray(data) ? data : [])
+        .slice()
+        .sort((a, b) => (Number(b?.similarity ?? 0) - Number(a?.similarity ?? 0)))
+        .slice(0, 10)
+      styleCandidates.value = sorted
+      matchedStylePreview.value = sorted[0]
+        ? { image_url: sorted[0].image_url, style_name: sorted[0].style_name, similarity: sorted[0].similarity }
         : null
-      if (confirmedStyle.value && !data.find(c => c.image_url === confirmedStyle.value.image_url)) {
+      if (confirmedStyle.value && !sorted.find(c => c.image_url === confirmedStyle.value.image_url)) {
         confirmedStyle.value = null
       }
     }
-  } catch { /* 靜默失敗 */ }
+  } catch {}
   finally {
     candidatesLoading.value = false
     candidatesSearched.value = true
@@ -166,6 +171,7 @@ async function handleSubmit() {
         text_prompt: textPrompt.value,
         edit_scope: editScope.value,
         model_type: modelType.value,
+        output_aspect: outputAspect.value,
         style_profile_id: !noStyleReference.value && selectedStyle.value !== 'auto'
           ? selectedStyle.value
           : !noStyleReference.value ? confirmedStyle.value?.style_id || undefined : undefined,
@@ -204,6 +210,7 @@ onMounted(fetchStyleOptions)
           v-model:textPrompt="textPrompt"
           v-model:editScope="editScope"
           v-model:modelType="modelType"
+          v-model:outputAspect="outputAspect"
           v-model:selectedStyle="selectedStyle"
           v-model:manualImagePath="manualImagePath"
           v-model:showManualPath="showManualPath"
@@ -228,6 +235,7 @@ onMounted(fetchStyleOptions)
         :confirmed="confirmedStyle"
         :loading="candidatesLoading"
         :retrieval-mode="styleRetrievalMode"
+        :api-base="API_BASE"
         @confirm="handleConfirmStyle"
         @clear="handleClearConfirmedStyle"
         @change-mode="handleChangeRetrievalMode"

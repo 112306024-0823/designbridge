@@ -1,5 +1,5 @@
 # designbridge/router.py
-"""LLM-based Router: uses Gemini + SkillRegistry to decide routing dynamically."""
+"""LLM-based Router: uses call_llm (LiteLLM / xAI / Gemini) + SkillRegistry for routing."""
 
 from __future__ import annotations
 
@@ -78,9 +78,9 @@ def build_router_prompt(structured_requirement: dict, skill_descriptions: str) -
     from designbridge.prompts import DESIGN_DIRECTOR_ROUTER_PROMPT
 
     requirement_json = json.dumps(structured_requirement, ensure_ascii=False, indent=2)
-    return DESIGN_DIRECTOR_ROUTER_PROMPT.format(
-        skill_descriptions=skill_descriptions,
-        requirement_json=requirement_json,
+    return (
+        DESIGN_DIRECTOR_ROUTER_PROMPT.replace("{skill_descriptions}", skill_descriptions)
+        .replace("{requirement_json}", requirement_json)
     )
 
 

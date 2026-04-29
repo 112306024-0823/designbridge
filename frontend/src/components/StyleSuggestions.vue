@@ -1,18 +1,38 @@
 <script setup>
+import { computed } from 'vue'
+
 const props = defineProps({
   candidates:  { type: Array,  default: () => [] },  // [{ style_id, style_name, image_url, similarity, description }]
   confirmed:   { type: Object, default: null },       // 使用者選中的那筆
   loading:     { type: Boolean, default: false },
   retrievalMode: { type: String, default: 'text-to-image' },
+  apiBase: { type: String, default: 'http://localhost:8000' },
 })
 
 const emit = defineEmits(['confirm', 'clear', 'change-mode'])
+
+const topCandidates = computed(() => {
+  const list = Array.isArray(props.candidates) ? props.candidates : []
+  return [...list]
+    .filter((c) => c && typeof c.image_url === 'string')
+    .sort((a, b) => (Number(b.similarity ?? 0) - Number(a.similarity ?? 0)))
+    .slice(0, 6)
+})
 
 function similarityLabel(score) {
   if (score >= 0.85) return '非常符合'
   if (score >= 0.70) return '相當符合'
   if (score >= 0.55) return '部分符合'
   return '參考'
+}
+
+function normalizeImageUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return ''
+  const url = rawUrl.trim()
+  if (!url) return ''
+  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  if (url.startsWith('/')) return `${props.apiBase}${url}`
+  return url
 }
 </script>
 
@@ -45,11 +65,12 @@ function similarityLabel(score) {
         目前模式：
         <strong>{{ retrievalMode === 'text-to-text' ? '文字比對（style_kb）' : '圖像比對（向量圖庫）' }}</strong>
       </p>
+      <p v-if="!loading && topCandidates.length >= 6" class="swipe-hint">提示：目前顯示前 6 張相似風格參考</p>
     </div>
 
     <!-- 骨架載入 -->
-    <div v-if="loading" class="grid">
-      <div v-for="i in 3" :key="i" class="card skeleton">
+    <div v-if="loading" class="rail">
+      <div v-for="i in 5" :key="i" class="card skeleton">
         <div class="card-img skeleton-img"></div>
         <div class="card-body">
           <div class="skeleton-line short"></div>
@@ -60,21 +81,25 @@ function similarityLabel(score) {
     </div>
 
     <!-- 無結果 -->
-    <div v-else-if="!candidates.length" class="empty-state">
+    <div v-else-if="!topCandidates.length" class="empty-state">
       找不到相符的風格參考，請嘗試更換關鍵字或選擇特定風格
     </div>
 
     <!-- 候選卡片 -->
-    <div v-else-if="candidates.length" class="grid">
+    <div v-else-if="topCandidates.length" class="rail" role="list" aria-label="風格參考圖候選清單">
       <div
-        v-for="c in candidates"
+        v-for="c in topCandidates"
         :key="c.image_url"
         class="card"
         :class="{ selected: confirmed?.image_url === c.image_url }"
+        role="listitem"
+        tabindex="0"
+        @keydown.enter.prevent="emit('confirm', c)"
+        @keydown.space.prevent="emit('confirm', c)"
         @click="emit('confirm', c)"
       >
         <div class="card-img-wrap">
-          <img :src="c.image_url" :alt="c.style_name" loading="lazy" @error="$event.target.style.display='none'" />
+          <img :src="normalizeImageUrl(c.image_url)" :alt="c.style_name" loading="lazy" @error="$event.target.style.display='none'" />
           <div class="similarity-badge">
             {{ similarityLabel(c.similarity) }}
             <span class="score">{{ (c.similarity * 100).toFixed(0) }}%</span>
@@ -112,6 +137,12 @@ function similarityLabel(score) {
   flex-direction: column;
   gap: 1.5rem;
   width: 100%;
+}
+
+.swipe-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  color: #8a75af;
 }
 
 .header h2 {
@@ -184,10 +215,11 @@ function similarityLabel(score) {
 }
 
 /* Grid */
-.grid {
+.rail {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1.25rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.05rem;
+  padding: 0.25rem 0.25rem 0.6rem;
 }
 
 /* Card */
@@ -200,6 +232,8 @@ function similarityLabel(score) {
   transition: all 0.2s;
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
 }
 .card:hover {
   border-color: #9b6dd6;
@@ -209,6 +243,11 @@ function similarityLabel(score) {
 .card.selected {
   border-color: #7c5cbf;
   box-shadow: 0 0 0 3px rgba(124, 92, 191, 0.25);
+}
+.card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(124, 92, 191, 0.25), 0 0 0 6px rgba(124, 92, 191, 0.14);
+  border-color: #7c5cbf;
 }
 
 /* Image */
@@ -359,5 +398,14 @@ function similarityLabel(score) {
 @keyframes shimmer {
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+@media (max-width: 900px) {
+  .rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .header-top { flex-direction: column; align-items: flex-start; }
+  .rail { grid-template-columns: 1fr; }
 }
 </style>

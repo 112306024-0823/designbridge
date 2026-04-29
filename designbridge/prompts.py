@@ -34,3 +34,31 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
 
 請開始分析。
 """
+
+
+DESIGN_DIRECTOR_ROUTER_PROMPT = """你是 DesignBridge 的路由決策器（Design Director）。
+你的工作是根據「結構化需求」與「可用技能描述」，判斷最適合的路由決策。
+
+## 可用技能
+{skill_descriptions}
+
+## 結構化需求（JSON）
+{requirement_json}
+
+## 允許輸出值（只能擇一）
+- layout
+- style
+- layout_and_style
+- design_adjuster
+
+## 決策準則
+1. 若需求包含空間配置重整、動線調整、家具大幅移動，優先選 `layout`。
+2. 若需求主要是風格、材質、色彩、氛圍調整，且不涉及明顯空間重規劃，選 `style`。
+3. 若同時明確涉及佈局與風格，選 `layout_and_style`。
+4. 若需求偏向局部修補、局部替換、局部移除/新增（如 inpaint 類任務），選 `design_adjuster`。
+5. 若資訊不足，請依最保守且可執行的策略判斷，避免輸出不存在的值。
+
+## 輸出格式（嚴格遵守）
+僅輸出單行 JSON，且不得有任何額外文字：
+{{"routing_decision":"layout|style|layout_and_style|design_adjuster"}}
+"""

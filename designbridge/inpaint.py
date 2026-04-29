@@ -23,6 +23,27 @@ from designbridge.config import Config
 _inpaint_pipeline: Any = None
 
 
+def _resolve_inpaint_size(image_size: tuple[int, int], long_edge: int = 512) -> tuple[int, int]:
+    """Resolve an aspect-preserving inpaint size aligned to model-friendly multiples."""
+    orig_w, orig_h = image_size
+    if orig_w <= 0 or orig_h <= 0:
+        return 512, 512
+
+    ratio = orig_w / orig_h
+    if ratio >= 1.0:
+        width = long_edge
+        height = int(round(long_edge / ratio))
+    else:
+        height = long_edge
+        width = int(round(long_edge * ratio))
+
+    def _align(value: int) -> int:
+        # Keep 64-aligned to reduce model shape issues; allow smaller side for wide/tall images.
+        return max(256, int(round(value / 64) * 64))
+
+    return _align(width), _align(height)
+
+
 def _get_inpaint_pipeline():
     """Load SD Inpainting pipeline once and cache it."""
     global _inpaint_pipeline
@@ -195,8 +216,8 @@ def run_inpainting(
         original = Image.open(image_path).convert("RGB")
         orig_w, orig_h = original.size
 
-        # SD inpainting 要求 512x512
-        target_size = (512, 512)
+        # Keep original aspect ratio instead of forcing square output.
+        target_size = _resolve_inpaint_size((orig_w, orig_h))
         image_resized = original.resize(target_size)
         mask_resized = mask.resize(target_size).convert("L")
 
@@ -254,8 +275,10 @@ def run_hf_inpainting(
 
         client = InferenceClient(api_key=Config.HF_TOKEN)
 
-        original = Image.open(image_path).convert("RGB").resize((512, 512))
-        mask_resized = mask.resize((512, 512)).convert("L")
+        original_full = Image.open(image_path).convert("RGB")
+        target_size = _resolve_inpaint_size(original_full.size)
+        original = original_full.resize(target_size)
+        mask_resized = mask.resize(target_size).convert("L")
 
         # 轉 bytes
         img_bytes = io.BytesIO()
