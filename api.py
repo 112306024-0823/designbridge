@@ -66,6 +66,7 @@ class DesignRequest(BaseModel):
     edit_scope: float = 0.6
     model_type: str = "sdxl"
     style_profile_id: Optional[str] = None
+    style_retrieval_mode: Optional[str] = None 
     initial_image_path: Optional[str] = None
     style_reference_image_path: Optional[str] = None
     no_style_reference: bool = False
@@ -92,7 +93,7 @@ def _get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
         from sentence_transformers import SentenceTransformer
-        _embedding_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+        _embedding_model = SentenceTransformer("clip-ViT-B-32")
     return _embedding_model
 
 def _get_supabase():
@@ -106,7 +107,12 @@ def _get_supabase():
     return _supabase_client
 
 @app.get("/api/style-search")
-def search_styles(query: str = "", style_id: str = "", top_k: int = 3):
+def search_styles(
+    query: str = "",
+    style_id: str = "",
+    top_k: int = 3,
+    retrieval_mode: str = "text-to-image",
+):
     """向量搜尋最相似的風格參考圖，回傳多筆候選供使用者選擇。"""
     from designbridge.style_supabase import _STYLE_PROMPTS
     from style_kb.styles import STYLES
@@ -115,27 +121,27 @@ def search_styles(query: str = "", style_id: str = "", top_k: int = 3):
     sid = style_id.strip() or ""
     q = query.strip() or sid or "interior design"
     try:
-        model = _get_embedding_model()
-        embedding = model.encode(q, normalize_embeddings=True).tolist()
-        client = _get_supabase()
+        from designbridge.style_supabase import query_style_images_supabase
 
-        res = client.rpc("query_style_full", {
-            "query_embedding": embedding,
-            "filter_style_id": sid,
-            "top_k": min(top_k, 6),
-        }).execute()
-        if not res.data:
+        client = _get_supabase()
+        results = query_style_images_supabase(
+            text_query=q,
+            style_id=sid or None,
+            top_k=min(top_k, 6),
+            retrieval_mode=retrieval_mode,
+        )
+        if not results:
             return []
 
         # 批次取 style_kb（兩筆查詢，不用 N+1）
-        image_urls = [r["image_url"] for r in res.data]
+        image_urls = [r.image_url for r in results]
         kb_res = client.table("style_images").select("image_url,style_kb").in_("image_url", image_urls).execute()
         kb_map = {r["image_url"]: r.get("style_kb") for r in (kb_res.data or [])}
 
         candidates = []
-        for row in res.data:
-            url = row["image_url"]
-            s_id = row["style_id"]
+        for row in results:
+            url = row.image_url
+            s_id = row.style_id
             style_kb = kb_map.get(url)
             fallback = _STYLE_PROMPTS.get(s_id, _STYLE_PROMPTS.get("modern", {}))
 
@@ -150,12 +156,12 @@ def search_styles(query: str = "", style_id: str = "", top_k: int = 3):
                 positive_prompt = prompts.get("positive") or positive_prompt
                 negative_prompt = prompts.get("negative") or negative_prompt
 
-            source_meta = row.get("source_meta") or {}
+            source_meta = {}
             candidates.append({
                 "style_id": s_id,
                 "style_name": style_name_map.get(s_id, source_meta.get("style", s_id)),
                 "image_url": url,
-                "similarity": round(float(row["similarity"]), 4),
+                "similarity": round(float(row.similarity), 4),
                 "description": description,
                 "positive_prompt": positive_prompt,
                 "negative_prompt": negative_prompt,
@@ -167,26 +173,31 @@ def search_styles(query: str = "", style_id: str = "", top_k: int = 3):
 
 
 @app.get("/api/style-preview")
-def get_style_preview(query: str = "", style_id: str = ""):
+def get_style_preview(
+    query: str = "",
+    style_id: str = "",
+    retrieval_mode: str = "text-to-image",
+):
     """根據文字語意搜尋最符合的風格參考圖（Supabase pgvector），供前端即時預覽。"""
     sid = style_id.strip() or ""
     q = query.strip() or sid or "interior design"
     try:
-        model = _get_embedding_model()
-        embedding = model.encode(q, normalize_embeddings=True).tolist()
-        client = _get_supabase()
-        res = client.rpc("query_style_preview", {
-            "query_embedding": embedding,
-            "filter_style_id": sid,
-        }).execute()
-        if not res.data:
+        from designbridge.style_supabase import query_style_images_supabase
+
+        results = query_style_images_supabase(
+            text_query=q,
+            style_id=sid or None,
+            top_k=1,
+            retrieval_mode=retrieval_mode,
+        )
+        if not results:
             return {"image_url": None}
-        row = res.data[0]
-        style_name = (row.get("source_meta") or {}).get("style", row["style_id"])
+        row = results[0]
+        style_name = row.style_name or row.style_id
         return {
-            "image_url": row["image_url"],
+            "image_url": row.image_url,
             "style_name": style_name,
-            "similarity": round(row["similarity"], 4),
+            "similarity": round(row.similarity, 4),
         }
     except Exception as e:
         print(f"⚠️ style-preview error: {e}")
@@ -270,6 +281,8 @@ async def generate_design(request: DesignRequest):
         }
         if request.style_profile_id and request.style_profile_id != "auto":
             user_input["style_profile_id"] = request.style_profile_id
+        if request.style_retrieval_mode:
+            user_input["style_retrieval_mode"] = request.style_retrieval_mode
         if request.initial_image_path:
             user_input["initial_image"] = request.initial_image_path
         if request.style_reference_image_path:

@@ -15,9 +15,13 @@ dotenv.load_dotenv()  # Allow override from current working directory
 class Config:
     """DesignBridge configuration."""
 
-    GEMINI_MODEL: str = "gemini-3-flash"
+    GEMINI_MODEL: str = "gemini-2-flash"
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
     GEMINI_TEMPERATURE: float = 0.3
+    # Style retrieval mode for Supabase reference search: "text-to-image" | "text-to-text"
+    STYLE_RETRIEVAL_MODE: str = os.getenv("DESIGNBRIDGE_STYLE_RETRIEVAL_MODE", "text-to-image")
+    # Text-only embedding model for text-to-text style retrieval.
+    TEXT_EMBEDDING_MODEL: str = os.getenv("DESIGNBRIDGE_TEXT_EMBEDDING_MODEL", "BAAI/bge-m3")
 
     # LiteLLM unified model string (used by designbridge/llm.py).
     # Format: "<provider>/<model-id>", e.g. "gemini/gemini-2.5-flash-lite", "gpt-4o",

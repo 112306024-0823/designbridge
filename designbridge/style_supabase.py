@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 _embedding_model = None
+_text_embedding_model = None
 _supabase_client = None
 
 STYLE_REF_DIR = Path(__file__).resolve().parent.parent / "artifacts" / "style_ref"
@@ -34,8 +35,53 @@ def _get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
         from sentence_transformers import SentenceTransformer
-        _embedding_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+        _embedding_model = SentenceTransformer("clip-ViT-B-32")
     return _embedding_model
+
+
+def _get_text_embedding_model():
+    global _text_embedding_model
+    if _text_embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        model_name = os.getenv("DESIGNBRIDGE_TEXT_EMBEDDING_MODEL", "BAAI/bge-m3")
+        _text_embedding_model = SentenceTransformer(model_name)
+    return _text_embedding_model
+
+
+def _encode_query_text(text: str):
+    """Encode retrieval query with model-specific prompt format."""
+    model = _get_text_embedding_model()
+    model_name = getattr(model, "model_card_data", None)
+    name = ""
+    if model_name and getattr(model_name, "model_id", None):
+        name = str(model_name.model_id).lower()
+    else:
+        name = str(os.getenv("DESIGNBRIDGE_TEXT_EMBEDDING_MODEL", "BAAI/bge-m3")).lower()
+
+    t = text.strip()
+    if "e5" in name:
+        t = f"query: {t}"
+    elif "bge" in name:
+        t = f"Represent this sentence for retrieving relevant interior design style references: {t}"
+
+    return model.encode(t, normalize_embeddings=True)
+
+
+def _encode_passage_texts(texts: list[str]):
+    """Encode candidate passages with model-specific prompt format."""
+    model = _get_text_embedding_model()
+    model_name = getattr(model, "model_card_data", None)
+    name = ""
+    if model_name and getattr(model_name, "model_id", None):
+        name = str(model_name.model_id).lower()
+    else:
+        name = str(os.getenv("DESIGNBRIDGE_TEXT_EMBEDDING_MODEL", "BAAI/bge-m3")).lower()
+
+    prepared = texts
+    if "e5" in name:
+        prepared = [f"passage: {t}" for t in texts]
+
+    return model.encode(prepared, normalize_embeddings=True)
 
 
 def _get_supabase():
@@ -61,9 +107,26 @@ def query_style_images_supabase(
     text_query: str,
     style_id: str | None = None,
     top_k: int = 3,
+    retrieval_mode: str = "text-to-image",
 ) -> list[SupabaseStyleResult]:
-    """Embed text_query and search Supabase pgvector for closest style images."""
+    """Search style images by text query.
+
+    retrieval_mode:
+    - text-to-image: query text embedding vs image embeddings in pgvector (RPC).
+    - text-to-text: query text embedding vs style_kb text synthesized from JSON.
+    """
     q = text_query.strip() or style_id or "interior design"
+    mode = (retrieval_mode or "text-to-image").strip().lower()
+    if mode not in {"text-to-image", "text-to-text"}:
+        mode = "text-to-image"
+
+    if mode == "text-to-text":
+        return _query_style_text_to_text(
+            text_query=q,
+            style_id=style_id,
+            top_k=top_k,
+        )
+
     model = _get_embedding_model()
     embedding = model.encode(q, normalize_embeddings=True).tolist()
     client = _get_supabase()
@@ -86,6 +149,145 @@ def query_style_images_supabase(
     return results
 
 
+def _compose_style_kb_text(row: dict[str, Any]) -> str:
+    """Build a compact searchable text from style_kb JSON."""
+    style_kb = row.get("style_kb") or {}
+    source_meta = row.get("source_meta") or {}
+    parts: list[str] = []
+
+    style_info = style_kb.get("style_info") if isinstance(style_kb, dict) else {}
+    if isinstance(style_info, dict):
+        name = style_info.get("name")
+        if name:
+            parts.append(str(name))
+        tags = style_info.get("tags")
+        if isinstance(tags, list):
+            parts.append(" ".join(str(t) for t in tags if t))
+
+    desc = style_kb.get("description") if isinstance(style_kb, dict) else None
+    if desc:
+        parts.append(str(desc))
+
+    visual = style_kb.get("visual_elements") if isinstance(style_kb, dict) else {}
+    if isinstance(visual, dict):
+        mats = visual.get("materials")
+        if isinstance(mats, list):
+            for m in mats:
+                if isinstance(m, dict):
+                    parts.append(
+                        " ".join(
+                            str(m.get(k, "")).strip()
+                            for k in ("type", "finish", "target")
+                            if m.get(k)
+                        )
+                    )
+        lighting = visual.get("lighting")
+        if isinstance(lighting, dict):
+            if lighting.get("type"):
+                parts.append(str(lighting["type"]))
+            if lighting.get("color_temp"):
+                parts.append(f"{lighting['color_temp']}K")
+
+    ai = style_kb.get("ai_params") if isinstance(style_kb, dict) else {}
+    if isinstance(ai, dict):
+        prompts = ai.get("prompts")
+        if isinstance(prompts, dict):
+            if prompts.get("positive"):
+                parts.append(str(prompts["positive"]))
+
+    # fallback metadata
+    if source_meta.get("style"):
+        parts.append(str(source_meta["style"]))
+    if source_meta.get("kind"):
+        parts.append(str(source_meta["kind"]))
+
+    style_id_val = row.get("style_id")
+    if style_id_val:
+        parts.append(str(style_id_val))
+
+    # normalize whitespace and keep deterministic order
+    return " ".join(p.replace("\n", " ").strip() for p in parts if p and str(p).strip())
+
+
+def _query_style_text_to_text(
+    text_query: str,
+    style_id: str | None,
+    top_k: int,
+) -> list[SupabaseStyleResult]:
+    """Text-to-text retrieval using style_kb textual representation."""
+    client = _get_supabase()
+    query_emb = _encode_query_text(text_query)
+
+    # Fast path: query precomputed style_kb_embedding via pgvector RPC (Supabase).
+    # Falls back to in-Python ranking if RPC/column is not available yet.
+    try:
+        res = client.rpc(
+            "query_style_kb",
+            {
+                "query_embedding": query_emb.tolist(),
+                "filter_style_id": style_id or "",
+                "top_k": int(top_k),
+            },
+        ).execute()
+        if res.data:
+            results: list[SupabaseStyleResult] = []
+            for row in res.data:
+                style_name = (row.get("source_meta") or {}).get("style", row["style_id"])
+                results.append(
+                    SupabaseStyleResult(
+                        style_id=row["style_id"],
+                        image_url=row["image_url"],
+                        style_name=style_name,
+                        similarity=round(float(row["similarity"]), 4),
+                    )
+                )
+            return results
+    except Exception:
+        # silent fallback (keeps current behavior for older DBs)
+        pass
+
+    q = client.table("style_images").select("style_id,image_url,source_meta,style_kb")
+    q = q.not_.is_("style_kb", "null")
+    if style_id:
+        q = q.eq("style_id", style_id)
+    rows = q.execute().data or []
+    if not rows:
+        return []
+
+    docs: list[str] = []
+    valid_rows: list[dict[str, Any]] = []
+    for row in rows:
+        text = _compose_style_kb_text(row)
+        if text:
+            docs.append(text)
+            valid_rows.append(row)
+    if not docs:
+        return []
+
+    doc_embs = _encode_passage_texts(docs)
+    # dot product == cosine similarity because embeddings are normalized
+    sims = (doc_embs @ query_emb).tolist()
+
+    ranked = sorted(
+        zip(valid_rows, sims),
+        key=lambda x: float(x[1]),
+        reverse=True,
+    )[: max(1, top_k)]
+
+    results: list[SupabaseStyleResult] = []
+    for row, score in ranked:
+        style_name = (row.get("source_meta") or {}).get("style", row["style_id"])
+        results.append(
+            SupabaseStyleResult(
+                style_id=row["style_id"],
+                image_url=row["image_url"],
+                style_name=style_name,
+                similarity=round(float(score), 4),
+            )
+        )
+    return results
+
+
 def download_style_image(image_url: str) -> Path | None:
     """Download image from Supabase Storage to local artifacts/style_ref/. Cached by URL hash."""
     STYLE_REF_DIR.mkdir(parents=True, exist_ok=True)
@@ -101,9 +303,8 @@ def download_style_image(image_url: str) -> Path | None:
         local_path.write_bytes(resp.content)
         return local_path
     except Exception as e:
-        print(f"⚠️  下載風格參考圖失敗：{e}")
+        print(f"下載風格參考圖失敗：{e}")
         return None
-
 
 def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str, Any] | None:
     """
@@ -151,3 +352,4 @@ def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str,
         "top_similarity": top.similarity,
         "source": "supabase_vector",
     }
+

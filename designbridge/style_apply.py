@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,10 @@ def build_style_params(
     style_profile_id = resolve_style_profile_id(req, user_input)
     text_query = (user_input or {}).get("text_prompt", "").strip()
     query = text_query or style_profile_id or "interior design"
+    retrieval_mode = (
+        (user_input or {}).get("style_retrieval_mode")
+        or os.getenv("DESIGNBRIDGE_STYLE_RETRIEVAL_MODE", "text-to-image")
+    )
 
     # ── 1. Supabase pgvector 搜尋 ─────────────────────────────────────────────
     try:
@@ -73,6 +78,7 @@ def build_style_params(
             text_query=query,
             style_id=style_profile_id,
             top_k=3,
+            retrieval_mode=str(retrieval_mode),
         )
         if results:
             return blend_style_params_supabase(results)
