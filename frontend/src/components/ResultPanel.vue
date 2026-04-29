@@ -172,12 +172,11 @@ const styleReferenceImageUrl = computed(() => {
         <h3 class="card-title">套用風格參數</h3>
         <p class="muted-text">未載入聚合風格檔，將依文字需求與預設 prompt 生成。</p>
       </div>
-<<<<<<< HEAD
-=======
+
 
       <!-- Evaluation Result -->
       <div v-if="result.evaluation_result" class="result-section">
-        <h3>📊 Evaluation Result</h3>
+        <h3>Evaluation Result</h3>
         <div class="req-grid">
           <div class="req-item" v-if="result.evaluation_result.decision">
             <span class="req-label">Decision</span>
