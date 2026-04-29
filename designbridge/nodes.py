@@ -366,10 +366,27 @@ def _route_decision(state: DesignBridgeState) -> RoutingDecision:
 
 def design_director(state: DesignBridgeState) -> dict[str, Any]:
     """
-    Design Director: route task to Layout / Style / Adjuster / Layout+Style
-    based on structured_requirement and vision_features.
+    動態調度：ENABLE_DYNAMIC_ROUTING=true 時由 Gemini 讀 SKILL.md 決策；
+    否則使用原本的 rule-based routing。任何 LLM 失敗都自動 fallback。
     """
-    routing_decision = _route_decision(state)
+    if Config.get_dynamic_routing_enabled():
+        try:
+            from designbridge.router import call_llm_router, RouterLLMError
+            api_key = Config.get_gemini_api_key()
+            routing_decision = call_llm_router(
+                structured_requirement=state.get("structured_requirement") or {},
+                vision_features=state.get("vision_features") or {},
+                api_key=api_key,
+                gemini_model=Config.GEMINI_MODEL,
+                gemini_temperature=Config.ROUTER_TEMPERATURE,
+            )
+            print(f"[design_director] LLM router: {routing_decision}")
+        except Exception as e:
+            print(f"[design_director] LLM routing failed ({e}), fallback to rule-based")
+            routing_decision = _route_decision(state)
+    else:
+        routing_decision = _route_decision(state)
+
     return {"routing_decision": routing_decision}
 
 
@@ -619,8 +636,6 @@ def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> No
 # 快取模型，不用每次都載入
 _sdxl_pipeline: Any = None
 _controlnet_pipeline: Any = None
-_sd_pipeline: Any = None
-_flux_pipeline: Any = None
 
 
 def _get_sdxl_pipeline():
@@ -705,7 +720,7 @@ def _get_sd_pipeline():
     global _sd_pipeline
     if _sd_pipeline is not None:
         return _sd_pipeline
-    from diffusers import StableDiffusion3Pipeline
+    from diffusers import DiffusionPipeline
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
     kwargs: dict[str, Any] = {
@@ -713,7 +728,7 @@ def _get_sd_pipeline():
     }
     if Config.HF_TOKEN:
         kwargs["token"] = Config.HF_TOKEN
-    _sd_pipeline = StableDiffusion3Pipeline.from_pretrained(Config.SD_MODEL, **kwargs).to(device)
+    _sd_pipeline = DiffusionPipeline.from_pretrained(Config.SD_MODEL, **kwargs).to(device)
     return _sd_pipeline
 
 
@@ -892,3 +907,24 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         "generated_image": path_str,
         "render_result": render_result,
     }
+
+
+def clip_evaluator_node(state: DesignBridgeState) -> dict[str, Any]:
+    """Run CLIP evaluation on the generated image against the user's text prompt."""
+    image_path = state.get("generated_image")
+    user = state.get("user_input") or {}
+    text_prompt = (user.get("text_prompt") or "").strip()
+
+    if not image_path or not Path(image_path).is_file():
+        return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no generated image", "issues_found": [], "suggestions": []}}
+
+    if not text_prompt:
+        return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no text prompt", "issues_found": [], "suggestions": []}}
+
+    try:
+        from designbridge.clip_evaluator import evaluate
+        result = evaluate(image_path, text_prompt)
+    except Exception as e:
+        result = {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": f"CLIP evaluation failed: {e}", "issues_found": [], "suggestions": []}
+
+    return {"evaluation_result": result}

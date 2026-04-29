@@ -23,6 +23,12 @@ class Config:
     # Text-only embedding model for text-to-text style retrieval.
     TEXT_EMBEDDING_MODEL: str = os.getenv("DESIGNBRIDGE_TEXT_EMBEDDING_MODEL", "BAAI/bge-m3")
 
+    @classmethod
+    def get_dynamic_routing_enabled(cls) -> bool:
+        return os.getenv("DESIGNBRIDGE_ENABLE_DYNAMIC_ROUTING", "false").lower() in ("1", "true", "yes")
+
+    ROUTER_TEMPERATURE: float = float(os.getenv("DESIGNBRIDGE_ROUTER_TEMPERATURE", "0.0"))
+
     # LiteLLM unified model string (used by designbridge/llm.py).
     # Format: "<provider>/<model-id>", e.g. "gemini/gemini-2.5-flash-lite", "gpt-4o",
     # "claude-3-5-sonnet-20241022", "azure/gpt-4o".
@@ -38,7 +44,7 @@ class Config:
 
     # Model IDs for each backend
     SDXL_MODEL: str = os.getenv("DESIGNBRIDGE_SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0")
-    SD_MODEL: str = os.getenv("DESIGNBRIDGE_SD_MODEL", "stabilityai/stable-diffusion-3.5-medium")
+    SD_MODEL: str = os.getenv("DESIGNBRIDGE_SD_MODEL", "stabilityai/stable-diffusion-xl-base-1.0") #stabilityai/stable-diffusion-3.5-medium
     FLUX_MODEL: str = os.getenv("DESIGNBRIDGE_FLUX_MODEL", "black-forest-labs/FLUX.1-schnell")
 
     SDXL_STEPS: int = int(os.getenv("DESIGNBRIDGE_SDXL_STEPS", "25"))

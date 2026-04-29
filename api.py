@@ -44,6 +44,10 @@ artifacts_dir = Path("artifacts")
 artifacts_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/artifacts", StaticFiles(directory=str(artifacts_dir)), name="artifacts")
 
+artifacts_dir = Path("artifacts")
+artifacts_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/artifacts", StaticFiles(directory=str(artifacts_dir)), name="artifacts")
+
 style_images_dir = Path("style_kb/images")
 if style_images_dir.exists():
     app.mount("/style-images", StaticFiles(directory=str(style_images_dir)), name="style-images")
@@ -317,6 +321,7 @@ async def generate_design(request: DesignRequest):
             "vision_features": result.get("vision_features"),
             "intermediate_outputs": result.get("intermediate_outputs"),
             "style_params": result.get("style_params"),
+            "evaluation_result": result.get("evaluation_result"),
         }
 
         # 儲存生成紀錄
