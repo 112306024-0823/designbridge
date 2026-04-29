@@ -10,6 +10,7 @@ const API_BASE = 'http://localhost:8000'
 const textPrompt = ref('')
 const editScope = ref(0.6)
 const modelType = ref('flux')
+const outputAspect = ref('auto')
 const selectedStyle = ref('auto')
 const styleOptions = ref([{ label: '自動', value: 'auto' }])
 const styleLoading = ref(false)
@@ -65,7 +66,7 @@ async function fetchStyleCandidates() {
         confirmedStyle.value = null
       }
     }
-  } catch { /* 靜默失敗 */ }
+  } catch {}
   finally {
     candidatesLoading.value = false
     candidatesSearched.value = true
@@ -166,6 +167,7 @@ async function handleSubmit() {
         text_prompt: textPrompt.value,
         edit_scope: editScope.value,
         model_type: modelType.value,
+        output_aspect: outputAspect.value,
         style_profile_id: !noStyleReference.value && selectedStyle.value !== 'auto'
           ? selectedStyle.value
           : !noStyleReference.value ? confirmedStyle.value?.style_id || undefined : undefined,
@@ -204,6 +206,7 @@ onMounted(fetchStyleOptions)
           v-model:textPrompt="textPrompt"
           v-model:editScope="editScope"
           v-model:modelType="modelType"
+          v-model:outputAspect="outputAspect"
           v-model:selectedStyle="selectedStyle"
           v-model:manualImagePath="manualImagePath"
           v-model:showManualPath="showManualPath"

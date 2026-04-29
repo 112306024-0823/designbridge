@@ -1,8 +1,13 @@
 """Unified LLM client for DesignBridge.
 
-Two paths:
-  - LITELLM_API_KEY set → route through LiteLLM proxy
-  - GEMINI_API_KEY set  → call Google Generative AI directly (no LiteLLM needed)
+Fallback chain for ``call_llm`` / ``call_llm_stream`` (each step is skipped if
+the corresponding key is not set; on failure, the next step is tried):
+
+  1. ``LITELLM_API_KEY`` → LiteLLM (``LITELLM_MODEL`` + optional ``model`` override)
+  2. ``GEMINI_API_KEY`` → Google Generative AI SDK (direct)
+  3. ``GROK_API_KEY`` / ``XAI_API_KEY`` → xAI Grok OpenAI-compatible API
+
+If all configured backends fail, ``RuntimeError`` is raised with every error.
 """
 
 from __future__ import annotations
@@ -180,6 +185,7 @@ def _call_via_litellm(
     history: list[dict] | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    api_key: str | None = None,
     **kwargs: Any,
 ) -> str:
     try:
@@ -187,12 +193,16 @@ def _call_via_litellm(
     except ImportError as exc:
         raise RuntimeError("litellm 未安裝。請先執行: pip install litellm") from exc
 
+    resolved_key = api_key or os.getenv("LITELLM_API_KEY")
+    if not resolved_key:
+        raise RuntimeError("LiteLLM 呼叫缺少 api_key。")
+
     messages = build_messages(prompt, images=images, system=system, history=history)
     completion_kwargs: dict[str, Any] = {
         "model": model or Config.LITELLM_MODEL,
         "messages": messages,
         "temperature": temperature if temperature is not None else Config.GEMINI_TEMPERATURE,
-        "api_key": os.getenv("LITELLM_API_KEY"),
+        "api_key": resolved_key,
         **kwargs,
     }
     if max_tokens is not None:
@@ -211,6 +221,7 @@ def _stream_via_litellm(
     history: list[dict] | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    api_key: str | None = None,
     **kwargs: Any,
 ) -> Iterator[str]:
     try:
@@ -218,19 +229,100 @@ def _stream_via_litellm(
     except ImportError as exc:
         raise RuntimeError("litellm 未安裝。請先執行: pip install litellm") from exc
 
+    resolved_key = api_key or os.getenv("LITELLM_API_KEY")
+    if not resolved_key:
+        raise RuntimeError("LiteLLM 串流呼叫缺少 api_key。")
+
     messages = build_messages(prompt, images=images, system=system, history=history)
     completion_kwargs: dict[str, Any] = {
         "model": model or Config.LITELLM_MODEL,
         "messages": messages,
         "temperature": temperature if temperature is not None else Config.GEMINI_TEMPERATURE,
         "stream": True,
-        "api_key": os.getenv("LITELLM_API_KEY"),
+        "api_key": resolved_key,
         **kwargs,
     }
     if max_tokens is not None:
         completion_kwargs["max_tokens"] = max_tokens
 
     for chunk in litellm.completion(**completion_kwargs):
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
+
+
+# ── Grok direct path ─────────────────────────────────────────────────────────
+
+def _grok_model_for_fallback(model: str | None) -> str:
+    """Use a plain Grok model id for the direct xAI OpenAI-compatible client."""
+    raw = (model or Config.XAI_MODEL).strip()
+    if raw.lower().startswith("xai/"):
+        return raw.split("/", 1)[1]
+    return raw
+
+
+def _call_via_grok(
+    prompt: str,
+    *,
+    model: str | None = None,
+    images: list[str | bytes | Path] | None = None,
+    system: str | None = None,
+    history: list[dict] | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> str:
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError("openai 未安裝。請先執行: pip install openai") from exc
+
+    api_key = Config.get_xai_api_key()
+    if not api_key:
+        raise RuntimeError("GROK_API_KEY / XAI_API_KEY 未設定。")
+
+    client = OpenAI(api_key=api_key, base_url=Config.XAI_BASE_URL)
+    completion_kwargs: dict[str, Any] = {
+        "model": _grok_model_for_fallback(model),
+        "messages": build_messages(prompt, images=images, system=system, history=history),
+        "temperature": temperature if temperature is not None else Config.GEMINI_TEMPERATURE,
+    }
+    if max_tokens is not None:
+        completion_kwargs["max_tokens"] = max_tokens
+
+    response = client.chat.completions.create(**completion_kwargs)
+    return response.choices[0].message.content or ""
+
+
+def _stream_via_grok(
+    prompt: str,
+    *,
+    model: str | None = None,
+    images: list[str | bytes | Path] | None = None,
+    system: str | None = None,
+    history: list[dict] | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> Iterator[str]:
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError("openai 未安裝。請先執行: pip install openai") from exc
+
+    api_key = Config.get_xai_api_key()
+    if not api_key:
+        raise RuntimeError("GROK_API_KEY / XAI_API_KEY 未設定。")
+
+    client = OpenAI(api_key=api_key, base_url=Config.XAI_BASE_URL)
+    completion_kwargs: dict[str, Any] = {
+        "model": _grok_model_for_fallback(model),
+        "messages": build_messages(prompt, images=images, system=system, history=history),
+        "temperature": temperature if temperature is not None else Config.GEMINI_TEMPERATURE,
+        "stream": True,
+    }
+    if max_tokens is not None:
+        completion_kwargs["max_tokens"] = max_tokens
+
+    for chunk in client.chat.completions.create(**completion_kwargs):
         delta = chunk.choices[0].delta.content
         if delta:
             yield delta
@@ -251,21 +343,66 @@ def call_llm(
 ) -> str:
     """Call an LLM and return the response text.
 
-    Routes to LiteLLM proxy if LITELLM_API_KEY is set,
-    otherwise calls Google Generative AI directly with GEMINI_API_KEY.
+    Tries LiteLLM → Gemini → Grok in order; see module docstring.
     """
-    if os.getenv("LITELLM_API_KEY"):
-        return _call_via_litellm(
-            prompt, model=model, images=images, system=system, history=history,
-            temperature=temperature, max_tokens=max_tokens, **kwargs,
+    errors: list[str] = []
+
+    has_litellm = bool(os.getenv("LITELLM_API_KEY"))
+    has_gemini = bool(Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY"))
+    has_xai = bool(Config.get_xai_api_key())
+
+    if not (has_litellm or has_gemini or has_xai):
+        raise RuntimeError(
+            "未設定任何 LLM API key。請在 .env 至少設定其一："
+            "LITELLM_API_KEY、GEMINI_API_KEY、或 GROK_API_KEY。"
         )
-    if Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY"):
-        return _call_via_gemini(
-            prompt, images=images, system=system, history=history,
-            temperature=temperature, max_tokens=max_tokens,
-        )
+
+    if has_litellm:
+        try:
+            return _call_via_litellm(
+                prompt,
+                model=model,
+                images=images,
+                system=system,
+                history=history,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"[1] LiteLLM ({Config.LITELLM_MODEL}): {e}")
+
+    if has_gemini:
+        try:
+            return _call_via_gemini(
+                prompt,
+                images=images,
+                system=system,
+                history=history,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"[2] Gemini ({Config.GEMINI_MODEL}): {e}")
+
+    if has_xai:
+        grok_model = _grok_model_for_fallback(model)
+        try:
+            return _call_via_grok(
+                prompt,
+                model=grok_model,
+                images=images,
+                system=system,
+                history=history,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"[3] Grok ({grok_model}): {e}")
+
     raise RuntimeError(
-        "未設定任何 API key。請在 .env 中設定 LITELLM_API_KEY 或 GEMINI_API_KEY。"
+        "所有已設定的 LLM 後端皆失敗（順序：LiteLLM → Gemini → Grok）。\n"
+        + "\n".join(errors)
     )
 
 
@@ -280,19 +417,66 @@ def call_llm_stream(
     max_tokens: int | None = None,
     **kwargs: Any,
 ) -> Iterator[str]:
-    """Streaming variant — yields text chunks as they arrive."""
-    if os.getenv("LITELLM_API_KEY"):
-        yield from _stream_via_litellm(
-            prompt, model=model, images=images, system=system, history=history,
-            temperature=temperature, max_tokens=max_tokens, **kwargs,
+    """Streaming variant — yields text chunks; same fallback order as ``call_llm``."""
+    errors: list[str] = []
+
+    has_litellm = bool(os.getenv("LITELLM_API_KEY"))
+    has_gemini = bool(Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY"))
+    has_xai = bool(Config.get_xai_api_key())
+
+    if not (has_litellm or has_gemini or has_xai):
+        raise RuntimeError(
+            "未設定任何 LLM API key。請在 .env 至少設定其一："
+            "LITELLM_API_KEY、GEMINI_API_KEY、或 GROK_API_KEY。"
         )
-        return
-    if Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY"):
-        yield from _stream_via_gemini(
-            prompt, images=images, system=system, history=history,
-            temperature=temperature, max_tokens=max_tokens,
-        )
-        return
+
+    if has_litellm:
+        try:
+            yield from _stream_via_litellm(
+                prompt,
+                model=model,
+                images=images,
+                system=system,
+                history=history,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+            return
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"[1] LiteLLM ({Config.LITELLM_MODEL}): {e}")
+
+    if has_gemini:
+        try:
+            yield from _stream_via_gemini(
+                prompt,
+                images=images,
+                system=system,
+                history=history,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"[2] Gemini ({Config.GEMINI_MODEL}): {e}")
+
+    if has_xai:
+        grok_model = _grok_model_for_fallback(model)
+        try:
+            yield from _stream_via_grok(
+                prompt,
+                model=grok_model,
+                images=images,
+                system=system,
+                history=history,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"[3] Grok ({grok_model}): {e}")
+
     raise RuntimeError(
-        "未設定任何 API key。請在 .env 中設定 LITELLM_API_KEY 或 GEMINI_API_KEY。"
+        "所有已設定的 LLM 串流後端皆失敗（順序：LiteLLM → Gemini → Grok）。\n"
+        + "\n".join(errors)
     )

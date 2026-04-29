@@ -4,6 +4,7 @@ import ImageUpload from './ImageUpload.vue'
 const textPrompt      = defineModel('textPrompt',      { default: '' })
 const editScope       = defineModel('editScope',       { default: 0.6 })
 const modelType       = defineModel('modelType',       { default: 'flux' })
+const outputAspect    = defineModel('outputAspect',    { default: 'auto' })
 const selectedStyle   = defineModel('selectedStyle',   { default: 'auto' })
 const manualImagePath  = defineModel('manualImagePath',  { default: '' })
 const showManualPath   = defineModel('showManualPath',   { default: false })
@@ -102,7 +103,20 @@ defineEmits(['submit'])
       </div>
     </div>
 
-    <!-- 5. 風格選擇 -->
+    <!-- 5. 輸出比例 -->
+    <div class="field">
+      <label class="field-label">輸出比例</label>
+      <select v-model="outputAspect">
+        <option value="auto">自動（依原圖比例）</option>
+        <option value="1:1">1:1</option>
+        <option value="4:3">4:3</option>
+        <option value="3:4">3:4</option>
+        <option value="16:9">16:9</option>
+        <option value="9:16">9:16</option>
+      </select>
+    </div>
+
+    <!-- 6. 風格選擇 -->
     <div class="field">
       <label class="field-label">裝潢風格</label>
       <select v-model="selectedStyle" :disabled="styleLoading">
@@ -115,7 +129,7 @@ defineEmits(['submit'])
     <!-- divider -->
     <div class="divider"></div>
 
-    <!-- 6. 風格參考圖 -->
+    <!-- 7. 風格參考圖 -->
     <div class="field">
       <div class="field-label-row">
         <label class="field-label">風格參考圖</label>
@@ -301,6 +315,12 @@ select:focus { outline: none; border-color: var(--primary); background: #fff; }
   width: 100%; max-height: 160px; object-fit: cover;
   border-radius: var(--radius-md); border: 1.5px solid var(--primary-border);
   display: block;
+  cursor: zoom-in;
+}
+.matched-preview img:focus-visible {
+  outline: 3px solid rgba(124, 92, 191, 0.25);
+  outline-offset: 3px;
+  border-radius: var(--radius-md);
 }
 .matched-label {
   font-size: 0.75rem; color: var(--primary);

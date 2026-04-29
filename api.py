@@ -69,6 +69,7 @@ class DesignRequest(BaseModel):
     text_prompt: str = ""
     edit_scope: float = 0.6
     model_type: str = "sdxl"
+    output_aspect: str = "auto"
     style_profile_id: Optional[str] = None
     style_retrieval_mode: Optional[str] = None 
     initial_image_path: Optional[str] = None
@@ -282,6 +283,7 @@ async def generate_design(request: DesignRequest):
         user_input = {
             "text_prompt": request.text_prompt,
             "edit_scope": request.edit_scope,
+            "output_aspect": request.output_aspect,
         }
         if request.style_profile_id and request.style_profile_id != "auto":
             user_input["style_profile_id"] = request.style_profile_id

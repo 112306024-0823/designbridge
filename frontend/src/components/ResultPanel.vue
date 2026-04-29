@@ -1,9 +1,36 @@
 <script setup>
-defineProps({
+import { computed, ref } from 'vue'
+
+const refExpanded = ref(true)
+
+const props = defineProps({
   result:  { type: Object,  default: null },
   loading: { type: Boolean, default: false },
 })
 
+const styleReferenceImageUrl = computed(() => {
+  const result = props.result
+  if (!result) return ''
+
+  const fromStyleParams = result.style_params?.reference_image_url
+  if (typeof fromStyleParams === 'string' && fromStyleParams.trim()) {
+    return fromStyleParams
+  }
+
+  const fromControlNet = result.render_result?.controlnet_inputs?.style_reference_image
+  if (typeof fromControlNet !== 'string' || !fromControlNet.trim()) {
+    return ''
+  }
+
+  const normalized = fromControlNet.replace(/\\/g, '/')
+  if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
+    return normalized
+  }
+  if (normalized.startsWith('artifacts/')) {
+    return `http://localhost:8000/${normalized}`
+  }
+  return ''
+})
 </script>
 
 <template>
@@ -44,17 +71,49 @@ defineProps({
         </div>
       </div>
 
-      <!-- 生成圖 — hero -->
-      <div v-if="result.generated_image_path" class="hero-image-wrap">
-        <img
-          v-if="result.generated_image_url"
-          :src="result.generated_image_url"
-          alt="AI 生成設計圖"
-          class="hero-image"
-        />
-        <div class="hero-overlay">
-          <span class="hero-path">{{ result.generated_image_path }}</span>
+      <!-- 生成圖 + 風格參考圖 -->
+      <div
+        v-if="result.generated_image_path || styleReferenceImageUrl"
+        :class="['image-row', { 'image-row--ref-collapsed': !refExpanded }]"
+      >
+
+        <!-- 生成圖 -->
+        <div v-if="result.generated_image_path" class="img-slot img-hero">
+          <img
+            v-if="result.generated_image_url"
+            :src="result.generated_image_url"
+            alt="AI 生成設計圖"
+            class="img-cover"
+          />
+          <div class="img-label-bottom">
+            <span class="img-path">{{ result.generated_image_path }}</span>
+          </div>
         </div>
+
+        <!-- 風格參考圖 -->
+        <div
+          v-if="styleReferenceImageUrl"
+          :class="['img-slot', 'img-ref', { 'img-ref--collapsed': !refExpanded }]"
+        >
+          <template v-if="refExpanded">
+            <img
+              :src="styleReferenceImageUrl"
+              alt="風格參考圖"
+              class="img-cover"
+            />
+            <div class="img-label-top">
+              <span class="img-label-text">風格參考圖</span>
+              <button class="collapse-btn" @click="refExpanded = false" title="收合">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+            </div>
+          </template>
+          <div v-else class="collapsed-strip" @click="refExpanded = true" title="展開風格參考圖">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            <span class="strip-text">風格參考圖</span>
+          </div>
+        </div>
+
       </div>
 
       <!-- 結構化需求 -->
@@ -113,9 +172,6 @@ defineProps({
         <h3 class="card-title">套用風格參數</h3>
         <p class="muted-text">未載入聚合風格檔，將依文字需求與預設 prompt 生成。</p>
       </div>
-<<<<<<< HEAD
-=======
-
       <!-- Evaluation Result -->
       <div v-if="result.evaluation_result" class="result-section">
         <h3>📊 Evaluation Result</h3>
@@ -145,9 +201,6 @@ defineProps({
           </ul>
         </div>
       </div>
-
-    </div>
->>>>>>> d45236bed21aeb51e27505f1e37cff27afa92781
 
     </div>
   </div>
@@ -234,27 +287,158 @@ defineProps({
 .badge.gray   { background: rgba(255,255,255,0.7); color: #666; border: 1px solid #e5e5e5; }
 .badge.purple { background: var(--primary-light); color: var(--primary); }
 
-/* Hero image */
-.hero-image-wrap {
-  position: relative;
-  border-radius: var(--radius-lg);
+/* ── Image Row ── */
+.image-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  max-width: 100%;
   overflow: hidden;
-  border: 1px solid var(--primary-border);
-  box-shadow: var(--shadow-xl);
-  background: var(--primary-light);
+  position: relative;
 }
-.hero-image {
-  width: 100%; display: block;
-  max-height: 520px; object-fit: contain;
+.image-row--ref-collapsed { padding-right: 52px; }
+
+.img-slot {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  flex-shrink: 0;
+  min-width: 0;
 }
-.hero-overlay {
-  position: absolute; bottom: 0; left: 0; right: 0;
-  padding: 0.6rem 1rem;
-  background: linear-gradient(transparent, rgba(20,10,40,0.6));
+
+/* Hero: takes all remaining space */
+.img-hero {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
 }
-.hero-path {
-  font-size: 0.72rem; color: rgba(255,255,255,0.7);
+
+/* Reference: fixed width, transitions on collapse */
+.img-ref {
+  width: 380px;
+  max-width: 48%;
+  transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.img-ref--collapsed {
+  width: 44px;
+  background: transparent;
+  border-radius: 12px;
+  overflow: visible;
+}
+
+/* Images fill slot with cover */
+.img-cover {
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+/* Bottom label — generated image path */
+.img-label-bottom {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 10px 14px;
+  background: linear-gradient(transparent, rgba(10, 5, 25, 0.55));
+}
+.img-path {
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.62);
   font-family: monospace;
+}
+
+/* Top label — reference title + collapse button */
+.img-label-top {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  padding: 10px 12px;
+  background: linear-gradient(rgba(10, 5, 25, 0.48), transparent);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.img-label-text {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.88);
+  letter-spacing: 0.05em;
+}
+.collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.14);
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(6px);
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.collapse-btn:hover { background: rgba(255, 255, 255, 0.28); }
+
+/* Collapsed strip */
+.collapsed-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  width: 44px;
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--text-4);
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(8px);
+  transition: background 0.15s, color 0.15s;
+}
+.collapsed-strip:hover {
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--primary);
+}
+.strip-text {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+}
+
+/* Desktop: collapsed strip floats (doesn't take layout width) */
+@media (min-width: 769px) {
+  .img-ref--collapsed { width: 0; }
+  .img-ref--collapsed .collapsed-strip {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+  }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .image-row {
+    flex-direction: column;
+    height: auto;
+    gap: 16px;
+    overflow: visible;
+  }
+  .img-hero  { height: auto; }
+  .img-ref   { width: 100%; max-width: 100%; height: auto; }
+  .img-ref--collapsed { width: 100%; height: 44px; }
+  .collapsed-strip {
+    flex-direction: row;
+    width: 100%;
+    height: 44px;
+  }
+  .strip-text { writing-mode: unset; }
 }
 
 /* Cards */
@@ -297,19 +481,17 @@ defineProps({
 .style-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.75rem; }
 .tag { background: var(--primary-light); color: var(--primary); border: 1px solid var(--primary-border); padding: 0.12rem 0.55rem; border-radius: 99px; font-size: 0.72rem; font-weight: 500; }
 
-<<<<<<< HEAD
 .muted-text { font-size: 0.875rem; color: var(--text-3); }
 
-/* JSON details */
-=======
 .eval-feedback { font-size: 0.875rem; color: #b05520; background: #fff5ee; border: 1px solid #f0c8a0; border-radius: 8px; padding: 0.6rem 0.9rem; margin: 0.5rem 0; line-height: 1.5; }
 .eval-scores   { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.5rem 0; }
 .score-row     { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 0.25rem 0.5rem; background: var(--primary-light); border-radius: 6px; }
 .score-key     { color: #7c5cbf; font-weight: 600; }
 .score-val     { color: #3d2b6e; font-weight: 700; }
 .eval-suggestions ul { margin: 0.3rem 0 0 1.2rem; padding: 0; font-size: 0.85rem; color: #5a3d8a; line-height: 1.7; }
+.result-section { background: rgba(255,255,255,0.78); border: 1px solid #ddd4f0; border-radius: var(--radius-lg); padding: 1.25rem 1.5rem; }
 
->>>>>>> d45236bed21aeb51e27505f1e37cff27afa92781
+/* JSON details */
 .json-details { margin-top: 0.5rem; }
 .json-details summary { cursor: pointer; font-size: 0.78rem; color: var(--primary); font-weight: 600; user-select: none; padding: 0.25rem 0; }
 .json-details summary:hover { color: var(--primary-hover); }

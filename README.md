@@ -83,8 +83,11 @@ cd frontend && npm install && cd ..
 ```env
 PYTHONUTF8=1
 
-# LLM（必填）
-GEMINI_API_KEY=你的_gemini_api_key
+# LLM（可同時設定；call_llm 會依序嘗試：LITELLM → Gemini → xAI/Grok，全失敗才報錯）
+# GEMINI_API_KEY=你的_gemini_api_key
+# XAI_API_KEY=你的_xai_grok_key
+# 可選：GROK_API_KEY 與 XAI_API_KEY 等價
+# DESIGNBRIDGE_XAI_MODEL=xai/grok-2-latest
 
 # 圖片生成：雲端 HF Inference（有 token 就不需要本地 GPU）
 HF_TOKEN=你的_hf_token
@@ -128,7 +131,9 @@ cd frontend && npm run dev
 
 | Key | 申請位置 | 用途 |
 |---|---|---|
-| `GEMINI_API_KEY` | [Google AI Studio](https://makersuite.google.com/app/apikey) | LLM 需求分析 + 動態 routing |
+| `GEMINI_API_KEY` | [Google AI Studio](https://makersuite.google.com/app/apikey) | LLM 需求分析 + 動態 routing（直連 Gemini） |
+| `GROK_API_KEY`（或 `XAI_API_KEY`） | [xAI Console](https://console.x.ai/) | Grok（OpenAI-compatible client）；前兩步失敗時作為後備 |
+| `LITELLM_API_KEY` | 視 LiteLLM 設定 | 任意 LiteLLM 支援模型（含 `xai/grok-...`） |
 | `HF_TOKEN` | [Hugging Face Settings](https://huggingface.co/settings/tokens)（Read 權限）| 雲端圖片生成（Flux/SDXL），免本地 GPU |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Supabase 專案設定 | 風格向量庫搜尋 |
 
