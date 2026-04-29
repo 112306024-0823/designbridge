@@ -113,8 +113,6 @@ defineProps({
         <h3 class="card-title">套用風格參數</h3>
         <p class="muted-text">未載入聚合風格檔，將依文字需求與預設 prompt 生成。</p>
       </div>
-<<<<<<< HEAD
-=======
 
       <!-- Evaluation Result -->
       <div v-if="result.evaluation_result" class="result-section">
@@ -145,9 +143,6 @@ defineProps({
           </ul>
         </div>
       </div>
-
-    </div>
->>>>>>> d45236bed21aeb51e27505f1e37cff27afa92781
 
     </div>
   </div>
@@ -297,11 +292,8 @@ defineProps({
 .style-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.75rem; }
 .tag { background: var(--primary-light); color: var(--primary); border: 1px solid var(--primary-border); padding: 0.12rem 0.55rem; border-radius: 99px; font-size: 0.72rem; font-weight: 500; }
 
-<<<<<<< HEAD
 .muted-text { font-size: 0.875rem; color: var(--text-3); }
 
-/* JSON details */
-=======
 .eval-feedback { font-size: 0.875rem; color: #b05520; background: #fff5ee; border: 1px solid #f0c8a0; border-radius: 8px; padding: 0.6rem 0.9rem; margin: 0.5rem 0; line-height: 1.5; }
 .eval-scores   { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.5rem 0; }
 .score-row     { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 0.25rem 0.5rem; background: var(--primary-light); border-radius: 6px; }
@@ -309,7 +301,6 @@ defineProps({
 .score-val     { color: #3d2b6e; font-weight: 700; }
 .eval-suggestions ul { margin: 0.3rem 0 0 1.2rem; padding: 0; font-size: 0.85rem; color: #5a3d8a; line-height: 1.7; }
 
->>>>>>> d45236bed21aeb51e27505f1e37cff27afa92781
 .json-details { margin-top: 0.5rem; }
 .json-details summary { cursor: pointer; font-size: 0.78rem; color: var(--primary); font-weight: 600; user-select: none; padding: 0.25rem 0; }
 .json-details summary:hover { color: var(--primary-hover); }

@@ -1,0 +1,604 @@
+# designbridge/layout_agent.py
+"""Layout Agent: furniture placement planning with hard and soft constraints."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from designbridge.config import Config
+
+
+FURNITURE_SIZES: dict[str, tuple[float, float]] = {
+    "sofa": (0.30, 0.13),
+    "loveseat": (0.22, 0.12),
+    "coffee_table": (0.15, 0.10),
+    "tv_unit": (0.22, 0.07),
+    "tv": (0.22, 0.06),
+    "dining_table": (0.20, 0.13),
+    "chair": (0.08, 0.08),
+    "armchair": (0.11, 0.11),
+    "bed": (0.22, 0.28),
+    "wardrobe": (0.18, 0.08),
+    "desk": (0.16, 0.09),
+    "bookshelf": (0.10, 0.05),
+    "side_table": (0.07, 0.07),
+    "nightstand": (0.07, 0.07),
+    "lamp": (0.04, 0.04),
+    "rug": (0.32, 0.22),
+    "plant": (0.06, 0.06),
+    "cabinet": (0.14, 0.07),
+    "dresser": (0.14, 0.09),
+    "shelf": (0.10, 0.05),
+    "default": (0.12, 0.10),
+}
+
+FURNITURE_COLORS: dict[str, tuple[int, int, int]] = {
+    "sofa": (100, 149, 237),
+    "loveseat": (120, 160, 240),
+    "bed": (147, 112, 219),
+    "dining_table": (205, 133, 63),
+    "desk": (70, 130, 180),
+    "coffee_table": (176, 196, 222),
+    "tv_unit": (105, 105, 105),
+    "tv": (80, 80, 80),
+    "wardrobe": (139, 90, 43),
+    "chair": (188, 143, 143),
+    "armchair": (180, 130, 130),
+    "rug": (210, 180, 140),
+    "bookshelf": (160, 120, 80),
+    "shelf": (160, 120, 80),
+    "nightstand": (180, 160, 120),
+    "side_table": (180, 160, 120),
+    "dresser": (150, 110, 70),
+    "cabinet": (130, 100, 70),
+    "lamp": (255, 220, 100),
+    "plant": (80, 160, 80),
+    "default": (150, 200, 150),
+}
+
+SOFT_WEIGHTS = {
+    "circulation": 0.35,
+    "balance": 0.25,
+    "focal_point": 0.20,
+    "natural_light": 0.10,
+    "ergonomics": 0.10,
+}
+
+# Furniture that must be placed against a wall (can't float in room center)
+WALL_ANCHORED: set[str] = {
+    "wardrobe", "bookshelf", "shelf", "tv_unit", "tv", "dresser", "cabinet", "bed",
+}
+WALL_SNAP_THRESHOLD = 0.12  # snap to nearest wall if farther than this
+
+# Minimum gap enforced between semantically incompatible furniture pairs
+SEMANTIC_MIN_GAP: dict[frozenset, float] = {
+    frozenset({"desk", "bed"}): 0.06,
+    frozenset({"dining_table", "bed"}): 0.08,
+    frozenset({"sofa", "bed"}): 0.08,
+    frozenset({"wardrobe", "dining_table"}): 0.04,
+}
+
+BED_SIDE_CLEARANCE = 0.06  # min clearance on at least one long side of a bed
+
+
+@dataclass
+class FurnitureItem:
+    id: str
+    type: str
+    x: float   # normalized [0,1] — left edge
+    y: float   # normalized [0,1] — top edge
+    w: float
+    h: float
+    rotation: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "type": self.type,
+            "x": round(self.x, 4),
+            "y": round(self.y, 4),
+            "w": round(self.w, 4),
+            "h": round(self.h, 4),
+            "rotation": self.rotation,
+        }
+
+
+# ─────────────────────────── Geometry ───────────────────────────
+
+def _overlaps(a: FurnitureItem, b: FurnitureItem, margin: float = 0.02) -> bool:
+    return not (
+        a.x + a.w + margin <= b.x
+        or b.x + b.w + margin <= a.x
+        or a.y + a.h + margin <= b.y
+        or b.y + b.h + margin <= a.y
+    )
+
+
+def _push_apart(items: list[FurnitureItem], iterations: int = 60) -> list[FurnitureItem]:
+    """AABB collision resolution: iteratively push overlapping pairs apart."""
+    for _ in range(iterations):
+        moved = False
+        for i in range(len(items)):
+            for j in range(i + 1, len(items)):
+                a, b = items[i], items[j]
+                if not _overlaps(a, b):
+                    continue
+                acx, acy = a.x + a.w / 2, a.y + a.h / 2
+                bcx, bcy = b.x + b.w / 2, b.y + b.h / 2
+                dx, dy = acx - bcx, acy - bcy
+                ox = (a.x + a.w + 0.02) - b.x if dx >= 0 else b.x + b.w + 0.02 - a.x
+                oy = (a.y + a.h + 0.02) - b.y if dy >= 0 else b.y + b.h + 0.02 - a.y
+                # Push along shorter overlap axis
+                if abs(ox) <= abs(oy):
+                    half = ox / 2
+                    a.x += half * (1 if dx >= 0 else -1)
+                    b.x -= half * (1 if dx >= 0 else -1)
+                else:
+                    half = oy / 2
+                    a.y += half * (1 if dy >= 0 else -1)
+                    b.y -= half * (1 if dy >= 0 else -1)
+                moved = True
+        if not moved:
+            break
+    return items
+
+
+def _clip_to_room(items: list[FurnitureItem], pad: float = 0.02) -> list[FurnitureItem]:
+    for item in items:
+        item.x = max(pad, min(1.0 - item.w - pad, item.x))
+        item.y = max(pad, min(1.0 - item.h - pad, item.y))
+    return items
+
+
+# ─────────────────────────── Soft Constraints ───────────────────────────
+
+def _score_soft_constraints(
+    items: list[FurnitureItem], space_info: dict
+) -> dict[str, float]:
+    n = len(items)
+    if n == 0:
+        return {k: 0.5 for k in SOFT_WEIGHTS}
+
+    # Pairwise gaps for circulation & ergonomics
+    gaps: list[float] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = items[i], items[j]
+            gx = max(b.x - (a.x + a.w), a.x - (b.x + b.w), 0.0)
+            gy = max(b.y - (a.y + a.h), a.y - (b.y + b.h), 0.0)
+            gaps.append(gx + gy)
+
+    # Circulation (35%): normalised to target gap of 0.12
+    circulation = min(1.0, (sum(gaps) / len(gaps)) / 0.12) if gaps else 0.5
+
+    # Balance (25%): area-weighted CoM distance from room centre (0.5, 0.5)
+    areas = [item.w * item.h for item in items]
+    total_area = sum(areas) or 1.0
+    cx = sum((item.x + item.w / 2) * a for item, a in zip(items, areas)) / total_area
+    cy = sum((item.y + item.h / 2) * a for item, a in zip(items, areas)) / total_area
+    balance = max(0.0, 1.0 - 2 * (abs(cx - 0.5) + abs(cy - 0.5)))
+
+    # Focal point (20%): largest piece near focal wall (y≈0.72) and horizontally centred
+    largest = max(items, key=lambda i: i.w * i.h)
+    focal_dx = abs(largest.x + largest.w / 2 - 0.5)
+    focal_dy = abs(largest.y + largest.h / 2 - 0.72)
+    focal_point = max(0.0, 1.0 - (focal_dx + focal_dy) * 1.5)
+
+    # Natural light (10%): penalise large items blocking top-wall windows (y < 0.15)
+    windows = space_info.get("windows") or []
+    blocking = sum(1 for item in items if item.y < 0.15 and item.h > 0.08)
+    if windows:
+        natural_light = max(0.0, 1.0 - blocking / max(len(windows), 1))
+    else:
+        natural_light = max(0.0, 0.75 - blocking * 0.15)
+
+    # Ergonomics (10%): fraction of pairs with gap ≥ 0.05 (≈40cm)
+    ergonomics = (sum(1 for g in gaps if g >= 0.05) / len(gaps)) if gaps else 1.0
+
+    return {
+        "circulation": round(circulation, 3),
+        "balance": round(balance, 3),
+        "focal_point": round(focal_point, 3),
+        "natural_light": round(natural_light, 3),
+        "ergonomics": round(ergonomics, 3),
+    }
+
+
+def _weighted_score(scores: dict[str, float]) -> float:
+    return round(sum(scores.get(k, 0.0) * w for k, w in SOFT_WEIGHTS.items()), 4)
+
+
+# ─────────────────────────── Hard Constraints ───────────────────────────
+
+def _apply_hard_constraints(
+    items: list[FurnitureItem], constraints: dict
+) -> list[FurnitureItem]:
+    must_remove = {
+        s.lower().replace(" ", "_") for s in (constraints.get("must_remove") or [])
+    }
+    must_add = [
+        s.lower().replace(" ", "_") for s in (constraints.get("must_add") or [])
+    ]
+
+    items = [item for item in items if item.type not in must_remove]
+
+    existing = {item.type for item in items}
+    for ftype in must_add:
+        if ftype not in existing:
+            w, h = FURNITURE_SIZES.get(ftype, FURNITURE_SIZES["default"])
+            items.append(FurnitureItem(f"{ftype}_{len(items)+1}", ftype, 0.72, 0.72, w, h))
+            existing.add(ftype)
+
+    return items
+
+
+def _enforce_immutable(
+    items: list[FurnitureItem], regions: list[dict]
+) -> list[FurnitureItem]:
+    """Push items out of immutable regions (door/window clearance zones)."""
+    for region in regions:
+        rx = float(region.get("x", 0))
+        ry = float(region.get("y", 0))
+        rw = float(region.get("w", 0.1))
+        rh = float(region.get("h", 0.1))
+        for item in items:
+            if (item.x + item.w > rx and item.x < rx + rw
+                    and item.y + item.h > ry and item.y < ry + rh):
+                candidate_x = rx - item.w - 0.03
+                item.x = candidate_x if candidate_x >= 0 else rx + rw + 0.03
+    return items
+
+
+def _enforce_wall_anchor(items: list[FurnitureItem]) -> list[FurnitureItem]:
+    """Snap wall-anchored furniture to the nearest wall if floating in the room."""
+    PAD = 0.02
+    for item in items:
+        if item.type not in WALL_ANCHORED:
+            continue
+        d_t = item.y
+        d_b = 1.0 - (item.y + item.h)
+        d_l = item.x
+        d_r = 1.0 - (item.x + item.w)
+        if min(d_t, d_b, d_l, d_r) <= WALL_SNAP_THRESHOLD:
+            continue
+        if d_t <= d_b and d_t <= d_l and d_t <= d_r:
+            item.y = PAD
+        elif d_b <= d_l and d_b <= d_r:
+            item.y = 1.0 - item.h - PAD
+        elif d_l <= d_r:
+            item.x = PAD
+        else:
+            item.x = 1.0 - item.w - PAD
+    return items
+
+
+def _enforce_semantic_gaps(items: list[FurnitureItem]) -> list[FurnitureItem]:
+    """Push semantically incompatible furniture pairs apart to their required minimum gap."""
+    for _ in range(30):
+        moved = False
+        for i in range(len(items)):
+            for j in range(i + 1, len(items)):
+                a, b = items[i], items[j]
+                gap = SEMANTIC_MIN_GAP.get(frozenset({a.type, b.type}))
+                if gap is None or not _overlaps(a, b, margin=gap):
+                    continue
+                acx, acy = a.x + a.w / 2, a.y + a.h / 2
+                bcx, bcy = b.x + b.w / 2, b.y + b.h / 2
+                dx, dy = acx - bcx, acy - bcy
+                ox = (a.x + a.w + gap) - b.x if dx >= 0 else b.x + b.w + gap - a.x
+                oy = (a.y + a.h + gap) - b.y if dy >= 0 else b.y + b.h + gap - a.y
+                if abs(ox) <= abs(oy):
+                    half = ox / 2
+                    a.x += half * (1 if dx >= 0 else -1)
+                    b.x -= half * (1 if dx >= 0 else -1)
+                else:
+                    half = oy / 2
+                    a.y += half * (1 if dy >= 0 else -1)
+                    b.y -= half * (1 if dy >= 0 else -1)
+                moved = True
+        if not moved:
+            break
+    return items
+
+
+def _enforce_bed_clearance(items: list[FurnitureItem]) -> list[FurnitureItem]:
+    """Ensure each bed has at least one accessible side (left or right) free of obstruction."""
+    beds = [i for i in items if i.type == "bed"]
+    others = [i for i in items if i.type != "bed"]
+
+    for bed in beds:
+        def _zone_clear(zx: float, zy: float, zw: float, zh: float) -> bool:
+            return all(
+                o.x + o.w <= zx or o.x >= zx + zw or
+                o.y + o.h <= zy or o.y >= zy + zh
+                for o in others
+            )
+
+        left_ok = bed.x >= BED_SIDE_CLEARANCE and _zone_clear(
+            bed.x - BED_SIDE_CLEARANCE, bed.y, BED_SIDE_CLEARANCE, bed.h
+        )
+        right_ok = bed.x + bed.w + BED_SIDE_CLEARANCE <= 1.0 and _zone_clear(
+            bed.x + bed.w, bed.y, BED_SIDE_CLEARANCE, bed.h
+        )
+        if left_ok or right_ok:
+            continue
+        for other in others:
+            if (other.x < bed.x + bed.w + BED_SIDE_CLEARANCE and
+                    other.x + other.w > bed.x + bed.w and
+                    other.y < bed.y + bed.h and other.y + other.h > bed.y):
+                other.x = bed.x + bed.w + BED_SIDE_CLEARANCE
+
+    return items
+
+
+# ─────────────────────────── LLM Interface ───────────────────────────
+
+def _parse_llm_layout(text: str) -> list[dict] | None:
+    text = text.strip()
+    for prefix in ("```json", "```"):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+    if not text.startswith("{"):
+        start = text.find("{")
+        if start != -1:
+            text = text[start:]
+    if not text.endswith("}"):
+        end = text.rfind("}")
+        if end != -1:
+            text = text[: end + 1]
+    try:
+        data = json.loads(text)
+        return data.get("furniture") or []
+    except Exception:
+        return None
+
+
+def _call_llm_layout(prompt: str) -> list[FurnitureItem]:
+    from designbridge.llm import call_llm
+
+    text = call_llm(prompt)
+    furniture_list = _parse_llm_layout(text)
+    if not furniture_list:
+        return []
+
+    items: list[FurnitureItem] = []
+    for f in furniture_list:
+        ftype = str(f.get("type", "default")).lower().replace(" ", "_")
+        dw, dh = FURNITURE_SIZES.get(ftype, FURNITURE_SIZES["default"])
+        items.append(
+            FurnitureItem(
+                id=str(f.get("id", f"{ftype}_{len(items)+1}")),
+                type=ftype,
+                x=max(0.0, min(0.95, float(f.get("x", 0.1)))),
+                y=max(0.0, min(0.95, float(f.get("y", 0.1)))),
+                w=float(f.get("w", dw)),
+                h=float(f.get("h", dh)),
+                rotation=float(f.get("rotation", 0)),
+            )
+        )
+    return items
+
+
+# ─────────────────────────── Default Fallback Layouts ───────────────────────────
+
+def _default_layout(room_type: str) -> list[FurnitureItem]:
+    presets: dict[str, list[FurnitureItem]] = {
+        "living_room": [
+            FurnitureItem("sofa_1", "sofa", 0.10, 0.58, 0.30, 0.13),
+            FurnitureItem("coffee_table_1", "coffee_table", 0.18, 0.46, 0.15, 0.10),
+            FurnitureItem("tv_unit_1", "tv_unit", 0.28, 0.08, 0.22, 0.07),
+            FurnitureItem("armchair_1", "armchair", 0.52, 0.52, 0.11, 0.11),
+            FurnitureItem("rug_1", "rug", 0.08, 0.42, 0.38, 0.24),
+            FurnitureItem("plant_1", "plant", 0.76, 0.10, 0.06, 0.06),
+        ],
+        "bedroom": [
+            FurnitureItem("bed_1", "bed", 0.30, 0.28, 0.22, 0.28),
+            FurnitureItem("wardrobe_1", "wardrobe", 0.08, 0.08, 0.18, 0.08),
+            FurnitureItem("nightstand_1", "nightstand", 0.24, 0.35, 0.07, 0.07),
+            FurnitureItem("nightstand_2", "nightstand", 0.55, 0.35, 0.07, 0.07),
+            FurnitureItem("dresser_1", "dresser", 0.68, 0.08, 0.14, 0.09),
+        ],
+        "kitchen": [
+            FurnitureItem("dining_table_1", "dining_table", 0.30, 0.38, 0.20, 0.15),
+            FurnitureItem("chair_1", "chair", 0.22, 0.40, 0.08, 0.08),
+            FurnitureItem("chair_2", "chair", 0.52, 0.40, 0.08, 0.08),
+            FurnitureItem("chair_3", "chair", 0.35, 0.30, 0.08, 0.08),
+            FurnitureItem("chair_4", "chair", 0.35, 0.52, 0.08, 0.08),
+        ],
+        "study": [
+            FurnitureItem("desk_1", "desk", 0.32, 0.08, 0.16, 0.09),
+            FurnitureItem("chair_1", "chair", 0.37, 0.18, 0.08, 0.08),
+            FurnitureItem("bookshelf_1", "bookshelf", 0.08, 0.08, 0.10, 0.05),
+            FurnitureItem("bookshelf_2", "bookshelf", 0.08, 0.15, 0.10, 0.05),
+            FurnitureItem("armchair_1", "armchair", 0.65, 0.55, 0.11, 0.11),
+            FurnitureItem("side_table_1", "side_table", 0.62, 0.53, 0.07, 0.07),
+        ],
+    }
+    return list(presets.get(room_type, presets["living_room"]))
+
+
+# ─────────────────────────── Floor Plan Image ───────────────────────────
+
+def _generate_floor_plan(items: list[FurnitureItem], task_id: str) -> str | None:
+    try:
+        from PIL import Image, ImageDraw
+
+        SIZE, MARGIN = 512, 24
+        ROOM = SIZE - 2 * MARGIN
+
+        img = Image.new("RGB", (SIZE, SIZE), (248, 246, 240))
+        draw = ImageDraw.Draw(img)
+        draw.rectangle([MARGIN, MARGIN, SIZE - MARGIN, SIZE - MARGIN],
+                       outline=(50, 50, 50), width=3)
+
+        for item in items:
+            x1 = int(MARGIN + item.x * ROOM)
+            y1 = int(MARGIN + item.y * ROOM)
+            x2 = int(MARGIN + (item.x + item.w) * ROOM)
+            y2 = int(MARGIN + (item.y + item.h) * ROOM)
+            x2, y2 = max(x1 + 4, x2), max(y1 + 4, y2)
+            color = FURNITURE_COLORS.get(item.type, FURNITURE_COLORS["default"])
+            draw.rectangle([x1, y1, x2, y2], fill=color, outline=(40, 40, 40), width=1)
+            label = item.type[:4].upper()
+            draw.text(((x1 + x2) // 2, (y1 + y2) // 2), label,
+                      fill=(20, 20, 20), anchor="mm")
+
+        out = Path(Config.ARTIFACTS_DIR) / "layout" / f"{task_id}_floor_plan.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        img.save(str(out))
+        return str(out)
+    except Exception as e:
+        print(f"⚠️ Floor plan generation failed: {e}")
+        return None
+
+
+# ─────────────────────────── Main Entry Point ───────────────────────────
+
+def run_layout_agent(
+    structured_requirement: dict[str, Any],
+    task_id: str,
+) -> dict[str, Any]:
+    """
+    Run layout planning. Returns a partial state dict (scene_graph, intermediate_outputs).
+    NOTE: intermediate_outputs is NOT pre-merged — callers must merge with existing state.
+    NOTE: layout_prompt is intentionally empty — spatial text degrades diffusion quality.
+          Floor plan PNG is used for ControlNet only when ENABLE_LAYOUT_CONTROLNET=true.
+    """
+    from designbridge.prompts import LAYOUT_AGENT_PROMPT, LAYOUT_REFINEMENT_PROMPT
+
+    meta = structured_requirement.get("meta") or {}
+    space_info = structured_requirement.get("space_info") or {}
+    constraints = structured_requirement.get("layout_constraints") or {}
+    user_description = (
+        structured_requirement.get("design_description")
+        or structured_requirement.get("user_description_raw")
+        or ""
+    )
+    room_type = meta.get("room_type", "living_room")
+    max_iter = Config.LAYOUT_MAX_ITER
+
+    def _build_prompt(extra: str = "") -> str:
+        return LAYOUT_AGENT_PROMPT.format(
+            room_type=room_type,
+            width=space_info.get("estimated_size", {}).get("width", 5.0),
+            depth=space_info.get("estimated_size", {}).get("depth", 4.0),
+            windows=json.dumps(space_info.get("windows") or [], ensure_ascii=False),
+            doors=json.dumps(space_info.get("doors") or [], ensure_ascii=False),
+            must_keep=", ".join(constraints.get("must_keep") or []) or "無",
+            must_add=", ".join(constraints.get("must_add") or []) or "無",
+            must_remove=", ".join(constraints.get("must_remove") or []) or "無",
+            immutable_regions=json.dumps(
+                constraints.get("immutable_regions") or [], ensure_ascii=False
+            ),
+            user_description=user_description + ("\n" + extra if extra else ""),
+        )
+
+    # Initial layout from LLM
+    try:
+        items = _call_llm_layout(_build_prompt())
+        if not items:
+            raise ValueError("empty response")
+    except Exception as e:
+        print(f"⚠️ LLM layout failed ({e}), using default layout")
+        items = _default_layout(room_type)
+
+    best_items: list[FurnitureItem] = []
+    best_score = -1.0
+    scores: dict[str, float] = {}
+    SCORE_THRESHOLD = 0.65
+
+    for iteration in range(max_iter):
+        items = _apply_hard_constraints(items, constraints)
+        immutable = constraints.get("immutable_regions") or []
+        if immutable:
+            items = _enforce_immutable(items, immutable)
+        items = _clip_to_room(items)
+        items = _push_apart(items)
+        items = _enforce_wall_anchor(items)
+        items = _enforce_semantic_gaps(items)
+        items = _enforce_bed_clearance(items)
+        items = _clip_to_room(items)
+
+        scores = _score_soft_constraints(items, space_info)
+        total = _weighted_score(scores)
+
+        if total > best_score:
+            best_score = total
+            best_items = [FurnitureItem(**i.to_dict()) for i in items]
+
+        print(
+            f"[layout_agent] iter={iteration} score={total:.3f} "
+            f"circ={scores['circulation']:.2f} bal={scores['balance']:.2f} "
+            f"foc={scores['focal_point']:.2f} erg={scores['ergonomics']:.2f}"
+        )
+
+        if total >= SCORE_THRESHOLD or iteration >= max_iter - 1:
+            break
+
+        feedback = LAYOUT_REFINEMENT_PROMPT.format(**scores)
+        try:
+            refined = _call_llm_layout(_build_prompt(feedback))
+            if refined:
+                items = refined
+        except Exception:
+            break
+
+    # Hard constraint satisfaction report
+    must_keep_set = {s.lower().replace(" ", "_") for s in (constraints.get("must_keep") or [])}
+    must_add_set = {s.lower().replace(" ", "_") for s in (constraints.get("must_add") or [])}
+    must_remove_set = {s.lower().replace(" ", "_") for s in (constraints.get("must_remove") or [])}
+    existing = {item.type for item in best_items}
+
+    constraint_check = {
+        "must_keep_satisfied": all(t in existing for t in must_keep_set),
+        "must_add_satisfied": all(t in existing for t in must_add_set),
+        "must_remove_satisfied": all(t not in existing for t in must_remove_set),
+        "collision_free": not any(
+            _overlaps(best_items[i], best_items[j])
+            for i in range(len(best_items))
+            for j in range(i + 1, len(best_items))
+        ),
+        "wall_anchored": all(
+            min(item.x, 1.0 - item.x - item.w, item.y, 1.0 - item.y - item.h)
+            <= WALL_SNAP_THRESHOLD
+            for item in best_items if item.type in WALL_ANCHORED
+        ),
+        "semantic_gaps_met": not any(
+            _overlaps(best_items[i], best_items[j],
+                      margin=SEMANTIC_MIN_GAP.get(frozenset({best_items[i].type, best_items[j].type}), 0.0))
+            for i in range(len(best_items))
+            for j in range(i + 1, len(best_items))
+            if frozenset({best_items[i].type, best_items[j].type}) in SEMANTIC_MIN_GAP
+        ),
+    }
+
+    floor_plan_path = _generate_floor_plan(best_items, task_id)
+
+    scene_graph: dict[str, Any] = {
+        "furniture_placements": [item.to_dict() for item in best_items],
+        "layout_prompt": "",  # intentionally empty — not injected into diffusion prompt
+        "layout_constraints_met": constraint_check,
+        "soft_constraint_scores": scores,
+        "weighted_score": best_score,
+        "floor_plan_path": floor_plan_path,
+    }
+
+    return {
+        "scene_graph": scene_graph,
+        "intermediate_outputs": {
+            "layout_agent": {
+                "status": "ok",
+                "furniture_count": len(best_items),
+                "weighted_score": best_score,
+                "soft_scores": scores,
+                "constraint_check": constraint_check,
+                "floor_plan_path": floor_plan_path,
+            }
+        },
+    }
