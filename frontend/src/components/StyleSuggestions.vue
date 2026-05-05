@@ -1,11 +1,23 @@
 <script setup>
+import { computed } from 'vue'
+
 const props = defineProps({
   candidates:  { type: Array,  default: () => [] },  // [{ style_id, style_name, image_url, similarity, description }]
   confirmed:   { type: Object, default: null },       // 使用者選中的那筆
   loading:     { type: Boolean, default: false },
+  retrievalMode: { type: String, default: 'text-to-image' },
+  apiBase: { type: String, default: 'http://localhost:8000' },
 })
 
-const emit = defineEmits(['confirm', 'clear'])
+const emit = defineEmits(['confirm', 'clear', 'change-mode'])
+
+const topCandidates = computed(() => {
+  const list = Array.isArray(props.candidates) ? props.candidates : []
+  return [...list]
+    .filter((c) => c && typeof c.image_url === 'string')
+    .sort((a, b) => (Number(b.similarity ?? 0) - Number(a.similarity ?? 0)))
+    .slice(0, 6)
+})
 
 function similarityLabel(score) {
   if (score >= 0.85) return '非常符合'
@@ -13,18 +25,52 @@ function similarityLabel(score) {
   if (score >= 0.55) return '部分符合'
   return '參考'
 }
+
+function normalizeImageUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return ''
+  const url = rawUrl.trim()
+  if (!url) return ''
+  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  if (url.startsWith('/')) return `${props.apiBase}${url}`
+  return url
+}
 </script>
 
 <template>
   <div class="suggestions">
     <div class="header">
-      <h2>AI 推薦風格參考</h2>
+      <div class="header-top">
+        <h2>AI 推薦風格參考</h2>
+        <div class="mode-switch" role="group" aria-label="retrieval mode">
+          <button
+            type="button"
+            class="mode-btn"
+            :class="{ active: retrievalMode === 'text-to-image' }"
+            @click="emit('change-mode', 'text-to-image')"
+          >
+            圖像比對
+          </button>
+          <button
+            type="button"
+            class="mode-btn"
+            :class="{ active: retrievalMode === 'text-to-text' }"
+            @click="emit('change-mode', 'text-to-text')"
+          >
+            文字比對
+          </button>
+        </div>
+      </div>
       <p class="subtitle">根據你的文字描述，找到以下相似風格圖片，選擇一張套用其風格參數</p>
+      <p class="mode-caption">
+        目前模式：
+        <strong>{{ retrievalMode === 'text-to-text' ? '文字比對（style_kb）' : '圖像比對（向量圖庫）' }}</strong>
+      </p>
+      <p v-if="!loading && topCandidates.length >= 6" class="swipe-hint">提示：目前顯示前 6 張相似風格參考</p>
     </div>
 
     <!-- 骨架載入 -->
-    <div v-if="loading" class="grid">
-      <div v-for="i in 3" :key="i" class="card skeleton">
+    <div v-if="loading" class="rail">
+      <div v-for="i in 5" :key="i" class="card skeleton">
         <div class="card-img skeleton-img"></div>
         <div class="card-body">
           <div class="skeleton-line short"></div>
@@ -34,17 +80,26 @@ function similarityLabel(score) {
       </div>
     </div>
 
+    <!-- 無結果 -->
+    <div v-else-if="!topCandidates.length" class="empty-state">
+      找不到相符的風格參考，請嘗試更換關鍵字或選擇特定風格
+    </div>
+
     <!-- 候選卡片 -->
-    <div v-else-if="candidates.length" class="grid">
+    <div v-else-if="topCandidates.length" class="rail" role="list" aria-label="風格參考圖候選清單">
       <div
-        v-for="c in candidates"
+        v-for="c in topCandidates"
         :key="c.image_url"
         class="card"
         :class="{ selected: confirmed?.image_url === c.image_url }"
+        role="listitem"
+        tabindex="0"
+        @keydown.enter.prevent="emit('confirm', c)"
+        @keydown.space.prevent="emit('confirm', c)"
         @click="emit('confirm', c)"
       >
         <div class="card-img-wrap">
-          <img :src="c.image_url" :alt="c.style_name" loading="lazy" @error="$event.target.style.display='none'" />
+          <img :src="normalizeImageUrl(c.image_url)" :alt="c.style_name" loading="lazy" @error="$event.target.style.display='none'" />
           <div class="similarity-badge">
             {{ similarityLabel(c.similarity) }}
             <span class="score">{{ (c.similarity * 100).toFixed(0) }}%</span>
@@ -84,22 +139,87 @@ function similarityLabel(score) {
   width: 100%;
 }
 
+.swipe-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  color: #8a75af;
+}
+
 .header h2 {
   font-size: 1.4rem;
   font-weight: 800;
   color: #3d2b6e;
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.1rem;
 }
 .subtitle {
   font-size: 0.875rem;
   color: #9880bb;
+  margin-bottom: 0.2rem;
+}
+
+.mode-caption {
+  margin: 0;
+  font-size: 0.76rem;
+  color: #8a75af;
+}
+
+.mode-caption strong {
+  color: #6e4fa6;
+  font-weight: 700;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.3rem;
+}
+
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #d8c9ef;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 0.2rem;
+  gap: 0.15rem;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
+}
+
+.mode-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #7a5bab;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1;
+  min-width: 72px;
+  height: 30px;
+  padding: 0 0.72rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.mode-btn:hover {
+  color: #694598;
+  background: rgba(124, 92, 191, 0.1);
+}
+
+.mode-btn.active {
+  background: linear-gradient(135deg, #7c5cbf 0%, #9f73d8 100%);
+  color: #fff;
+  border-color: rgba(124, 92, 191, 0.35);
+  box-shadow: 0 3px 10px rgba(124, 92, 191, 0.28);
 }
 
 /* Grid */
-.grid {
+.rail {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1.25rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.05rem;
+  padding: 0.25rem 0.25rem 0.6rem;
 }
 
 /* Card */
@@ -112,6 +232,8 @@ function similarityLabel(score) {
   transition: all 0.2s;
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
 }
 .card:hover {
   border-color: #9b6dd6;
@@ -121,6 +243,11 @@ function similarityLabel(score) {
 .card.selected {
   border-color: #7c5cbf;
   box-shadow: 0 0 0 3px rgba(124, 92, 191, 0.25);
+}
+.card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(124, 92, 191, 0.25), 0 0 0 6px rgba(124, 92, 191, 0.14);
+  border-color: #7c5cbf;
 }
 
 /* Image */
@@ -201,6 +328,16 @@ function similarityLabel(score) {
 }
 .description.muted { color: #b0a0cc; }
 
+.empty-state {
+  padding: 2rem;
+  text-align: center;
+  color: #9880bb;
+  font-size: 0.9rem;
+  background: rgba(255,255,255,0.6);
+  border: 1px dashed #d4c4ef;
+  border-radius: 12px;
+}
+
 .apply-btn {
   margin-top: auto;
   padding: 0.5rem 0.75rem;
@@ -261,5 +398,14 @@ function similarityLabel(score) {
 @keyframes shimmer {
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+@media (max-width: 900px) {
+  .rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .header-top { flex-direction: column; align-items: flex-start; }
+  .rail { grid-template-columns: 1fr; }
 }
 </style>

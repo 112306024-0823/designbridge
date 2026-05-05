@@ -28,6 +28,7 @@ python-multipart
 
 # LLM proxy
 litellm>=1.40.0
+openai
 
 # Supabase (vector search + storage)
 supabase>=2.4.0

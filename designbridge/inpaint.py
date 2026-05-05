@@ -215,8 +215,8 @@ def run_inpainting(
         original = Image.open(image_path).convert("RGB")
         orig_w, orig_h = original.size
 
-        # SD inpainting 要求 512x512
-        target_size = (512, 512)
+        # Keep original aspect ratio instead of forcing square output.
+        target_size = _resolve_inpaint_size((orig_w, orig_h))
         image_resized = original.resize(target_size)
         mask_resized = mask.resize(target_size).convert("L")
 
@@ -274,8 +274,10 @@ def run_hf_inpainting(
 
         client = InferenceClient(api_key=Config.HF_TOKEN)
 
-        original = Image.open(image_path).convert("RGB").resize((512, 512))
-        mask_resized = mask.resize((512, 512)).convert("L")
+        original_full = Image.open(image_path).convert("RGB")
+        target_size = _resolve_inpaint_size(original_full.size)
+        original = original_full.resize(target_size)
+        mask_resized = mask.resize(target_size).convert("L")
 
         # 轉 bytes
         img_bytes = io.BytesIO()

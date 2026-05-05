@@ -1,4 +1,4 @@
-# 室內設計文字輸入範例集
+# 室內設計文字輸入範例集(情境ONLY TEXT)
 
 ## A 類：純風格 / 氛圍描述
 
@@ -12,7 +12,16 @@ A4. 我喜歡台式懷舊風，老木窗、復古磁磚地板、溫暖燈光，�
 
 A5. 幫我打造一個有海島度假感的主臥，藍白色系，藤編床頭板，白色薄紗窗簾，像峇里島villa。
 
----
+A6. 我想要法式奶油風客廳，奶白色牆面、弧形沙發、黃銅細節與柔和燈光，整體溫柔又有質感。
+
+A7. 幫我設計一個現代侘寂風餐廳，灰米色主調、天然石材與手作陶器，氛圍安靜沉穩。
+
+A8. 我想要都會精品飯店風的臥室，深木色、皮革元素、間接照明，感覺成熟俐落。
+
+A9. 請做一個地中海風陽台，白牆、藍色點綴、陶盆植物與編織家具，明亮放鬆。
+
+A10. 幫我設計一個韓系簡約風書房，低彩度木質家具、乾淨線條、留白感強，適合拍照也適合工作。
+
 
 ## B 類：功能需求導向
 
@@ -20,11 +29,21 @@ B1. 我需要一個書房，有大書桌、整面書牆和舒適的椅子，燈�
 
 B2. 幫我設計給兩個小孩共用的房間，要有上下鋪床架，各自有獨立讀書區，收納要多。
 
-B3. 我家廚房想改成開放式，搭配中島，方便下廚時和家人互動，要有足夠的備料空間。
+B3. 我希望規劃一個開放式廚房與中島，方便下廚時和家人互動，並保留足夠的備料空間。
 
 B4. 需要一個寵物友善的客廳，角落有貓跳台和狗窩，地板用好清潔的材質，動線要順。
 
-B5. 幫我把陽台改造成休閒區，放兩張椅子和茶几，可以喝茶看書，有點綠意。
+B5. 請規劃一個陽台休閒區，包含兩張椅子與茶几，可喝茶看書，並加入一些綠意。
+
+B6. 我需要一個可同時做瑜珈和重訓的多功能房，請規劃收納器材、鏡面牆和防滑地墊。
+
+B7. 幫我設計小宅玄關，要有鞋櫃、穿鞋椅、全身鏡，並維持出入動線不擁擠。
+
+B8. 我想把客廳改成可彈性切換成家庭劇院，請安排投影、遮光與音響設備位置。
+
+B9. 請設計一個可遠距會議的臥室角落，需要背景整潔、燈光自然、並有隔音感。
+
+B10. 我要一個可以親子共讀與收玩具的客廳配置，請強化安全性與收納效率。
 
 ---
 
@@ -40,6 +59,16 @@ C4. 我家住了五年還是感覺像剛搬進來，很空白、沒有溫度，�
 
 C5. 我希望客廳的設計讓我一下班開門的瞬間就能感到放鬆。
 
+C6. 我想讓家裡看起來更有品味，但又不想太制式，感覺自然一點比較好。
+
+C7. 房間現在住起來沒什麼問題，但就是覺得少了一點「我自己的感覺」。
+
+C8. 我想要一種朋友來家裡會覺得很舒服、很想多待一會兒的空間氛圍。
+
+C9. 最近常常失眠，希望房間能有讓人安心、慢慢沉下來的感覺。
+
+C10. 我希望家裡看起來有層次但不複雜，不要太花俏也不要太單調。
+
 ---
 
 ## D 類：特殊情境 / 限制條件
@@ -50,9 +79,19 @@ D2. 老人要住的房間，家具不能有尖角，動線要寬敞好走，方�
 
 D3. 小孩房要安全又有趣，地板鋪軟墊，收納要小孩自己能使用的高度，顏色活潑但不刺眼。
 
-D4. 出租套房的改造，預算有限，主要靠燈光和軟裝提升質感，讓房客住得舒適。
+D4. 請為出租套房提出低預算設計方案，主要透過燈光與軟裝提升質感，讓房客住得舒適。
 
 D5. 我家採光不好，只有一個小窗，請幫我設計讓空間感覺更明亮開闊的方案。
+
+D6. 我家是長型老屋，樑柱很多又有高低差，請在不大改結構的前提下改善空間感。
+
+D7. 租屋處不能釘牆也不能更換地板，請用可拆卸方式提升整體風格與機能。
+
+D8. 我需要兼顧嬰兒照護的主臥室，半夜動線要安全，並保留哺乳與收納區域。
+
+D9. 我家有嚴重西曬，下午很熱，請規劃能降溫且仍保有採光的設計方案。
+
+D10. 套房有很多管線外露且天花板低，請設計讓空間不壓迫又能維持整潔視覺。
 
 ---
 
@@ -70,6 +109,16 @@ A4. I love a vintage Taiwanese aesthetic — old wooden window frames, retro til
 
 A5. Create a tropical resort-style master bedroom: blue and white palette, rattan headboard, sheer white curtains — like a Bali villa.
 
+A6. I want a French cream-style living room with warm ivory walls, a curved sofa, brass accents, and soft ambient lighting.
+
+A7. Design a modern wabi-sabi dining room with greige tones, natural stone textures, and handcrafted ceramic details.
+
+A8. I'd like an urban boutique-hotel bedroom with dark wood finishes, leather accents, and layered indirect lighting.
+
+A9. Please design a Mediterranean-style balcony with white walls, blue accents, terracotta planters, and woven seating.
+
+A10. I want a Korean minimalist home office with low-saturation wood tones, clean lines, and strong negative space.
+
 ---
 
 ## Category B: Function-Driven
@@ -78,11 +127,21 @@ B1. I need a home office with a large desk, a full wall of bookshelves, and a co
 
 B2. Design a shared bedroom for two kids with bunk beds, separate study corners for each, and plenty of storage.
 
-B3. I want to convert my kitchen into an open-plan layout with an island, so I can interact with family while cooking. Needs enough prep space.
+B3. Please plan an open-plan kitchen layout with an island so I can interact with family while cooking, with enough prep space.
 
 B4. I need a pet-friendly living room with a cat tree and dog bed in the corner, easy-to-clean flooring, and a smooth traffic flow.
 
-B5. Transform my balcony into a relaxing nook — two chairs, a small coffee table, somewhere to read with a bit of greenery.
+B5. Please propose a balcony relaxation layout with two chairs and a small coffee table, suitable for reading, with a touch of greenery.
+
+B6. I need a multi-purpose fitness room for yoga and strength training, including equipment storage, mirror placement, and anti-slip flooring.
+
+B7. Help me design a compact entryway with a shoe cabinet, a bench, and a full-length mirror while keeping circulation clear.
+
+B8. I want the living room to switch into a home theater setup, with proper placement for a projector, blackout control, and speakers.
+
+B9. Please design a remote-work corner in the bedroom with a clean video-call background, flattering lighting, and better acoustic comfort.
+
+B10. I need a family-friendly living room layout for parent-child reading and toy organization, with safe edges and efficient storage.
 
 ---
 
@@ -98,6 +157,16 @@ C4. I've lived here five years and it still feels like I just moved in — blank
 
 C5. I want the living room design to make me feel relaxed the instant I open the door after work.
 
+C6. I want my home to feel more refined, but not too staged — something natural and lived-in.
+
+C7. My room functions fine, but it still doesn’t feel like “me.” I want more personality without making it messy.
+
+C8. I want a space where guests naturally feel comfortable and want to stay longer, but I don’t know what creates that feeling.
+
+C9. I’ve had trouble sleeping lately, so I want the bedroom to feel calm, grounded, and emotionally safe.
+
+C10. I want my home to have more depth and layers without looking busy, flashy, or overly decorated.
+
 ---
 
 ## Category D: Special Constraints
@@ -108,6 +177,16 @@ D2. A room for an elderly person — no sharp furniture corners, wide clear path
 
 D3. A safe and fun kids' room: soft floor padding, storage at child height, lively colors that aren't too stimulating.
 
-D4. Renovating a rental unit on a tight budget — mainly improve the feel through lighting and soft furnishings to make it comfortable for tenants.
+D4. Please propose a low-budget design plan for a rental unit, mainly improving comfort through lighting and soft furnishings.
 
 D5. My apartment has poor natural light with only one small window. Design a space that feels brighter and more open.
+
+D6. My home is a long, narrow older apartment with many beams and floor level changes. Improve spatial flow without major structural changes.
+
+D7. My rental doesn’t allow drilling walls or replacing floors. Please propose removable design upgrades for both style and function.
+
+D8. I need a master bedroom that supports infant care, with safe night circulation, a feeding zone, and practical storage.
+
+D9. My apartment gets strong west sun and overheats in the afternoon. Please design a solution that reduces heat while keeping daylight.
+
+D10. My studio has exposed pipes and a low ceiling. Please make it feel less oppressive while keeping the space visually clean.

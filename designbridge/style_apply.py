@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,10 @@ def build_style_params(
     style_profile_id = resolve_style_profile_id(req, user_input)
     text_query = (user_input or {}).get("text_prompt", "").strip()
     query = text_query or style_profile_id or "interior design"
+    retrieval_mode = (
+        (user_input or {}).get("style_retrieval_mode")
+        or os.getenv("DESIGNBRIDGE_STYLE_RETRIEVAL_MODE", "text-to-image")
+    )
 
     # ── 1. Supabase pgvector 搜尋 ─────────────────────────────────────────────
     try:
@@ -73,11 +78,12 @@ def build_style_params(
             text_query=query,
             style_id=style_profile_id,
             top_k=3,
+            retrieval_mode=str(retrieval_mode),
         )
         if results:
             return blend_style_params_supabase(results)
     except Exception as e:
-        print(f"[WARN] Supabase search failed, trying local vector: {e}")
+        print(f"⚠️  Supabase 向量搜尋失敗，嘗試本地向量庫：{e}")
 
     # ── 2. 本地 ChromaDB 搜尋 ─────────────────────────────────────────────────
     try:
@@ -94,10 +100,10 @@ def build_style_params(
             )
             if results_local:
                 params = blend_style_params(results_local)
-                print(f"[OK] local vector search: top-1 [{results_local[0].doc_id}] score={results_local[0].similarity_score}")
+                print(f"✅ 本地向量搜尋：top-1 [{results_local[0].doc_id}] score={results_local[0].similarity_score}")
                 return params
     except Exception as e:
-        print(f"[WARN] local vector query failed: {e}")
+        print(f"⚠️  本地向量庫查詢失敗：{e}")
 
     # ── 3. Fallback：aggregated JSON ──────────────────────────────────────────
     if not style_profile_id:
@@ -117,7 +123,7 @@ def build_style_params(
     style_strength = float(style_prefs.get("style_strength", 0.7))
     recommended_weight = float(ai_config.get("recommended_ip_adapter_weight", 0.85))
 
-    print(f"[WARN] using aggregated JSON fallback: {style_profile_id}")
+    print(f"⚠️  使用 aggregated fallback：{style_profile_id}")
     return {
         "style_profile_id": profile.get("style_id", style_profile_id),
         "style_profile_name": profile.get("style_name", style_profile_id),

@@ -1,18 +1,39 @@
 @import './base.css';
 
 :root {
-  --primary:       #7c5cbf;
-  --primary-light: #f0ebfb;
-  --primary-hover: #6347a8;
-  --primary-border:#c9b8e8;
+  --primary:        #7c5cbf;
+  --primary-light:  #f0ebfb;
+  --primary-hover:  #6347a8;
+  --primary-border: #c9b8e8;
+  --primary-subtle: rgba(124, 92, 191, 0.07);
+
+  --text-1: #1a0f2e;
+  --text-2: #4a3370;
+  --text-3: #9880bb;
+  --text-4: #c4b3e0;
+
+  --surface:        rgba(255, 255, 255, 0.85);
+  --surface-border: rgba(180, 150, 230, 0.22);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --shadow-sm:  0 1px 4px rgba(80, 50, 140, 0.07);
+  --shadow-md:  0 4px 16px rgba(124, 92, 191, 0.13);
+  --shadow-lg:  0 10px 32px rgba(124, 92, 191, 0.18);
+  --shadow-xl:  0 20px 48px rgba(124, 92, 191, 0.22);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
 
 #app {
   width: 100%;
   min-height: 100vh;
   padding: 0;
   margin: 0;
-  font-weight: normal;
 }

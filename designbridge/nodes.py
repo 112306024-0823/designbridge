@@ -7,7 +7,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from designbridge.config import Config
 from designbridge.prompts import REQUIREMENT_ANALYZER_PROMPT
@@ -366,7 +366,7 @@ def _route_decision(state: DesignBridgeState) -> RoutingDecision:
 
 def design_director(state: DesignBridgeState) -> dict[str, Any]:
     """
-    動態調度：ENABLE_DYNAMIC_ROUTING=true 時由 Gemini 讀 SKILL.md 決策；
+    動態調度：ENABLE_DYNAMIC_ROUTING=true 時由 LLM（LiteLLM / xAI Grok / Gemini，依 llm.py 優先序）讀 SKILL.md 決策；
     否則使用原本的 rule-based routing。任何 LLM 失敗都自動 fallback。
     細部微調模式（refine_mode=True）直接強制 routing 到 design_adjuster。
     """
@@ -378,11 +378,11 @@ def design_director(state: DesignBridgeState) -> dict[str, Any]:
     if Config.get_dynamic_routing_enabled():
         try:
             from designbridge.router import call_llm_router, RouterLLMError
-            api_key = Config.get_gemini_api_key()
+            # Auth is resolved inside designbridge.llm (LiteLLM / xAI / Gemini).
             routing_decision = call_llm_router(
                 structured_requirement=state.get("structured_requirement") or {},
                 vision_features=state.get("vision_features") or {},
-                api_key=api_key,
+                api_key="",
                 gemini_model=Config.GEMINI_MODEL,
                 gemini_temperature=Config.ROUTER_TEMPERATURE,
             )
@@ -623,18 +623,79 @@ def _build_imagen_prompt_from_requirement(
     return (base_prompt + " " + " ".join(extra_parts)).strip()
 
 
-def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> None:
-    """Save a placeholder image (PIL) when Flux is unavailable."""
+OutputAspect = Literal["auto", "1:1", "4:3", "3:4", "16:9", "9:16"]
+_ASPECT_RATIO_MAP: dict[OutputAspect, float] = {
+    "auto": 1.0,
+    "1:1": 1.0,
+    "4:3": 4.0 / 3.0,
+    "3:4": 3.0 / 4.0,
+    "16:9": 16.0 / 9.0,
+    "9:16": 9.0 / 16.0,
+}
+
+
+def _round_to_multiple(value: int, multiple: int, min_value: int, max_value: int) -> int:
+    rounded = max(min_value, min(max_value, int(round(value / multiple) * multiple)))
+    return rounded
+
+
+def _resolve_output_size(
+    output_aspect: str,
+    initial_image_path: str | None,
+    long_edge: int = 1024,
+    min_edge: int = 512,
+    max_edge: int = 1344,
+) -> tuple[int, int]:
+    aspect_key: OutputAspect = output_aspect if output_aspect in _ASPECT_RATIO_MAP else "auto"
+    ratio = _ASPECT_RATIO_MAP[aspect_key]
+
+    if aspect_key == "auto" and initial_image_path and Path(initial_image_path).is_file():
+        try:
+            from PIL import Image
+
+            with Image.open(initial_image_path) as img:
+                w, h = img.size
+            if w > 0 and h > 0:
+                ratio = w / h
+        except Exception:
+            ratio = 1.0
+
+    if ratio >= 1.0:
+        width = long_edge
+        height = int(round(long_edge / ratio))
+    else:
+        height = long_edge
+        width = int(round(long_edge * ratio))
+
+    width = _round_to_multiple(width, multiple=64, min_value=min_edge, max_value=max_edge)
+    height = _round_to_multiple(height, multiple=64, min_value=min_edge, max_value=max_edge)
+    return width, height
+
+
+def _renderer_placeholder_image(
+    out_path: Path,
+    task_id: str,
+    prompt: str,
+    output_size: tuple[int, int],
+) -> None:
+    """Save a placeholder image (PIL) when SDXL is unavailable."""
     from PIL import Image, ImageDraw
 
-    img = Image.new("RGB", (512, 512), color=(240, 240, 245))
+    width, height = output_size
+    img = Image.new("RGB", (width, height), color=(240, 240, 245))
     draw = ImageDraw.Draw(img)
-    draw.rectangle([50, 200, 462, 312], fill=(255, 255, 255), outline=(180, 180, 190))
+    margin_x = max(30, int(width * 0.1))
+    margin_y = max(30, int(height * 0.1))
+    draw.rectangle(
+        [margin_x, margin_y, width - margin_x, height - margin_y],
+        fill=(255, 255, 255),
+        outline=(180, 180, 190),
+    )
     text = "DesignBridge\n(placeholder)"
     try:
-        draw.text((256, 256), text, fill=(100, 100, 110), anchor="mm")
+        draw.text((width // 2, height // 2), text, fill=(100, 100, 110), anchor="mm")
     except Exception:
-        draw.text((150, 240), "DesignBridge placeholder", fill=(100, 100, 110))
+        draw.text((margin_x + 10, height // 2), "DesignBridge placeholder", fill=(100, 100, 110))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(out_path)
 
@@ -643,7 +704,12 @@ def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> No
 _flux_pipeline: Any = None
 
 
-def _render_hf_inference(prompt: str, out_path: Path, model: str = "") -> bool:
+def _render_hf_inference(
+    prompt: str,
+    out_path: Path,
+    model: str = "",
+    output_size: tuple[int, int] = (1024, 1024),
+) -> bool:
     """
     Generate image via Hugging Face Inference API.
     No local model download. Returns True on success.
@@ -664,7 +730,14 @@ def _render_hf_inference(prompt: str, out_path: Path, model: str = "") -> bool:
         # 避免 random 在多 worker / fork 下重複相同序列
         seed = secrets.randbelow(2**31)
         print(f"🎲 HF Inference seed: {seed}")
-        image = client.text_to_image(prompt, model=model, seed=seed)
+        width, height = output_size
+        image = client.text_to_image(
+            prompt,
+            model=model,
+            seed=seed,
+            width=width,
+            height=height,
+        )
         if image is None:
             return False
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -735,9 +808,15 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
 
     prompt = _build_imagen_prompt_from_requirement(req, style_params=style_params)
     negative_prompt = style_params.get("negative_prompt") or None
+    user_input = state.get("user_input") or {}
+    output_aspect = str(user_input.get("output_aspect") or "auto")
+    output_size = _resolve_output_size(output_aspect, user_input.get("initial_image"))
+    output_width, output_height = output_size
     generation_params: dict[str, Any] = {
         "prompt_preview": prompt[:200],
         "negative_prompt_preview": (negative_prompt or "")[:200],
+        "output_aspect": output_aspect,
+        "output_size": {"width": output_width, "height": output_height},
     }
     backend = "placeholder"
 
@@ -761,11 +840,25 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
 
     # Use style_reference_image as control image:
     # priority: user upload > Supabase matched image > depth map
-    user_input = state.get("user_input") or {}
     style_reference_image = user_input.get("style_reference_image")
-    if style_reference_image and Path(style_reference_image).exists():
-        control_img = style_reference_image
-        controlnet_inputs["style_reference_image"] = str(style_reference_image)
+    user_style_reference_local: str | None = None
+    if isinstance(style_reference_image, str) and style_reference_image.strip():
+        style_reference_candidate = style_reference_image.strip()
+        if Path(style_reference_candidate).exists():
+            user_style_reference_local = style_reference_candidate
+        elif style_reference_candidate.startswith(("http://", "https://")):
+            try:
+                from designbridge.style_supabase import download_style_image
+
+                downloaded_ref = download_style_image(style_reference_candidate)
+                if downloaded_ref and downloaded_ref.exists():
+                    user_style_reference_local = str(downloaded_ref)
+            except Exception as e:
+                print(f"⚠️  下載使用者風格參考圖失敗：{e}")
+
+    if user_style_reference_local:
+        control_img = user_style_reference_local
+        controlnet_inputs["style_reference_image"] = user_style_reference_local
     elif style_params and style_params.get("reference_image_path") and Path(style_params["reference_image_path"]).exists():
         control_img = style_params["reference_image_path"]
         controlnet_inputs["style_reference_image"] = control_img
@@ -774,7 +867,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         control_img = depth_path if depth_path and Path(depth_path).exists() else None
 
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
-        if _render_hf_inference(prompt, out_path, model=hf_model_id):
+        if _render_hf_inference(prompt, out_path, model=hf_model_id, output_size=output_size):
             backend = "hf_inference"
             generation_params["model"] = hf_model_id
             generation_params["provider"] = Config.HF_INFERENCE_PROVIDER
@@ -789,7 +882,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
 
     # 3. Fallback to placeholder
     if backend == "placeholder":
-        _renderer_placeholder_image(out_path, task_id, prompt)
+        _renderer_placeholder_image(out_path, task_id, prompt, output_size=output_size)
         generation_params["fallback"] = "placeholder"
 
     generation_params["backend"] = backend

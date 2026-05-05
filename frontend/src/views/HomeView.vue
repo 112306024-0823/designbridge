@@ -21,9 +21,10 @@ const styleRefImage = useImageField()
 const result = ref(null)
 const loading = ref(false)
 const error = ref('')
-let currentRequestId = 0  // 用來丟棄過時的回應
-const submitKey = ref(0)  // 每次 submit 遞增，強制 ResultPanel 重新掛載
+let currentRequestId = 0
+const submitKey = ref(0)
 const matchedStylePreview = ref(null)
+const styleRetrievalMode = ref('text-to-image')
 
 // 模式：'design'（整體設計） | 'refine'（細部微調）
 const mode = ref('design')
@@ -41,7 +42,8 @@ const baseImageLabel = computed(() =>
 // 向量搜尋候選
 const styleCandidates = ref([])
 const candidatesLoading = ref(false)
-const confirmedStyle = ref(null)  // 使用者選中的候選
+const candidatesSearched = ref(false)
+const confirmedStyle = ref(null)
 
 // 只有在設計模式、無結果、無 loading、有候選時才顯示 StyleSuggestions
 const showSuggestions = computed(() =>
@@ -57,6 +59,7 @@ async function fetchStyleCandidates() {
   const sid = selectedStyle.value !== 'auto' ? selectedStyle.value : ''
   if (!q && !sid) {
     styleCandidates.value = []
+    candidatesSearched.value = false
     confirmedStyle.value = null
     matchedStylePreview.value = null
     return
@@ -64,26 +67,37 @@ async function fetchStyleCandidates() {
 
   candidatesLoading.value = true
   try {
-    const res = await fetch(`${API_BASE}/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=3`)
+    const res = await fetch(
+      `${API_BASE}/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=10&retrieval_mode=${encodeURIComponent(styleRetrievalMode.value)}`
+    )
     if (res.ok) {
       const data = await res.json()
-      styleCandidates.value = data
-      // 用第一筆更新 sidebar 預覽，不再重複呼叫 API
-      matchedStylePreview.value = data[0]
-        ? { image_url: data[0].image_url, style_name: data[0].style_name, similarity: data[0].similarity }
+      const sorted = (Array.isArray(data) ? data : [])
+        .slice()
+        .sort((a, b) => (Number(b?.similarity ?? 0) - Number(a?.similarity ?? 0)))
+        .slice(0, 10)
+      styleCandidates.value = sorted
+      matchedStylePreview.value = sorted[0]
+        ? { image_url: sorted[0].image_url, style_name: sorted[0].style_name, similarity: sorted[0].similarity }
         : null
-      // 若已確認的那張不在新結果裡就清除
-      if (confirmedStyle.value && !data.find(c => c.image_url === confirmedStyle.value.image_url)) {
+      if (confirmedStyle.value && !sorted.find(c => c.image_url === confirmedStyle.value.image_url)) {
         confirmedStyle.value = null
       }
     }
-  } catch { /* 靜默失敗 */ }
-  finally { candidatesLoading.value = false }
+  } catch {}
+  finally {
+    candidatesLoading.value = false
+    candidatesSearched.value = true
+  }
 }
 
 function scheduleSearch() {
   clearTimeout(searchTimer)
-  result.value = null  // 開始新搜尋時清除舊結果，讓候選區可見
+  result.value = null
+  styleCandidates.value = []
+  candidatesSearched.value = false
+  confirmedStyle.value = null
+  matchedStylePreview.value = null
   searchTimer = setTimeout(fetchStyleCandidates, 600)
 }
 
@@ -132,7 +146,7 @@ async function fetchStyleOptions(retries = 5, delayMs = 1500) {
 
 async function uploadFile(file) {
   const body = new FormData()
-  body.append('file', file)
+  body.append('file', file) 
   const res = await fetch(`${API_BASE}/api/upload-image`, { method: 'POST', body })
   if (!res.ok) throw new Error(`{res.status}`)
   return (await res.json()).path
@@ -152,7 +166,7 @@ async function handleSubmit() {
     error.value = '請提供文字需求、風格選擇或圖片'
     return
   }
-  const requestId = ++currentRequestId  // 每次提交拿到唯一 ID
+  const requestId = ++currentRequestId
   submitKey.value++
   error.value = ''
   result.value = null
@@ -165,7 +179,6 @@ async function handleSubmit() {
         ? await uploadFile(spaceImage.file)
         : manualImagePath.value.trim() || undefined
 
-    // 優先用使用者手動上傳的風格參考圖；其次用向量搜尋確認的候選圖
     let style_reference_image_path = undefined
     if (!noStyleReference.value) {
       if (styleRefImage.file) {
@@ -221,9 +234,12 @@ onMounted(fetchStyleOptions)
 <template>
   <div class="page">
     <aside class="sidebar">
-      <div class="logo">
-        
-        <span class="logo-text">DesignBridge</span>
+      <div class="sidebar-header">
+        <div class="logo">
+          <div class="logo-mark">✦</div>
+          <span class="logo-text">DesignBridge</span>
+        </div>
+        <p class="logo-tagline">AI 室內設計助手</p>
       </div>
 
       <SidebarForm
@@ -254,8 +270,11 @@ onMounted(fetchStyleOptions)
         :candidates="styleCandidates"
         :confirmed="confirmedStyle"
         :loading="candidatesLoading"
-        @confirm="confirmedStyle = $event"
-        @clear="confirmedStyle = null"
+        :retrieval-mode="styleRetrievalMode"
+        :api-base="API_BASE"
+        @confirm="handleConfirmStyle"
+        @clear="handleClearConfirmedStyle"
+        @change-mode="handleChangeRetrievalMode"
       />
       <ResultPanel v-else :key="submitKey" :result="result" :loading="loading" @refine="handleRefine" />
     </main>
@@ -266,47 +285,80 @@ onMounted(fetchStyleOptions)
 .page {
   display: flex;
   min-height: 100vh;
-  font-family: 'Segoe UI', sans-serif;
   background:
-    radial-gradient(ellipse at 20% 30%, rgba(180, 150, 230, 0.18) 0%, transparent 55%),
-    radial-gradient(ellipse at 80% 70%, rgba(140, 110, 210, 0.14) 0%, transparent 55%),
-    linear-gradient(135deg, #f3eeff 0%, #ede6fa 40%, #e6dff5 100%);
+    radial-gradient(ellipse at 12% 20%, rgba(167, 139, 250, 0.16) 0%, transparent 48%),
+    radial-gradient(ellipse at 88% 80%, rgba(124, 92, 191, 0.12) 0%, transparent 48%),
+    linear-gradient(150deg, #f6f1ff 0%, #ede6fa 45%, #e8dff5 100%);
 }
 
+/* ── Sidebar ── */
 .sidebar {
-  width: 400px;
-  min-width: 400px;
-  background: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(12px);
-  border-right: 1px solid rgba(180, 150, 230, 0.3);
-  padding: 2rem;
+  width: 380px;
+  min-width: 380px;
+  background: rgba(255, 255, 255, 0.84);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-right: 1px solid var(--surface-border);
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
   overflow-y: auto;
+}
+
+.sidebar-header {
+  padding: 1.75rem 2rem 1.25rem;
+  border-bottom: 1px solid rgba(180, 150, 230, 0.14);
+  flex-shrink: 0;
 }
 
 .logo {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 1.7rem;
-  font-weight: 900;
-  color: #6b3fa0;
-  letter-spacing: -0.02em;
+  gap: 0.55rem;
+  margin-bottom: 0.25rem;
 }
-.logo-icon { font-size: 1.7rem; }
-.logo-sub  { color: #a990d4; font-size: 0.85rem; margin-bottom: 1rem; }
 
+.logo-mark {
+  width: 30px;
+  height: 30px;
+  background: linear-gradient(135deg, #7c5cbf 0%, #b07de0 100%);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  color: white;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(124, 92, 191, 0.35);
+}
+
+.logo-text {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: var(--text-1);
+  letter-spacing: -0.03em;
+}
+
+.logo-tagline {
+  font-size: 0.72rem;
+  color: var(--text-3);
+  font-weight: 500;
+  margin: 0;
+  padding-left: calc(30px + 0.55rem);
+  letter-spacing: 0.01em;
+}
+
+.sidebar-body {
+  flex: 1;
+  padding: 1.5rem 2rem 2rem;
+  overflow-y: auto;
+}
+
+/* ── Content ── */
 .content {
   flex: 1;
-  padding: 3rem 4rem;
+  min-width: 0;
+  padding: 2.5rem 3rem;
   display: flex;
   flex-direction: column;
-}
-
-.content{
-  padding-left: 0;
-  padding-right: 0;
 }
 </style>

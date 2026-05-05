@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
-"""為 Supabase style_images 表產生 text embedding，存入 embedding 欄位。
+"""為 Supabase style_images 表產生 CLIP image embedding，存入 embedding 欄位（512 維）。
 
-文字來源優先順序：
-  1. style_kb JSON（Gemini 萃取，資訊最豐富）
-  2. source_meta JSON（style / size / kind / region）
+用 CLIP ViT-B-32 直接 encode 圖片，讓圖片和文字 query 落在同一向量空間。
 
 Usage (from project root):
-    python -m style_kb.embed_supabase              # 處理所有 embedding IS NULL
-    python -m style_kb.embed_supabase --style modern
-    python -m style_kb.embed_supabase --reset      # 重算所有（含已有向量的）
+    python -m style_kb.vector.embed_supabase              # 處理所有 embedding IS NULL
+    python -m style_kb.vector.embed_supabase --style modern
+    python -m style_kb.vector.embed_supabase --reset      # 重算所有（含已有向量的）
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import sys; sys.stdout.reconfigure(encoding="utf-8")
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -24,36 +22,21 @@ load_dotenv()
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
-BATCH_SIZE = 64
+EMBEDDING_MODEL = "clip-ViT-B-32"
+BATCH_SIZE = 16  # 圖片比文字重，縮小 batch
 
 
-def build_document(row: dict) -> str:
-    style_id = row.get("style_id", "")
-    kb = row.get("style_kb") or {}
-    meta = row.get("source_meta") or {}
-
-    if kb:
-        style_info = kb.get("style_info", {})
-        visual = kb.get("visual_elements", {})
-        ai_params = kb.get("ai_params", {})
-        tags = "、".join(style_info.get("tags", []))
-        materials = "、".join(
-            f"{m.get('target','')}:{m.get('type','')}"
-            for m in visual.get("materials", [])
-        )
-        colors = visual.get("colors", {})
-        color_text = f"主色{colors.get('primary','')} 輔色{colors.get('secondary','')} 點綴{colors.get('accent','')}"
-        lighting = visual.get("lighting", {})
-        light_text = f"{lighting.get('type','')} {lighting.get('color_temp','')}K"
-        positive = ai_params.get("prompts", {}).get("positive", "")
-        return f"{style_id}風格。標籤：{tags}。材質：{materials}。色調：{color_text}。光線：{light_text}。{positive}"
-
-    style_zh = meta.get("style", style_id)
-    size = meta.get("size", "")
-    kind = meta.get("kind", "")
-    region = meta.get("region", "")
-    return f"{style_zh}風格。{size} {kind} {region}".strip()
+def fetch_image(url: str):
+    """Download image URL → PIL.Image. Returns None on failure."""
+    try:
+        import httpx
+        from PIL import Image
+        resp = httpx.get(url, timeout=20, follow_redirects=True)
+        resp.raise_for_status()
+        return Image.open(io.BytesIO(resp.content)).convert("RGB")
+    except Exception as e:
+        print(f"    ⚠️  下載失敗 {url[:60]}... → {e}")
+        return None
 
 
 def main() -> None:
@@ -69,8 +52,7 @@ def main() -> None:
     model = SentenceTransformer(EMBEDDING_MODEL)
     print(f"模型載入：{EMBEDDING_MODEL}")
 
-    # 讀取目標行
-    q = client.table("style_images").select("id,style_id,style_kb,source_meta")
+    q = client.table("style_images").select("id,style_id,image_url")
     if not args.reset:
         q = q.is_("embedding", "null")
     if args.style:
@@ -82,19 +64,33 @@ def main() -> None:
         print("無需處理。")
         return
 
-    # 批次 embed
+    done = 0
+    skipped = 0
     for i in range(0, len(rows), BATCH_SIZE):
         batch = rows[i:i + BATCH_SIZE]
-        docs = [build_document(r) for r in batch]
-        embeddings = model.encode(docs, normalize_embeddings=True).tolist()
 
-        for row, emb in zip(batch, embeddings):
+        images = []
+        valid_rows = []
+        for row in batch:
+            img = fetch_image(row["image_url"])
+            if img is not None:
+                images.append(img)
+                valid_rows.append(row)
+            else:
+                skipped += 1
+
+        if not images:
+            continue
+
+        embeddings = model.encode(images, normalize_embeddings=True).tolist()
+
+        for row, emb in zip(valid_rows, embeddings):
             client.table("style_images").update({"embedding": emb}).eq("id", row["id"]).execute()
 
-        done = min(i + BATCH_SIZE, len(rows))
-        print(f"  {done}/{len(rows)}...")
+        done += len(valid_rows)
+        print(f"  {done}/{len(rows)} 完成，{skipped} 筆跳過...")
 
-    print(f"完成：{len(rows)} 筆向量已寫入")
+    print(f"\n完成：{done} 筆向量已寫入，{skipped} 筆跳過")
 
 
 if __name__ == "__main__":
