@@ -1022,10 +1022,21 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
 
 
 def clip_evaluator_node(state: DesignBridgeState) -> dict[str, Any]:
-    """Run CLIP evaluation on the generated image against the user's text prompt."""
+    """Run CLIP evaluation on the generated image against the English design description.
+
+    Uses structured_requirement.design_description (English, produced by the LLM analyzer)
+    so that the English-trained CLIP model scores accurately.  Falls back to the raw
+    user text_prompt only when no structured description is available.
+    """
     image_path = state.get("generated_image")
+    req = state.get("structured_requirement") or {}
+    design_description = (req.get("design_description") or "").strip()
+
     user = state.get("user_input") or {}
-    text_prompt = (user.get("text_prompt") or "").strip()
+    raw_prompt = (user.get("text_prompt") or "").strip()
+
+    # Prefer the English design_description; fall back to raw user input
+    text_prompt = design_description or raw_prompt
 
     if not image_path or not Path(image_path).is_file():
         return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no generated image", "issues_found": [], "suggestions": []}}
