@@ -1022,30 +1022,24 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
 
 
 def clip_evaluator_node(state: DesignBridgeState) -> dict[str, Any]:
-    """Run CLIP evaluation on the generated image against the English design description.
+    """Run CLIP evaluation on the generated image against the user's original input.
 
-    Uses structured_requirement.design_description (English, produced by the LLM analyzer)
-    so that the English-trained CLIP model scores accurately.  Falls back to the raw
-    user text_prompt only when no structured description is available.
+    Translates the raw user text_prompt to English before scoring so that the
+    English-trained CLIP model can compare faithfully against what the user asked for.
     """
     image_path = state.get("generated_image")
-    req = state.get("structured_requirement") or {}
-    design_description = (req.get("design_description") or "").strip()
-
     user = state.get("user_input") or {}
     raw_prompt = (user.get("text_prompt") or "").strip()
-
-    # Prefer the English design_description; fall back to raw user input
-    text_prompt = design_description or raw_prompt
 
     if not image_path or not Path(image_path).is_file():
         return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no generated image", "issues_found": [], "suggestions": []}}
 
-    if not text_prompt:
+    if not raw_prompt:
         return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no text prompt", "issues_found": [], "suggestions": []}}
 
     try:
-        from designbridge.clip_evaluator import evaluate
+        from designbridge.clip_evaluator import evaluate, _translate_to_english
+        text_prompt = _translate_to_english(raw_prompt)
         result = evaluate(image_path, text_prompt)
     except Exception as e:
         result = {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": f"CLIP evaluation failed: {e}", "issues_found": [], "suggestions": []}
