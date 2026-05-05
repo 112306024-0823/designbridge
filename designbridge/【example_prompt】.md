@@ -95,6 +95,30 @@ D10. 套房有很多管線外露且天花板低，請設計讓空間不壓迫又
 
 ---
 
+## E 類：空間配置導向（測試 layout 路由）
+
+E1. 客廳裡放一張三人沙發，正對面是電視牆，左側靠窗擺一張單椅。
+
+E2. 把餐桌放在廚房和客廳中間，四周留出足夠走道。
+
+E3. 主臥室的床靠北牆，兩側各放床頭櫃，床尾對著梳妝台。
+
+E4. 玄關進門後右轉是鞋櫃，左側是儲物間，直走進入客廳。
+
+E5. 辦公室裡六張工作桌兩兩相對，中間留一條走廊，靠牆是白板。
+
+E6. 浴室的淋浴間在右角落，洗手台在門口左側，馬桶在中間。
+
+E7. 陽台前段放兩張椅子和一張小圓桌，後段保留曬衣空間。
+
+E8. 書房沿三面牆都是書架，中間放一張大書桌，面向窗戶。
+
+E9. 廚房採用L形動線，冰箱在入口旁，爐台在轉角，水槽在靠窗一側。
+
+E10. 兒童房把床放在角落，書桌靠窗，中間空出一大塊地板作為遊戲區。
+
+---
+
 # Interior Design Prompt Examples (English)
 
 ## Category A: Style / Atmosphere
@@ -190,3 +214,7 @@ D8. I need a master bedroom that supports infant care, with safe night circulati
 D9. My apartment gets strong west sun and overheats in the afternoon. Please design a solution that reduces heat while keeping daylight.
 
 D10. My studio has exposed pipes and a low ceiling. Please make it feel less oppressive while keeping the space visually clean.
+
+
+
+  
