@@ -33,28 +33,24 @@ class Config:
 
     # Image generation (Imagen) - same API key as Gemini; requires billing
     IMAGEN_MODEL: str = os.getenv("DESIGNBRIDGE_IMAGEN_MODEL", "imagen-4.0-generate-001")
-    # Local image generation backend: "sdxl" | "sd" | "flux" (read dynamically so runtime changes take effect)
+    # Local image generation backend: always Flux
     @classmethod
     def get_local_model_type(cls) -> str:
-        return os.getenv("DESIGNBRIDGE_LOCAL_MODEL_TYPE", "sdxl").lower()
+        return "flux"
 
-    # Model IDs for each backend
-    SDXL_MODEL: str = os.getenv("DESIGNBRIDGE_SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0")
-    SD_MODEL: str = os.getenv("DESIGNBRIDGE_SD_MODEL", "stabilityai/stable-diffusion-xl-base-1.0") #stabilityai/stable-diffusion-3.5-medium
+    # Model ID for Flux
     FLUX_MODEL: str = os.getenv("DESIGNBRIDGE_FLUX_MODEL", "black-forest-labs/FLUX.1-schnell")
 
-    SDXL_STEPS: int = int(os.getenv("DESIGNBRIDGE_SDXL_STEPS", "25"))
-    ENABLE_SDXL_FALLBACK: bool = os.getenv("DESIGNBRIDGE_ENABLE_SDXL_FALLBACK", "true").lower() in ("1", "true", "yes")
+    # Inpainting model (SD 1.5-based; runwayml/stable-diffusion-inpainting is publicly available)
+    INPAINT_MODEL: str = os.getenv("DESIGNBRIDGE_INPAINT_MODEL", "runwayml/stable-diffusion-inpainting")
 
-    # Hugging Face Inference API (cloud SDXL; no local download). Tried first when HF_TOKEN set. Uses HF_TOKEN.
+    FLUX_STEPS: int = int(os.getenv("DESIGNBRIDGE_FLUX_STEPS", "4"))
+    ENABLE_FLUX_FALLBACK: bool = os.getenv("DESIGNBRIDGE_ENABLE_FLUX_FALLBACK", "true").lower() in ("1", "true", "yes")
+
+    # Hugging Face Inference API (cloud Flux; no local download). Tried first when HF_TOKEN set.
     ENABLE_HF_INFERENCE: bool = os.getenv("DESIGNBRIDGE_ENABLE_HF_INFERENCE", "true").lower() in ("1", "true", "yes")
     HF_TOKEN: str | None = os.getenv("HF_TOKEN")
     HF_INFERENCE_PROVIDER: str = os.getenv("DESIGNBRIDGE_HF_INFERENCE_PROVIDER", "hf-inference")
-    
-    # ControlNet for SDXL (depth + segmentation guidance)
-    ENABLE_CONTROLNET: bool = os.getenv("DESIGNBRIDGE_ENABLE_CONTROLNET", "true").lower() in ("1", "true", "yes")
-    CONTROLNET_DEPTH_MODEL: str = "diffusers/controlnet-depth-sdxl-1.0"
-    CONTROLNET_CONDITIONING_SCALE: float = 0.5  # Strength of ControlNet guidance (0.0-1.0)
 
     # Local vision preprocessing (Depth + UPerNet segmentation)
     # NOTE: These models will be downloaded on first run (requires internet).

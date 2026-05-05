@@ -3,19 +3,21 @@ import ImageUpload from './ImageUpload.vue'
 
 const textPrompt      = defineModel('textPrompt',      { default: '' })
 const editScope       = defineModel('editScope',       { default: 0.6 })
-const modelType       = defineModel('modelType',       { default: 'flux' })
 const selectedStyle   = defineModel('selectedStyle',   { default: 'auto' })
 const manualImagePath  = defineModel('manualImagePath',  { default: '' })
 const showManualPath   = defineModel('showManualPath',   { default: false })
 const noStyleReference = defineModel('noStyleReference', { default: false })
+const mode             = defineModel('mode',             { default: 'design' })
 
 defineProps({
-  spaceImage:    { type: Object, required: true },
-  styleRefImage: { type: Object, required: true },
-  styleOptions:  { type: Array,  default: () => [] },
-  styleLoading:  { type: Boolean, default: false },
+  spaceImage:       { type: Object, required: true },
+  styleRefImage:    { type: Object, required: true },
+  styleOptions:     { type: Array,  default: () => [] },
+  styleLoading:     { type: Boolean, default: false },
   styleError:          { type: String,  default: '' },
   matchedStylePreview: { type: Object,  default: null },
+  baseImagePreview:    { type: String,  default: null },
+  baseImageLabel:      { type: String,  default: '' },
   loading:             { type: Boolean, default: false },
   error:               { type: String,  default: '' },
 })
@@ -28,13 +30,29 @@ defineEmits(['submit'])
 
     <!-- 1. 文字需求 -->
     <div class="field">
-      <label class="field-label">✏️ 文字需求</label>
-      <textarea v-model="textPrompt" rows="5" placeholder="例如：客廳想要北歐風格，希望動線順暢" />
+      <div class="field-label-row">
+        <label class="field-label">✏️ 文字需求</label>
+        <label class="toggle-label">
+          <input
+            type="checkbox"
+            :checked="mode === 'refine'"
+            @change="mode = $event.target.checked ? 'refine' : 'design'"
+          />
+          <span>細部微調</span>
+        </label>
+      </div>
+      <textarea
+        v-model="textPrompt"
+        rows="5"
+        :placeholder="mode === 'refine' ? '例如：把沙發換成藍色、窗簾改為白色薄紗' : '例如：客廳想要北歐風格，希望動線順暢'"
+      />
     </div>
 
     <!-- 2. 原始空間圖片 -->
     <div class="field">
-      <label class="field-label">原始空間圖片（Optional）</label>
+      <label class="field-label">
+        {{ mode === 'refine' ? '空間圖片（細部微調基底）' : '原始空間圖片（Optional）' }}
+      </label>
       <ImageUpload
         label="點擊上傳空間圖"
         icon="📁"
@@ -42,6 +60,14 @@ defineEmits(['submit'])
         @change="spaceImage.onChange"
         @remove="spaceImage.remove"
       />
+      <!-- 細部微調模式：顯示實際使用的基底圖 -->
+      <div v-if="mode === 'refine' && baseImagePreview" class="base-image-box">
+        <span class="base-image-label">目前基底圖：{{ baseImageLabel }}</span>
+        <img :src="baseImagePreview" alt="基底圖" class="base-image-thumb" />
+      </div>
+      <div v-if="mode === 'refine' && !baseImagePreview" class="base-image-empty">
+        尚無基底圖，請上傳空間圖片
+      </div>
       <div class="manual-path">
         <button type="button" class="toggle-btn" @click="showManualPath = !showManualPath">
           {{ showManualPath ? '收合手動輸入' : '進階：手動輸入圖片路徑' }}
@@ -66,64 +92,46 @@ defineEmits(['submit'])
       <div class="range-hint"><span>局部微調</span><span>大幅改動</span></div>
     </div>
 
-    <!-- 4. 生成模型 -->
-    <div class="field">
-      <label class="field-label">生成模型</label>
-      <div class="radio-group">
-        <label :class="{ active: modelType === 'sdxl' }">
-          <input type="radio" v-model="modelType" value="sdxl" />
-          <div><strong>SDXL</strong><small>穩定，1024px</small></div>
-        </label>
-        <label :class="{ active: modelType === 'sd' }">
-          <input type="radio" v-model="modelType" value="sd" />
-          <div><strong>SD 3.5 Medium</strong><small>高品質</small></div>
-        </label>
-        <label :class="{ active: modelType === 'flux' }">
-          <input type="radio" v-model="modelType" value="flux" />
-          <div><strong>Flux.1 Schnell</strong><small>快速生成</small></div>
-        </label>
+    <!-- 4. 風格選擇（整體設計模式） -->
+    <template v-if="mode === 'design'">
+      <div class="field">
+        <label class="field-label">選擇裝潢風格</label>
+        <select v-model="selectedStyle" :disabled="styleLoading">
+          <option v-for="opt in styleOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+        <div v-if="styleLoading" class="status-hint">載入中...</div>
+        <div v-if="styleError" class="status-error">{{ styleError }}</div>
       </div>
-    </div>
 
-    <!-- 5. 風格選擇 -->
-    <div class="field">
-      <label class="field-label">選擇裝潢風格</label>
-      <select v-model="selectedStyle" :disabled="styleLoading">
-        <option v-for="opt in styleOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
-      <div v-if="styleLoading" class="status-hint">載入中...</div>
-      <div v-if="styleError" class="status-error">{{ styleError }}</div>
-    </div>
-
-    <!-- 6. 風格參考圖 -->
-    <div class="field">
-      <div class="field-label-row">
-        <label class="field-label">🎨 風格參考圖</label>
-        <label class="toggle-label">
-          <input type="checkbox" v-model="noStyleReference" />
-          <span>不套用風格</span>
-        </label>
-      </div>
-      <template v-if="!noStyleReference">
-      <ImageUpload
-        label="點擊上傳風格參考圖"
-        icon="🖼️"
-        hint="上傳想要的風格圖片，AI 會參考其色調與氛圍"
-        :preview="styleRefImage.preview"
-        @change="styleRefImage.onChange"
-        @remove="styleRefImage.remove"
-      />
-      <!-- 無上傳圖時，顯示向量搜尋到的參考圖 -->
-      <div v-if="!styleRefImage.preview && matchedStylePreview?.image_url" class="matched-preview">
-        <div class="matched-label">
-          AI 依描述自動選取：<strong>{{ matchedStylePreview.style_name }}</strong>
-          <span class="score">相似度 {{ (matchedStylePreview.similarity * 100).toFixed(0) }}%</span>
+      <!-- 5. 風格參考圖（整體設計模式） -->
+      <div class="field">
+        <div class="field-label-row">
+          <label class="field-label">🎨 風格參考圖</label>
+          <label class="toggle-label">
+            <input type="checkbox" v-model="noStyleReference" />
+            <span>不套用風格</span>
+          </label>
         </div>
-        <img :src="`http://localhost:8000${matchedStylePreview.image_url}`" alt="風格參考圖" @error="$event.target.style.display='none'" />
+        <template v-if="!noStyleReference">
+          <ImageUpload
+            label="點擊上傳風格參考圖"
+            icon="🖼️"
+            hint="上傳想要的風格圖片，AI 會參考其色調與氛圍"
+            :preview="styleRefImage.preview"
+            @change="styleRefImage.onChange"
+            @remove="styleRefImage.remove"
+          />
+          <div v-if="!styleRefImage.preview && matchedStylePreview?.image_url" class="matched-preview">
+            <div class="matched-label">
+              AI 依描述自動選取：<strong>{{ matchedStylePreview.style_name }}</strong>
+              <span class="score">相似度 {{ (matchedStylePreview.similarity * 100).toFixed(0) }}%</span>
+            </div>
+            <img :src="`http://localhost:8000${matchedStylePreview.image_url}`" alt="風格參考圖" @error="$event.target.style.display='none'" />
+          </div>
+        </template>
+        <div v-else class="no-style-hint">純文字 prompt 生圖，不套用風格參考圖</div>
       </div>
-      </template>
-      <div v-else class="no-style-hint">純文字 prompt 生圖，不套用風格參考圖</div>
-    </div>
+    </template>
 
     <button class="submit-btn" @click="$emit('submit')" :disabled="loading">
       <span v-if="loading" class="spinner"></span>
@@ -166,23 +174,6 @@ textarea:focus { outline: none; border-color: var(--primary); background: #fff; 
 input[type='range'] { width: 100%; accent-color: #7c5cbf; }
 .range-hint { display: flex; justify-content: space-between; font-size: 0.75rem; color: #b0a0cc; }
 
-.radio-group { display: flex; flex-direction: column; gap: 0.5rem; }
-.radio-group label {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.65rem 0.9rem;
-  border: 1px solid #d4c4ef;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-weight: normal;
-  background: rgba(255,255,255,0.7);
-}
-.radio-group label.active  { border-color: var(--primary); background: var(--primary-light); }
-.radio-group label div     { display: flex; flex-direction: column; gap: 0.1rem; }
-.radio-group strong        { font-size: 0.875rem; color: #2e1a5e; }
-.radio-group small         { font-size: 0.75rem;  color: #a990d4; }
 
 select {
   padding: 0.7rem;
@@ -201,6 +192,34 @@ select:focus { outline: none; border-color: var(--primary); background: #fff; }
 .manual-path { display: flex; flex-direction: column; gap: 0.4rem; }
 .toggle-btn  { background: none; border: none; color: #7c5cbf; cursor: pointer; font-size: 0.9em; padding: 0; text-align: left; }
 .manual-input { width: 100%; padding: 0.5rem; border: 1px solid #d4c4ef; border-radius: 6px; font-size: 0.875rem; }
+
+/* 細部微調基底圖 */
+.base-image-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+}
+.base-image-label {
+  font-size: 0.75rem;
+  color: #7c5cbf;
+  font-weight: 600;
+}
+.base-image-thumb {
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1.5px solid #c9b8e8;
+}
+.base-image-empty {
+  font-size: 0.78rem;
+  color: #c0392b;
+  background: #fff5f5;
+  padding: 0.45rem 0.75rem;
+  border-radius: 6px;
+  border: 1px dashed #f5c6c6;
+}
 
 .submit-btn {
   padding: 1rem;

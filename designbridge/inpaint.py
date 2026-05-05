@@ -23,6 +23,23 @@ from designbridge.config import Config
 _inpaint_pipeline: Any = None
 
 
+def _is_inpaint_model_cached() -> bool:
+    """檢查 inpainting 模型主要權重是否已在本機完整快取，不觸發下載。"""
+    try:
+        from huggingface_hub import try_to_load_from_cache, _CACHED_NO_EXIST
+        # 檢查 unet 權重檔（最大、最後下載完的檔案）
+        for filename in (
+            "unet/diffusion_pytorch_model.safetensors",
+            "unet/diffusion_pytorch_model.bin",
+        ):
+            result = try_to_load_from_cache(Config.INPAINT_MODEL, filename)
+            if result is not None and result is not _CACHED_NO_EXIST:
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def _get_inpaint_pipeline():
     """Load SD Inpainting pipeline once and cache it."""
     global _inpaint_pipeline
@@ -33,7 +50,7 @@ def _get_inpaint_pipeline():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     _inpaint_pipeline = StableDiffusionInpaintPipeline.from_pretrained(
-        "stabilityai/stable-diffusion-2-inpainting",
+        Config.INPAINT_MODEL,
         torch_dtype=torch.float16 if device == "cuda" else torch.float32,
     ).to(device)
     return _inpaint_pipeline
@@ -187,6 +204,9 @@ def run_inpainting(
     Returns:
         True = 成功，False = 失敗
     """
+    if not _is_inpaint_model_cached():
+        print(f"[SKIP] Inpainting model not cached yet: {Config.INPAINT_MODEL}")
+        return False
     try:
         from PIL import Image
 
@@ -266,7 +286,7 @@ def run_hf_inpainting(
         result = client.image_to_image(
             image=img_bytes.getvalue(),
             prompt=prompt,
-            model="stabilityai/stable-diffusion-2-inpainting",
+            model=Config.INPAINT_MODEL,
         )
 
         if result is None:

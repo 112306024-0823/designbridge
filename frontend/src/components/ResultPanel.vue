@@ -3,6 +3,7 @@ defineProps({
   result:  { type: Object,  default: null },
   loading: { type: Boolean, default: false },
 })
+defineEmits(['refine'])
 </script>
 
 <template>
@@ -42,6 +43,9 @@ defineProps({
           class="generated-image"
         />
         <p class="path">{{ result.generated_image_path }}</p>
+        <button class="refine-btn" @click="$emit('refine')">
+          ✏️ 在此基礎上細部微調
+        </button>
       </div>
 
       <!-- 結構化需求 -->
@@ -194,6 +198,27 @@ defineProps({
   box-shadow: 0 8px 24px rgba(124, 92, 191, 0.2);
 }
 .path { font-size: 0.85rem; color: #a990d4; font-family: monospace; }
+
+.refine-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  padding: 0.55rem 1.1rem;
+  border: 1.5px solid #7c5cbf;
+  border-radius: 8px;
+  background: var(--primary-light);
+  color: var(--primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.refine-btn:hover {
+  background: #ede0ff;
+  border-color: #5a3d8a;
+  color: #3d2b6e;
+}
 
 pre {
   background: rgba(240, 235, 251, 0.8);

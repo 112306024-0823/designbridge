@@ -34,7 +34,7 @@ def _get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
         from sentence_transformers import SentenceTransformer
-        _embedding_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+        _embedding_model = SentenceTransformer("distiluse-base-multilingual-cased-v2")  # 512 dims，與 Supabase table 一致
     return _embedding_model
 
 

@@ -68,11 +68,11 @@ app.add_middleware(
 class DesignRequest(BaseModel):
     text_prompt: str = ""
     edit_scope: float = 0.6
-    model_type: str = "sdxl"
     style_profile_id: Optional[str] = None
     initial_image_path: Optional[str] = None
     style_reference_image_path: Optional[str] = None
     no_style_reference: bool = False
+    refine_mode: bool = False  # 細部微調模式：強制 routing 到 design_adjuster
 
 # 2. 快取 Graph 實例
 graph = get_compiled_graph()
@@ -96,7 +96,7 @@ def _get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
         from sentence_transformers import SentenceTransformer
-        _embedding_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+        _embedding_model = SentenceTransformer("distiluse-base-multilingual-cased-v2")  # 512 dims，與 Supabase table 一致
     return _embedding_model
 
 def _get_supabase():
@@ -264,9 +264,6 @@ async def chat(request: ChatRequest):
 @app.post("/api/generate")
 async def generate_design(request: DesignRequest):
     try:
-        # 設定環境變數（對應你原本的邏輯）
-        os.environ["DESIGNBRIDGE_LOCAL_MODEL_TYPE"] = request.model_type
-        
         # 準備 LangGraph 初始狀態
         user_input = {
             "text_prompt": request.text_prompt,
@@ -280,6 +277,8 @@ async def generate_design(request: DesignRequest):
             user_input["style_reference_image"] = request.style_reference_image_path
         if request.no_style_reference:
             user_input["no_style_reference"] = True
+        if request.refine_mode:
+            user_input["refine_mode"] = True
 
         initial_state = {"user_input": user_input}
 
@@ -317,7 +316,7 @@ async def generate_design(request: DesignRequest):
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "elapsed_seconds": round(elapsed, 2),
             "text_prompt": request.text_prompt,
-            "model_type": request.model_type,
+            "model_type": "flux",
             "style_profile_id": request.style_profile_id,
             "style_reference_image_path": request.style_reference_image_path,
             "routing_decision": result.get("routing_decision"),

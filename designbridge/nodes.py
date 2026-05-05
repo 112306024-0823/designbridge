@@ -368,7 +368,13 @@ def design_director(state: DesignBridgeState) -> dict[str, Any]:
     """
     動態調度：ENABLE_DYNAMIC_ROUTING=true 時由 Gemini 讀 SKILL.md 決策；
     否則使用原本的 rule-based routing。任何 LLM 失敗都自動 fallback。
+    細部微調模式（refine_mode=True）直接強制 routing 到 design_adjuster。
     """
+    # 使用者明確選擇細部微調，跳過 LLM 判斷直接 route
+    if (state.get("user_input") or {}).get("refine_mode"):
+        print("[design_director] refine_mode=True → design_adjuster")
+        return {"routing_decision": "design_adjuster"}
+
     if Config.get_dynamic_routing_enabled():
         try:
             from designbridge.router import call_llm_router, RouterLLMError
@@ -618,7 +624,7 @@ def _build_imagen_prompt_from_requirement(
 
 
 def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> None:
-    """Save a placeholder image (PIL) when SDXL is unavailable."""
+    """Save a placeholder image (PIL) when Flux is unavailable."""
     from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (512, 512), color=(240, 240, 245))
@@ -633,52 +639,8 @@ def _renderer_placeholder_image(out_path: Path, task_id: str, prompt: str) -> No
     img.save(out_path)
 
 
-# 快取模型，不用每次都載入
-_sdxl_pipeline: Any = None
-_controlnet_pipeline: Any = None
-
-
-def _get_sdxl_pipeline():
-    """Load SDXL pipeline once and cache it. GPU if available (~15–30s/image), else CPU (slower)."""
-    global _sdxl_pipeline
-    if _sdxl_pipeline is not None:
-        return _sdxl_pipeline
-    from diffusers import StableDiffusionXLPipeline
-    import torch
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    _sdxl_pipeline = StableDiffusionXLPipeline.from_pretrained(
-        Config.SDXL_MODEL,
-        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-        use_safetensors=True,
-    )
-    _sdxl_pipeline = _sdxl_pipeline.to(device)
-    return _sdxl_pipeline
-
-
-def _get_controlnet_pipeline():
-    """Load SDXL + ControlNet pipeline once and cache it. Uses depth ControlNet for layout guidance."""
-    global _controlnet_pipeline
-    if _controlnet_pipeline is not None:
-        return _controlnet_pipeline
-    from diffusers import StableDiffusionXLControlNetPipeline, ControlNetModel
-    import torch
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    # Load ControlNet model (depth)
-    controlnet = ControlNetModel.from_pretrained(
-        Config.CONTROLNET_DEPTH_MODEL,
-        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-    )
-
-    # Load SDXL pipeline with ControlNet
-    _controlnet_pipeline = StableDiffusionXLControlNetPipeline.from_pretrained(
-        Config.SDXL_MODEL,
-        controlnet=controlnet,
-        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-        use_safetensors=True,
-    )
-    _controlnet_pipeline = _controlnet_pipeline.to(device)
-    return _controlnet_pipeline
+# 快取 Flux 模型
+_flux_pipeline: Any = None
 
 
 def _render_hf_inference(prompt: str, out_path: Path, model: str = "") -> bool:
@@ -715,23 +677,6 @@ def _render_hf_inference(prompt: str, out_path: Path, model: str = "") -> bool:
         return False
 
 
-def _get_sd_pipeline():
-    """Load SD 3.5 pipeline once and cache it."""
-    global _sd_pipeline
-    if _sd_pipeline is not None:
-        return _sd_pipeline
-    from diffusers import DiffusionPipeline
-    import torch
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    kwargs: dict[str, Any] = {
-        "torch_dtype": torch.bfloat16 if device == "cuda" else torch.float32,
-    }
-    if Config.HF_TOKEN:
-        kwargs["token"] = Config.HF_TOKEN
-    _sd_pipeline = DiffusionPipeline.from_pretrained(Config.SD_MODEL, **kwargs).to(device)
-    return _sd_pipeline
-
-
 def _get_flux_pipeline():
     """Load Flux.1 pipeline once and cache it."""
     global _flux_pipeline
@@ -749,49 +694,16 @@ def _get_flux_pipeline():
     return _flux_pipeline
 
 
-def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None = None, negative_prompt: str | None = None) -> bool:
-    """
-    Generate image with local SD / SDXL / Flux based on Config.LOCAL_MODEL_TYPE.
-    Returns True on success.
-    """
+def _render_flux(prompt: str, out_path: Path) -> bool:
+    """Generate image with local Flux pipeline. Returns True on success."""
     try:
         import torch
-        from PIL import Image
-
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        steps = Config.SDXL_STEPS
-        if device == "cpu":
-            steps = min(steps, 20)
+        steps = Config.FLUX_STEPS
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        model_type = Config.get_local_model_type()
-
-        if model_type == "flux":
-            pipe = _get_flux_pipeline()
-            generator = torch.Generator(device=device).manual_seed(torch.randint(0, 2**32, (1,)).item())
-            image = pipe(prompt=prompt, num_inference_steps=steps, guidance_scale=0.0, generator=generator).images[0]
-
-        elif model_type == "sd":
-            pipe = _get_sd_pipeline()
-            image = pipe(prompt=prompt, num_inference_steps=steps).images[0]
-
-        else:  # sdxl (default)
-            if Config.ENABLE_CONTROLNET and control_image and Path(control_image).exists():
-                pipe = _get_controlnet_pipeline()
-                control_img = Image.open(control_image).convert("RGB")
-                control_img = control_img.resize((1024, 1024), Image.Resampling.LANCZOS)
-                image = pipe(
-                    prompt=prompt,
-                    image=control_img,
-                    num_inference_steps=steps,
-                    controlnet_conditioning_scale=Config.CONTROLNET_CONDITIONING_SCALE,
-                ).images[0]
-            else:
-                pipe = _get_sdxl_pipeline()
-                kwargs = {"prompt": prompt, "num_inference_steps": steps}
-                if negative_prompt:
-                    kwargs["negative_prompt"] = negative_prompt
-                image = pipe(**kwargs).images[0]
-
+        pipe = _get_flux_pipeline()
+        generator = torch.Generator(device=device).manual_seed(torch.randint(0, 2**32, (1,)).item())
+        image = pipe(prompt=prompt, num_inference_steps=steps, guidance_scale=0.0, generator=generator).images[0]
         image.save(str(out_path))
         return True
     except Exception as e:
@@ -803,8 +715,8 @@ def _render_sdxl(prompt: str, out_path: Path, control_image: str | Path | None =
 
 def renderer(state: DesignBridgeState) -> dict[str, Any]:
     """
-    Renderer: generate image from structured_requirement.
-    Uses Stable Diffusion XL only (with ControlNet if depth available), then placeholder on failure.
+    Renderer: generate image from structured_requirement using Flux.
+    Falls back to placeholder on failure.
     若 routing_decision 為 design_adjuster 且已有 generated_image，直接跳過不覆蓋。
     """
     # Adjuster 已產出 inpainted 圖片，renderer 不再重新生成
@@ -844,14 +756,8 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if seg_path:
         controlnet_inputs["segmentation"] = str(seg_path)
 
-    # 1. Hugging Face Inference API (cloud SDXL; no local download)
-    model_type = Config.get_local_model_type()
-    if model_type == "flux":
-        hf_model_id = Config.FLUX_MODEL
-    elif model_type == "sd":
-        hf_model_id = Config.SD_MODEL
-    else:
-        hf_model_id = Config.SDXL_MODEL
+    # 1. Hugging Face Inference API (cloud Flux; no local download)
+    hf_model_id = Config.FLUX_MODEL
 
     # Use style_reference_image as control image:
     # priority: user upload > Supabase matched image > depth map
@@ -873,17 +779,11 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
             generation_params["model"] = hf_model_id
             generation_params["provider"] = Config.HF_INFERENCE_PROVIDER
 
-    # 2. Local model (SD / SDXL / Flux)
-    if backend == "placeholder" and Config.ENABLE_SDXL_FALLBACK:
-        if _render_sdxl(prompt, out_path, control_image=control_img):
-            backend = model_type
+    # 2. Local Flux model
+    if backend == "placeholder" and Config.ENABLE_FLUX_FALLBACK:
+        if _render_flux(prompt, out_path):
+            backend = "flux"
             generation_params["model"] = hf_model_id
-            if control_img:
-                if style_reference_image and Path(style_reference_image).exists() and control_img == style_reference_image:
-                    generation_params["controlnet"] = "style_reference_image"
-                elif model_type == "sdxl":
-                    generation_params["controlnet"] = style_params.get("controlnet_type", "depth")
-                generation_params["controlnet_scale"] = Config.CONTROLNET_CONDITIONING_SCALE
         else:
             generation_params["render_error"] = "local render failed"
 
