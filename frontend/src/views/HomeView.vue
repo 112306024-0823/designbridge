@@ -18,8 +18,9 @@ const styleError = ref('')
 const manualImagePath  = ref('')
 const showManualPath   = ref(false)
 const noStyleReference = ref(false)
-const spaceImage    = useImageField()
-const styleRefImage = useImageField()
+const spaceImage       = useImageField()
+const layoutRefImage   = useImageField()
+const styleRefImage    = useImageField()
 const result = ref(null)
 const loading = ref(false)
 const error = ref('')
@@ -155,6 +156,10 @@ async function handleSubmit() {
       ? await uploadFile(spaceImage.file)
       : manualImagePath.value.trim() || undefined
 
+    const layout_reference_image_path = layoutRefImage.file
+      ? await uploadFile(layoutRefImage.file)
+      : undefined
+
     let style_reference_image_path = undefined
     if (!noStyleReference.value) {
       if (styleRefImage.file) {
@@ -176,6 +181,7 @@ async function handleSubmit() {
           ? selectedStyle.value
           : !noStyleReference.value ? confirmedStyle.value?.style_id || undefined : undefined,
         initial_image_path,
+        layout_reference_image_path,
         style_reference_image_path,
         no_style_reference: noStyleReference.value,
         style_retrieval_mode: styleRetrievalMode.value,
@@ -216,6 +222,7 @@ onMounted(fetchStyleOptions)
           v-model:showManualPath="showManualPath"
           v-model:noStyleReference="noStyleReference"
           :spaceImage="spaceImage"
+          :layoutRefImage="layoutRefImage"
           :styleRefImage="styleRefImage"
           :styleOptions="styleOptions"
           :styleLoading="styleLoading"

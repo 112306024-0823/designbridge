@@ -215,6 +215,30 @@ D9. My apartment gets strong west sun and overheats in the afternoon. Please des
 
 D10. My studio has exposed pipes and a low ceiling. Please make it feel less oppressive while keeping the space visually clean.
 
+---
+
+## Category E: Spatial Arrangement (Layout Routing Test)
+
+E1. Place a three-seat sofa in the living room facing the TV wall, with a single armchair by the window on the left.
+
+E2. Position the dining table between the kitchen and living room, with enough clearance on all sides for easy passage.
+
+E3. In the master bedroom, the bed goes against the north wall with nightstands on both sides and a vanity table facing the foot of the bed.
+
+E4. Entering from the entryway, the shoe cabinet is on the right, storage room on the left, and the living room straight ahead.
+
+E5. Six workstations arranged in three face-to-face pairs in the office, with a central aisle between them and a whiteboard along the wall.
+
+E6. In the bathroom, the shower is in the right corner, the vanity is on the left side near the door, and the toilet sits in the middle.
+
+E7. The front section of the balcony has two chairs and a small round table; the rear section is kept open for drying laundry.
+
+E8. Bookshelves line three walls of the study, with a large desk placed in the center facing the window.
+
+E9. The kitchen follows an L-shaped flow — fridge near the entrance, stove at the corner, and the sink along the window side.
+
+E10. In the children's room, the bed is tucked into a corner, the desk is by the window, and the center of the floor is left open as a play area.
+
 
 
   

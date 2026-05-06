@@ -73,6 +73,7 @@ class DesignRequest(BaseModel):
     style_profile_id: Optional[str] = None
     style_retrieval_mode: Optional[str] = None 
     initial_image_path: Optional[str] = None
+    layout_reference_image_path: Optional[str] = None
     style_reference_image_path: Optional[str] = None
     no_style_reference: bool = False
 
@@ -291,6 +292,8 @@ async def generate_design(request: DesignRequest):
             user_input["style_retrieval_mode"] = request.style_retrieval_mode
         if request.initial_image_path:
             user_input["initial_image"] = request.initial_image_path
+        if request.layout_reference_image_path:
+            user_input["layout_reference_image"] = request.layout_reference_image_path
         if request.style_reference_image_path:
             user_input["style_reference_image"] = request.style_reference_image_path
         if request.no_style_reference:

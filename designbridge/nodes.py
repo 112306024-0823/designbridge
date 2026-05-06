@@ -305,36 +305,64 @@ def _rule_based_requirement_analyzer(text_prompt: str, edit_scope: float, style_
 
 
 def visual_preprocessing_local(state: DesignBridgeState) -> dict[str, Any]:
-    """Local Visual Preprocessing: run depth + segmentation on the initial image (if provided)."""
+    """Local Visual Preprocessing: run depth + segmentation on the initial image (if provided).
+    If layout_reference_image is provided, also extract its depth and build a layout JSON for prompt injection.
+    """
     user = state.get("user_input") or {}
     image_path = user.get("initial_image")
-    if not image_path:
-        # Empty layout scenario: nothing to preprocess.
-        return {"vision_features": {"geometry_constraints": {}}}
-
     task_id = state.get("task_id") or "no_task_id"
-    try:
-        artifacts = run_visual_preprocessing(
-            image_path,
-            task_id=task_id,
-            enable_depth=Config.ENABLE_DEPTH,
-            enable_segmentation=Config.ENABLE_SEGMENTATION,
-            depth_model=Config.DEPTH_MODEL,
-            segmentation_model=Config.SEGMENTATION_MODEL,
-            artifacts_root=Path(Config.ARTIFACTS_DIR),
-        )
-    except Exception as e:
-        # Keep the workflow usable even if vision dependencies/models aren't available yet.
-        print(f"⚠️  Visual preprocessing failed ({e}), falling back to empty vision_features")
-        return {"vision_features": {"geometry_constraints": {}}}
 
     vision_features: dict[str, Any] = {"geometry_constraints": {}}
-    if artifacts.depth_path:
-        vision_features["depth"] = artifacts.depth_path
-    if artifacts.segmentation_path:
-        vision_features["segmentation"] = artifacts.segmentation_path
-    if artifacts.segmentation_meta_path:
-        vision_features["segmentation_meta"] = artifacts.segmentation_meta_path
+
+    if image_path:
+        try:
+            artifacts = run_visual_preprocessing(
+                image_path,
+                task_id=task_id,
+                enable_depth=Config.ENABLE_DEPTH,
+                enable_segmentation=Config.ENABLE_SEGMENTATION,
+                depth_model=Config.DEPTH_MODEL,
+                segmentation_model=Config.SEGMENTATION_MODEL,
+                artifacts_root=Path(Config.ARTIFACTS_DIR),
+            )
+            if artifacts.depth_path:
+                vision_features["depth"] = artifacts.depth_path
+            if artifacts.segmentation_path:
+                vision_features["segmentation"] = artifacts.segmentation_path
+            if artifacts.segmentation_meta_path:
+                vision_features["segmentation_meta"] = artifacts.segmentation_meta_path
+        except Exception as e:
+            print(f"⚠️  Visual preprocessing failed ({e}), falling back to empty vision_features")
+
+    layout_ref_path = user.get("layout_reference_image")
+    if layout_ref_path and Path(layout_ref_path).is_file():
+        try:
+            layout_artifacts = run_visual_preprocessing(
+                layout_ref_path,
+                task_id=f"{task_id}_layout_ref",
+                enable_depth=True,
+                enable_segmentation=False,
+                depth_model=Config.DEPTH_MODEL,
+                segmentation_model=Config.SEGMENTATION_MODEL,
+                artifacts_root=Path(Config.ARTIFACTS_DIR),
+            )
+            if layout_artifacts.depth_path:
+                vision_features["layout_reference_depth"] = layout_artifacts.depth_path
+                from designbridge.depth_to_layout import (
+                    load_depth, slice_zones, detect_furniture_blobs,
+                    compute_spatial_metrics, build_layout_json,
+                )
+                depth_arr = load_depth(layout_artifacts.depth_path)
+                zones = slice_zones(depth_arr)
+                blobs = detect_furniture_blobs(depth_arr, zones)
+                metrics = compute_spatial_metrics(depth_arr, zones)
+                layout_json = build_layout_json(
+                    layout_artifacts.depth_path, depth_arr, zones, blobs, metrics
+                )
+                vision_features["layout_reference_json"] = layout_json
+                print(f"[visual_preprocessing] layout_reference_json built from {layout_ref_path}")
+        except Exception as e:
+            print(f"⚠️  Layout reference preprocessing failed ({e}), skipping layout guidance")
 
     return {"vision_features": vision_features}
 
@@ -615,6 +643,47 @@ def _build_imagen_prompt_from_requirement(
         extra_parts.append(style_prompt)
 
     return (base_prompt + " " + " ".join(extra_parts)).strip()
+
+
+def _layout_json_to_prompt_text(layout_json: dict[str, Any]) -> str:
+    """Convert depth_to_layout JSON into a concise English layout directive for the prompt."""
+    analysis = layout_json.get("space_analysis") or {}
+    space_type = analysis.get("space_type", "standard_room").replace("_", " ")
+    perspective = analysis.get("camera_perspective", "eye_level").replace("_", " ")
+    circulation = analysis.get("circulation_score", 0.5)
+
+    parts: list[str] = [
+        f"Spatial layout reference: {space_type} with {perspective} camera angle.",
+    ]
+
+    if circulation > 0.7:
+        parts.append("Keep clear open floor space in the foreground for circulation.")
+    elif circulation < 0.3:
+        parts.append("Foreground area may include furniture pieces.")
+
+    candidates = layout_json.get("furniture_candidates") or []
+    if candidates:
+        furniture_hints = [
+            f"{c['type'].replace('_', ' ')} at {c['position']}"
+            for c in candidates[:4]
+            if c.get("confidence") == "high" or c.get("size_ratio", 0) > 0.04
+        ]
+        if furniture_hints:
+            parts.append("Maintain similar furniture arrangement: " + ", ".join(furniture_hints) + ".")
+
+    rec = layout_json.get("layout_recommendation") or {}
+    anchor = rec.get("anchor_furniture") or []
+    if anchor:
+        keeps = [f"{a['furniture'].replace('_', ' ')} at {a['position']}" for a in anchor[:2]]
+        if keeps:
+            parts.append("Anchor pieces to preserve: " + ", ".join(keeps) + ".")
+
+    metrics = (analysis.get("spatial_metrics") or {})
+    symmetry = metrics.get("left_right_symmetry", 1.0)
+    if symmetry > 0.9:
+        parts.append("Preserve left-right spatial symmetry.")
+
+    return " ".join(parts)
 
 
 OutputAspect = Literal["auto", "1:1", "4:3", "3:4", "16:9", "9:16"]
@@ -916,6 +985,14 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     prompt = _build_imagen_prompt_from_requirement(req, style_params=style_params)
     negative_prompt = style_params.get("negative_prompt") or None
     user_input = state.get("user_input") or {}
+
+    # Append layout guidance from reference image if available
+    vision = state.get("vision_features") or {}
+    layout_ref_json = vision.get("layout_reference_json")
+    if layout_ref_json:
+        layout_text = _layout_json_to_prompt_text(layout_ref_json)
+        prompt = f"{prompt} {layout_text}"
+        print(f"[renderer] Layout reference injected into prompt: {layout_text[:120]}")
     output_aspect = str(user_input.get("output_aspect") or "auto")
     output_size = _resolve_output_size(output_aspect, user_input.get("initial_image"))
     output_width, output_height = output_size
@@ -933,7 +1010,6 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         generation_params["style_strength"] = style_params.get("style_strength")
 
     # Get vision features for ControlNet (if available)
-    vision = state.get("vision_features") or {}
     depth_path = vision.get("depth")
     seg_path = vision.get("segmentation")
     controlnet_inputs: dict[str, str] = {}

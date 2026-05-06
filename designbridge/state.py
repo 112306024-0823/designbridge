@@ -22,6 +22,7 @@ class UserInput(TypedDict):
     """User input: image (optional), text prompt, edit scope (0~1)."""
 
     initial_image: NotRequired[str]  # image_path_or_id, optional for empty layout
+    layout_reference_image: NotRequired[str]  # image whose spatial layout guides generation via prompt
     text_prompt: str
     edit_scope: float  # 0~1
     output_aspect: NotRequired[Literal["auto", "1:1", "4:3", "3:4", "16:9", "9:16"]]
