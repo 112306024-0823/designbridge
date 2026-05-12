@@ -252,7 +252,7 @@ def main() -> None:
     from collections import Counter
     counts = Counter(r["style_id"] for r in rows)
     for sid, cnt in sorted(counts.items()):
-        print(f"   {sid:<15} {cnt:>4} 張")
+        print(f"{sid:<15} {cnt:>4} 張")
     print()
 
     t0 = time.perf_counter()

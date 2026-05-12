@@ -18,6 +18,7 @@ const styleError = ref('')
 const manualImagePath  = ref('')
 const showManualPath   = ref(false)
 const noStyleReference = ref(false)
+const styleMethod = ref('ai_analysis')
 const spaceImage    = useImageField()
 const styleRefImage = useImageField()
 const result = ref(null)
@@ -34,7 +35,7 @@ const candidatesSearched = ref(false)
 const confirmedStyle = ref(null)
 
 const showSuggestions = computed(() =>
-  !result.value && !loading.value &&
+  !result.value && !loading.value && !styleRefImage.file &&
   (styleCandidates.value.length > 0 || candidatesLoading.value || candidatesSearched.value)
 )
 
@@ -88,6 +89,18 @@ function scheduleSearch() {
 }
 
 watch([textPrompt, selectedStyle, styleRetrievalMode], scheduleSearch)
+
+watch(() => styleRefImage.file, (newFile) => {
+  if (newFile) {
+    clearTimeout(searchTimer)
+    styleCandidates.value = []
+    candidatesSearched.value = false
+    confirmedStyle.value = null
+    matchedStylePreview.value = null
+  } else {
+    styleMethod.value = 'ai_analysis'
+  }
+})
 
 function handleConfirmStyle(candidate) {
   confirmedStyle.value = candidate
@@ -179,6 +192,7 @@ async function handleSubmit() {
         style_reference_image_path,
         no_style_reference: noStyleReference.value,
         style_retrieval_mode: styleRetrievalMode.value,
+        style_method: styleMethod.value,
       }),
     })
     if (!res.ok) throw new Error(`${res.status}`)
@@ -215,6 +229,7 @@ onMounted(fetchStyleOptions)
           v-model:manualImagePath="manualImagePath"
           v-model:showManualPath="showManualPath"
           v-model:noStyleReference="noStyleReference"
+          v-model:styleMethod="styleMethod"
           :spaceImage="spaceImage"
           :styleRefImage="styleRefImage"
           :styleOptions="styleOptions"

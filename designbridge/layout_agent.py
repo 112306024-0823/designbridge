@@ -385,7 +385,7 @@ def _call_llm_layout(prompt: str) -> list[FurnitureItem]:
     return items
 
 
-# ─────────────────────────── Default Fallback Layouts ───────────────────────────
+# ───────────────────────── Default Fallback Layouts ───────────────────────────
 
 def _default_layout(room_type: str) -> list[FurnitureItem]:
     presets: dict[str, list[FurnitureItem]] = {

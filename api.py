@@ -10,6 +10,7 @@ import time
 import shutil
 import uuid
 from pathlib import Path
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -38,7 +39,28 @@ from designbridge import get_compiled_graph
 from designbridge.style_apply import list_available_style_profiles
 from style_kb.styles import STYLES
 
-app = FastAPI(title="DesignBridge API", description="室內設計 AI 工作流接口")
+
+@asynccontextmanager
+async def _app_lifespan(_: FastAPI):
+    """Preload heavy ML stacks in background so the server accepts requests immediately."""
+    import threading
+
+    def _warmup():
+        try:
+            from designbridge.warmup import run_startup_warmup
+            run_startup_warmup()
+        except Exception as e:
+            print(f"⚠️ DesignBridge startup warmup failed: {e}")
+
+    threading.Thread(target=_warmup, daemon=True).start()
+    yield
+
+
+app = FastAPI(
+    title="DesignBridge API",
+    description="室內設計 AI 工作流接口",
+    lifespan=_app_lifespan,
+)
 
 artifacts_dir = Path("artifacts")
 artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -75,6 +97,7 @@ class DesignRequest(BaseModel):
     initial_image_path: Optional[str] = None
     style_reference_image_path: Optional[str] = None
     no_style_reference: bool = False
+    style_method: str = "ai_analysis"
 
 # 2. 快取 Graph 實例
 graph = get_compiled_graph()
@@ -295,6 +318,8 @@ async def generate_design(request: DesignRequest):
             user_input["style_reference_image"] = request.style_reference_image_path
         if request.no_style_reference:
             user_input["no_style_reference"] = True
+        if request.style_method:
+            user_input["style_method"] = request.style_method
 
         initial_state = {"user_input": user_input}
 
