@@ -78,6 +78,9 @@ class Config:
     # Where to write artifacts (depth/segmentation outputs)
     ARTIFACTS_DIR: str = os.getenv("DESIGNBRIDGE_ARTIFACTS_DIR", "artifacts")
 
+    # Layout agent
+    LAYOUT_MAX_ITER: int = int(os.getenv("DESIGNBRIDGE_LAYOUT_MAX_ITER", "3"))
+
     @classmethod
     def get_gemini_api_key(cls) -> str:
         """Get Gemini API key from config or environment."""

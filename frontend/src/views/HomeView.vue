@@ -18,6 +18,8 @@ const styleError = ref('')
 const manualImagePath  = ref('')
 const showManualPath   = ref(false)
 const noStyleReference = ref(false)
+const familyNeeds  = ref([])
+const fengshuiRules = ref([])
 const spaceImage    = useImageField()
 const styleRefImage = useImageField()
 const result = ref(null)
@@ -179,6 +181,8 @@ async function handleSubmit() {
         style_reference_image_path,
         no_style_reference: noStyleReference.value,
         style_retrieval_mode: styleRetrievalMode.value,
+        family_needs: familyNeeds.value,
+        fengshui_rules: fengshuiRules.value,
       }),
     })
     if (!res.ok) throw new Error(`${res.status}`)
@@ -215,6 +219,8 @@ onMounted(fetchStyleOptions)
           v-model:manualImagePath="manualImagePath"
           v-model:showManualPath="showManualPath"
           v-model:noStyleReference="noStyleReference"
+          v-model:familyNeeds="familyNeeds"
+          v-model:fengshuiRules="fengshuiRules"
           :spaceImage="spaceImage"
           :styleRefImage="styleRefImage"
           :styleOptions="styleOptions"

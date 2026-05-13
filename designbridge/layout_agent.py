@@ -6,9 +6,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from designbridge.config import Config
+from designbridge.layout_constraints import get_layout_constraint_registry
 
 
 FURNITURE_SIZES: dict[str, tuple[float, float]] = {
@@ -21,6 +22,8 @@ FURNITURE_SIZES: dict[str, tuple[float, float]] = {
     "chair": (0.08, 0.08),
     "armchair": (0.11, 0.11),
     "bed": (0.22, 0.28),
+    "bunk_bed": (0.22, 0.30),
+    "bunk_ladder": (0.06, 0.08),
     "wardrobe": (0.18, 0.08),
     "desk": (0.16, 0.09),
     "bookshelf": (0.10, 0.05),
@@ -39,6 +42,8 @@ FURNITURE_COLORS: dict[str, tuple[int, int, int]] = {
     "sofa": (100, 149, 237),
     "loveseat": (120, 160, 240),
     "bed": (147, 112, 219),
+    "bunk_bed": (110, 80, 190),
+    "bunk_ladder": (160, 120, 70),
     "dining_table": (205, 133, 63),
     "desk": (70, 130, 180),
     "coffee_table": (176, 196, 222),
@@ -67,21 +72,6 @@ SOFT_WEIGHTS = {
     "ergonomics": 0.10,
 }
 
-# Furniture that must be placed against a wall (can't float in room center)
-WALL_ANCHORED: set[str] = {
-    "wardrobe", "bookshelf", "shelf", "tv_unit", "tv", "dresser", "cabinet", "bed",
-}
-WALL_SNAP_THRESHOLD = 0.12  # snap to nearest wall if farther than this
-
-# Minimum gap enforced between semantically incompatible furniture pairs
-SEMANTIC_MIN_GAP: dict[frozenset, float] = {
-    frozenset({"desk", "bed"}): 0.06,
-    frozenset({"dining_table", "bed"}): 0.08,
-    frozenset({"sofa", "bed"}): 0.08,
-    frozenset({"wardrobe", "dining_table"}): 0.04,
-}
-
-BED_SIDE_CLEARANCE = 0.06  # min clearance on at least one long side of a bed
 
 
 @dataclass
@@ -252,37 +242,55 @@ def _enforce_immutable(
     return items
 
 
-def _enforce_wall_anchor(items: list[FurnitureItem]) -> list[FurnitureItem]:
+def _enforce_wall_anchor(
+    items: list[FurnitureItem], space_info: dict, params: dict
+) -> list[FurnitureItem]:
     """Snap wall-anchored furniture to the nearest wall if floating in the room."""
-    PAD = 0.02
+    wall_anchored = set(params.get("wall_anchored", []))
+    snap_threshold = float(params.get("snap_threshold", 0.12))
+    pad = float(params.get("pad", 0.02))
     for item in items:
-        if item.type not in WALL_ANCHORED:
+        if item.type not in wall_anchored:
             continue
         d_t = item.y
         d_b = 1.0 - (item.y + item.h)
         d_l = item.x
         d_r = 1.0 - (item.x + item.w)
-        if min(d_t, d_b, d_l, d_r) <= WALL_SNAP_THRESHOLD:
+        if min(d_t, d_b, d_l, d_r) <= snap_threshold:
             continue
         if d_t <= d_b and d_t <= d_l and d_t <= d_r:
-            item.y = PAD
+            item.y = pad
         elif d_b <= d_l and d_b <= d_r:
-            item.y = 1.0 - item.h - PAD
+            item.y = 1.0 - item.h - pad
         elif d_l <= d_r:
-            item.x = PAD
+            item.x = pad
         else:
-            item.x = 1.0 - item.w - PAD
+            item.x = 1.0 - item.w - pad
     return items
 
 
-def _enforce_semantic_gaps(items: list[FurnitureItem]) -> list[FurnitureItem]:
+def _build_semantic_gap_map(params: dict) -> dict[frozenset, float]:
+    result: dict[frozenset, float] = {}
+    for pair in params.get("pairs", []):
+        types = pair.get("types", [])
+        gap = float(pair.get("gap", 0.0))
+        if len(types) == 2:
+            result[frozenset(types)] = gap
+    return result
+
+
+def _enforce_semantic_gaps(
+    items: list[FurnitureItem], space_info: dict, params: dict
+) -> list[FurnitureItem]:
     """Push semantically incompatible furniture pairs apart to their required minimum gap."""
-    for _ in range(30):
+    gap_map = _build_semantic_gap_map(params)
+    iterations = int(params.get("iterations", 30))
+    for _ in range(iterations):
         moved = False
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
                 a, b = items[i], items[j]
-                gap = SEMANTIC_MIN_GAP.get(frozenset({a.type, b.type}))
+                gap = gap_map.get(frozenset({a.type, b.type}))
                 if gap is None or not _overlaps(a, b, margin=gap):
                     continue
                 acx, acy = a.x + a.w / 2, a.y + a.h / 2
@@ -304,8 +312,11 @@ def _enforce_semantic_gaps(items: list[FurnitureItem]) -> list[FurnitureItem]:
     return items
 
 
-def _enforce_bed_clearance(items: list[FurnitureItem]) -> list[FurnitureItem]:
+def _enforce_bed_clearance(
+    items: list[FurnitureItem], space_info: dict, params: dict
+) -> list[FurnitureItem]:
     """Ensure each bed has at least one accessible side (left or right) free of obstruction."""
+    side_clearance = float(params.get("side_clearance", 0.06))
     beds = [i for i in items if i.type == "bed"]
     others = [i for i in items if i.type != "bed"]
 
@@ -317,21 +328,215 @@ def _enforce_bed_clearance(items: list[FurnitureItem]) -> list[FurnitureItem]:
                 for o in others
             )
 
-        left_ok = bed.x >= BED_SIDE_CLEARANCE and _zone_clear(
-            bed.x - BED_SIDE_CLEARANCE, bed.y, BED_SIDE_CLEARANCE, bed.h
+        left_ok = bed.x >= side_clearance and _zone_clear(
+            bed.x - side_clearance, bed.y, side_clearance, bed.h
         )
-        right_ok = bed.x + bed.w + BED_SIDE_CLEARANCE <= 1.0 and _zone_clear(
-            bed.x + bed.w, bed.y, BED_SIDE_CLEARANCE, bed.h
+        right_ok = bed.x + bed.w + side_clearance <= 1.0 and _zone_clear(
+            bed.x + bed.w, bed.y, side_clearance, bed.h
         )
         if left_ok or right_ok:
             continue
         for other in others:
-            if (other.x < bed.x + bed.w + BED_SIDE_CLEARANCE and
+            if (other.x < bed.x + bed.w + side_clearance and
                     other.x + other.w > bed.x + bed.w and
                     other.y < bed.y + bed.h and other.y + other.h > bed.y):
-                other.x = bed.x + bed.w + BED_SIDE_CLEARANCE
+                other.x = bed.x + bed.w + side_clearance
 
     return items
+
+
+def _enforce_desk_bed_separation(
+    items: list[FurnitureItem], space_info: dict, params: dict
+) -> list[FurnitureItem]:
+    """Push desks away from beds and bunk beds so no part of the desk overlaps the bed area.
+    Only the desk is moved — beds are wall-anchored and stay put.
+    """
+    M = float(params.get("min_gap", 0.10))
+    bed_types = set(params.get("bed_types", ["bed", "bunk_bed"]))
+    iterations = int(params.get("iterations", 40))
+    pad = float(params.get("pad", 0.02))
+
+    for _ in range(iterations):
+        moved = False
+        for desk in (i for i in items if i.type == "desk"):
+            for bed in (i for i in items if i.type in bed_types):
+                if not _overlaps(desk, bed, margin=M):
+                    continue
+                dcx = desk.x + desk.w / 2
+                dcy = desk.y + desk.h / 2
+                bcx = bed.x + bed.w / 2
+                bcy = bed.y + bed.h / 2
+                dx, dy = dcx - bcx, dcy - bcy
+                ox = (desk.x + desk.w + M) - bed.x if dx >= 0 else bed.x + bed.w + M - desk.x
+                oy = (desk.y + desk.h + M) - bed.y if dy >= 0 else bed.y + bed.h + M - desk.y
+                if abs(ox) <= abs(oy):
+                    desk.x += ox * (1 if dx >= 0 else -1)
+                else:
+                    desk.y += oy * (1 if dy >= 0 else -1)
+                desk.x = max(pad, min(1.0 - desk.w - pad, desk.x))
+                desk.y = max(pad, min(1.0 - desk.h - pad, desk.y))
+                moved = True
+        if not moved:
+            break
+    return items
+
+
+def _enforce_bunk_bed_ladder_clearance(
+    items: list[FurnitureItem], space_info: dict, params: dict
+) -> list[FurnitureItem]:
+    """Ensure each bunk bed has at least one side clear at floor level for ladder access.
+    Checks all 4 sides; if none is clear, pushes obstructing items away from the bottom side
+    (most natural ladder placement).
+    """
+    LC = float(params.get("ladder_clearance", 0.08))
+    bunk_beds = [i for i in items if i.type == "bunk_bed"]
+    others = [i for i in items if i.type != "bunk_bed"]
+
+    for bed in bunk_beds:
+        def _zone_clear(zx: float, zy: float, zw: float, zh: float) -> bool:
+            return all(
+                o.x + o.w <= zx or o.x >= zx + zw or
+                o.y + o.h <= zy or o.y >= zy + zh
+                for o in others
+            )
+
+        top_ok    = bed.y >= LC and _zone_clear(bed.x, bed.y - LC, bed.w, LC)
+        bottom_ok = bed.y + bed.h + LC <= 1.0 and _zone_clear(bed.x, bed.y + bed.h, bed.w, LC)
+        left_ok   = bed.x >= LC and _zone_clear(bed.x - LC, bed.y, LC, bed.h)
+        right_ok  = bed.x + bed.w + LC <= 1.0 and _zone_clear(bed.x + bed.w, bed.y, LC, bed.h)
+
+        if top_ok or bottom_ok or left_ok or right_ok:
+            continue
+
+        for other in others:
+            if (other.x < bed.x + bed.w and other.x + other.w > bed.x
+                    and other.y < bed.y + bed.h + LC
+                    and other.y + other.h > bed.y + bed.h):
+                other.y = bed.y + bed.h + LC
+
+    return items
+
+
+_LADDER_WALL_THRESHOLD = 0.05  # side is "against wall" if bed edge within this distance
+
+def _inject_bunk_bed_ladder(items: list[FurnitureItem]) -> list[FurnitureItem]:
+    """Place a bunk_ladder item next to each bunk_bed on its clearest floor-accessible side.
+
+    Only non-wall sides are considered — the ladder must start from open floor space,
+    not be sandwiched between the bed and a wall.
+    Prefers foot-end (bottom) → right → left → head-end (top).
+    Safe to call every iteration — skips beds that already have a ladder.
+    """
+    PAD = 0.02
+    base_lw, base_lh = FURNITURE_SIZES["bunk_ladder"]
+
+    others = [i for i in items if i.type not in ("bunk_bed", "bunk_ladder")]
+    existing_ids = {i.id for i in items if i.type == "bunk_ladder"}
+    new_ladders: list[FurnitureItem] = []
+
+    for bed in (i for i in items if i.type == "bunk_bed"):
+        ladder_id = f"bunk_ladder_{bed.id}"
+        if ladder_id in existing_ids:
+            continue
+
+        def _zone_clear(zx: float, zy: float, zw: float, zh: float) -> bool:
+            if zx < PAD or zy < PAD or zx + zw > 1.0 - PAD or zy + zh > 1.0 - PAD:
+                return False
+            return all(
+                o.x + o.w <= zx or o.x >= zx + zw or
+                o.y + o.h <= zy or o.y >= zy + zh
+                for o in others
+            )
+
+        # Detect which sides are wall-adjacent — ladder cannot start from a wall
+        wall_top    = bed.y <= _LADDER_WALL_THRESHOLD
+        wall_bottom = 1.0 - (bed.y + bed.h) <= _LADDER_WALL_THRESHOLD
+        wall_left   = bed.x <= _LADDER_WALL_THRESHOLD
+        wall_right  = 1.0 - (bed.x + bed.w) <= _LADDER_WALL_THRESHOLD
+
+        cx = bed.x + (bed.w - base_lw) / 2
+        cy = bed.y + (bed.h - base_lw) / 2
+
+        # (priority, lx, ly, lw, lh) — only non-wall sides eligible
+        attempts: list[tuple[float, float, float, float, float]] = []
+
+        if not wall_bottom:
+            lx, ly = cx, bed.y + bed.h + PAD
+            if _zone_clear(lx, ly, base_lw, base_lh):
+                attempts.append((3.0, lx, ly, base_lw, base_lh))
+
+        if not wall_right:
+            lx, ly = bed.x + bed.w + PAD, cy
+            if _zone_clear(lx, ly, base_lh, base_lw):
+                attempts.append((2.0, lx, ly, base_lh, base_lw))
+
+        if not wall_left:
+            lx, ly = bed.x - base_lh - PAD, cy
+            if _zone_clear(lx, ly, base_lh, base_lw):
+                attempts.append((1.0, lx, ly, base_lh, base_lw))
+
+        if not wall_top:
+            lx, ly = cx, bed.y - base_lh - PAD
+            if _zone_clear(lx, ly, base_lw, base_lh):
+                attempts.append((0.0, lx, ly, base_lw, base_lh))
+
+        if not attempts:
+            continue
+
+        _, lx, ly, lw, lh = max(attempts, key=lambda a: a[0])
+        new_ladders.append(FurnitureItem(
+            id=ladder_id, type="bunk_ladder",
+            x=max(PAD, min(1.0 - lw - PAD, lx)),
+            y=max(PAD, min(1.0 - lh - PAD, ly)),
+            w=lw, h=lh,
+        ))
+
+    return items + new_ladders
+
+
+def _enforce_bed_not_near_window(
+    items: list[FurnitureItem], space_info: dict, params: dict
+) -> list[FurnitureItem]:
+    """Push beds and bunk beds away from window openings on any wall."""
+    windows = space_info.get("windows") or []
+    wc = float(params.get("window_clearance", 0.08))
+    pad = float(params.get("pad", 0.02))
+    bed_types = set(params.get("bed_types", ["bed", "bunk_bed"]))
+
+    for item in items:
+        if item.type not in bed_types:
+            continue
+        for window in windows:
+            wx = float(window.get("x", 0.5))
+            wy = float(window.get("y", 0.0))
+            ww = float(window.get("w", 0.15))
+            wh = float(window.get("h", ww))
+
+            if wy <= 0.15:
+                if item.y < wc and item.x + item.w > wx and item.x < wx + ww:
+                    item.y = wc + pad
+            elif wy >= 0.85:
+                if (item.y + item.h > 1.0 - wc
+                        and item.x + item.w > wx and item.x < wx + ww):
+                    item.y = 1.0 - wc - item.h - pad
+            elif wx <= 0.15:
+                if item.x < wc and item.y + item.h > wy and item.y < wy + wh:
+                    item.x = wc + pad
+            elif wx >= 0.85:
+                if (item.x + item.w > 1.0 - wc
+                        and item.y + item.h > wy and item.y < wy + wh):
+                    item.x = 1.0 - wc - item.w - pad
+    return items
+
+
+_LAYOUT_ENFORCERS: dict[str, Callable] = {
+    "wall_anchor":               _enforce_wall_anchor,
+    "semantic_gaps":             _enforce_semantic_gaps,
+    "desk_bed_separation":       _enforce_desk_bed_separation,
+    "bed_clearance":             _enforce_bed_clearance,
+    "bunk_bed_ladder_clearance": _enforce_bunk_bed_ladder_clearance,
+    "bed_not_near_window":       _enforce_bed_not_near_window,
+}
 
 
 # ─────────────────────────── LLM Interface ───────────────────────────
@@ -472,6 +677,7 @@ def run_layout_agent(
     """
     from designbridge.prompts import LAYOUT_AGENT_PROMPT, LAYOUT_REFINEMENT_PROMPT
 
+    layout_registry = get_layout_constraint_registry()
     meta = structured_requirement.get("meta") or {}
     space_info = structured_requirement.get("space_info") or {}
     constraints = structured_requirement.get("layout_constraints") or {}
@@ -519,10 +725,14 @@ def run_layout_agent(
         if immutable:
             items = _enforce_immutable(items, immutable)
         items = _clip_to_room(items)
+        items = _inject_bunk_bed_ladder(items)
         items = _push_apart(items)
-        items = _enforce_wall_anchor(items)
-        items = _enforce_semantic_gaps(items)
-        items = _enforce_bed_clearance(items)
+        for _card in layout_registry.load():
+            _fn = _LAYOUT_ENFORCERS.get(_card.enforce)
+            if _fn:
+                items = _fn(items, space_info, _card.parameters)
+        from designbridge.special_constraints import apply_special_layout_constraints
+        items = apply_special_layout_constraints(items, structured_requirement)
         items = _clip_to_room(items)
 
         scores = _score_soft_constraints(items, space_info)
@@ -555,6 +765,12 @@ def run_layout_agent(
     must_remove_set = {s.lower().replace(" ", "_") for s in (constraints.get("must_remove") or [])}
     existing = {item.type for item in best_items}
 
+    _lc_params = {c.enforce: c.parameters for c in layout_registry.load()}
+    _wa_params = _lc_params.get("wall_anchor", {})
+    _wall_anchored = set(_wa_params.get("wall_anchored", []))
+    _snap_threshold = float(_wa_params.get("snap_threshold", 0.12))
+    _gap_map = _build_semantic_gap_map(_lc_params.get("semantic_gaps", {}))
+
     constraint_check = {
         "must_keep_satisfied": all(t in existing for t in must_keep_set),
         "must_add_satisfied": all(t in existing for t in must_add_set),
@@ -565,16 +781,15 @@ def run_layout_agent(
             for j in range(i + 1, len(best_items))
         ),
         "wall_anchored": all(
-            min(item.x, 1.0 - item.x - item.w, item.y, 1.0 - item.y - item.h)
-            <= WALL_SNAP_THRESHOLD
-            for item in best_items if item.type in WALL_ANCHORED
+            min(item.x, 1.0 - item.x - item.w, item.y, 1.0 - item.y - item.h) <= _snap_threshold
+            for item in best_items if item.type in _wall_anchored
         ),
         "semantic_gaps_met": not any(
             _overlaps(best_items[i], best_items[j],
-                      margin=SEMANTIC_MIN_GAP.get(frozenset({best_items[i].type, best_items[j].type}), 0.0))
+                      margin=_gap_map.get(frozenset({best_items[i].type, best_items[j].type}), 0.0))
             for i in range(len(best_items))
             for j in range(i + 1, len(best_items))
-            if frozenset({best_items[i].type, best_items[j].type}) in SEMANTIC_MIN_GAP
+            if frozenset({best_items[i].type, best_items[j].type}) in _gap_map
         ),
     }
 

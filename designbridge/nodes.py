@@ -11,6 +11,12 @@ from typing import Any, Literal
 
 from designbridge.config import Config
 from designbridge.prompts import REQUIREMENT_ANALYZER_PROMPT
+
+_BASE_NEGATIVE_PROMPT = (
+    "people, person, human, man, woman, child, hands, face, "
+    "animal, pet, cat, dog, bird, "
+    "text, watermark, signature, logo"
+)
 from designbridge.style_apply import build_style_params, STYLE_NAME_TO_ID
 from designbridge.state import DesignBridgeState, RoutingDecision
 from designbridge.vision import run_visual_preprocessing
@@ -54,6 +60,13 @@ def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
             "edit_scope": {"scope_value": edit_scope, "allowed_operations": ["layout", "style"]},
             "priority_weights": {"layout_rationality": 0.4, "style_consistency": 0.4, "user_preference": 0.2},
         }
+
+    # Merge family needs and feng shui rules into structured_requirement
+    family_needs   = user.get("family_needs")   or []
+    fengshui_rules = user.get("fengshui_rules") or []
+    if family_needs or fengshui_rules:
+        from designbridge.special_constraints import enrich_requirement
+        structured_requirement = enrich_requirement(structured_requirement, family_needs, fengshui_rules)
 
     # If the user explicitly selected a style from the dropdown, override whatever
     # Gemini / rule-based inferred from the text so the whole pipeline stays consistent.
@@ -204,7 +217,7 @@ def _parse_nl_requirement(nl_text: str, edit_scope: float, text_prompt: str = ""
         },
         "priority_weights": {
             "layout_rationality": 0.4,
-            "style_consistency": 0.4,
+            "style_consistency": 0.6,
             "novelty": 0.2,
         },
         "hint_layout": hint_layout,
@@ -392,12 +405,28 @@ def design_director(state: DesignBridgeState) -> dict[str, Any]:
 
 
 def layout_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
-    """Stub for Layout agent. Real impl: layout optimization + ControlNet, etc."""
+    from designbridge.layout_agent import run_layout_agent
+
+    task_id = state.get("task_id") or str(uuid.uuid4())
+    req = state.get("structured_requirement") or {}
+
+    try:
+        result = run_layout_agent(req, task_id)
+    except Exception as e:
+        print(f"⚠️ Layout agent failed ({e}), skipping layout")
+        return {
+            "intermediate_outputs": {
+                **(state.get("intermediate_outputs") or {}),
+                "layout_agent": f"failed: {e}",
+            }
+        }
+
     return {
+        "scene_graph": result.get("scene_graph"),
         "intermediate_outputs": {
             **(state.get("intermediate_outputs") or {}),
-            "layout_agent": "stub_output",
-        }
+            **(result.get("intermediate_outputs") or {}),
+        },
     }
 
 
@@ -914,7 +943,15 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     out_path = render_dir / f"{task_id}_{render_suffix}.png"
 
     prompt = _build_imagen_prompt_from_requirement(req, style_params=style_params)
-    negative_prompt = style_params.get("negative_prompt") or None
+    _style_neg = (style_params.get("negative_prompt") or "").strip(", ")
+    negative_prompt = f"{_BASE_NEGATIVE_PROMPT}, {_style_neg}" if _style_neg else _BASE_NEGATIVE_PROMPT
+    _special = req.get("special_constraints") or {}
+    if _special.get("wheelchair"):
+        negative_prompt = f"{negative_prompt}, wheelchair, wheelchair user, mobility aid, disability equipment"
+    if _special.get("children"):
+        negative_prompt = f"{negative_prompt}, child, children, baby, toddler, kid"
+    if _special.get("pets"):
+        negative_prompt = f"{negative_prompt}, cat, dog, bird, rabbit, hamster, pet, animal"
     user_input = state.get("user_input") or {}
     output_aspect = str(user_input.get("output_aspect") or "auto")
     output_size = _resolve_output_size(output_aspect, user_input.get("initial_image"))

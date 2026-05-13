@@ -9,6 +9,31 @@ const selectedStyle   = defineModel('selectedStyle',   { default: 'auto' })
 const manualImagePath  = defineModel('manualImagePath',  { default: '' })
 const showManualPath   = defineModel('showManualPath',   { default: false })
 const noStyleReference = defineModel('noStyleReference', { default: false })
+const familyNeeds  = defineModel('familyNeeds',  { default: () => [] })
+const fengshuiRules = defineModel('fengshuiRules', { default: () => [] })
+
+const FAMILY_OPTIONS = [
+  { value: 'children',    label: '有小孩' },
+  { value: 'wheelchair',  label: '有輪椅使用者' },
+  { value: 'pets',        label: '有寵物' },
+]
+const FENGSHUI_OPTIONS = [
+  { value: 'bed_not_facing_door',       label: '床不對門' },
+  { value: 'sofa_not_back_to_door',     label: '沙發不背門' },
+  { value: 'desk_not_facing_window',    label: '書桌不背窗' },
+]
+
+function toggleFamilyNeed(value) {
+  familyNeeds.value = familyNeeds.value.includes(value)
+    ? familyNeeds.value.filter(v => v !== value)
+    : [...familyNeeds.value, value]
+}
+
+function toggleFengshuiRule(value) {
+  fengshuiRules.value = fengshuiRules.value.includes(value)
+    ? fengshuiRules.value.filter(v => v !== value)
+    : [...fengshuiRules.value, value]
+}
 
 defineProps({
   spaceImage:    { type: Object, required: true },
@@ -37,10 +62,38 @@ defineEmits(['submit'])
       />
     </div>
 
+    <!-- 2. 家庭結構特殊需求 -->
+    <div class="field">
+      <label class="field-label">家庭結構特殊需求 <span class="optional">選填</span></label>
+      <div class="chip-group">
+        <button
+          v-for="opt in FAMILY_OPTIONS"
+          :key="opt.value"
+          type="button"
+          :class="['chip', { active: familyNeeds.includes(opt.value) }]"
+          @click="toggleFamilyNeed(opt.value)"
+        >{{ opt.label }}</button>
+      </div>
+    </div>
+
+    <!-- 3. 風水需求 -->
+    <div class="field">
+      <label class="field-label">風水需求 <span class="optional">選填</span></label>
+      <div class="chip-group">
+        <button
+          v-for="opt in FENGSHUI_OPTIONS"
+          :key="opt.value"
+          type="button"
+          :class="['chip', { active: fengshuiRules.includes(opt.value) }]"
+          @click="toggleFengshuiRule(opt.value)"
+        >{{ opt.label }}</button>
+      </div>
+    </div>
+
     <!-- divider -->
     <div class="divider"></div>
 
-    <!-- 2. 原始空間圖片 -->
+    <!-- 4. 原始空間圖片 -->
     <div class="field">
       <label class="field-label">原始空間圖片 <span class="optional">選填</span></label>
       <ImageUpload
@@ -329,6 +382,30 @@ select:focus { outline: none; border-color: var(--primary); background: #fff; }
 .score {
   background: var(--primary-light); color: var(--primary);
   padding: 0.05rem 0.4rem; border-radius: 99px; font-size: 0.7rem; font-weight: 600;
+}
+
+/* Chips */
+.chip-group { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.chip {
+  padding: 0.35rem 0.75rem;
+  border: 1.5px solid #ddd4f0;
+  border-radius: 99px;
+  font-size: 0.8rem;
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--text-2);
+  background: rgba(255,255,255,0.7);
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.4;
+}
+.chip:hover { border-color: var(--primary-border); background: rgba(255,255,255,0.95); color: var(--primary); }
+.chip.active {
+  border-color: var(--primary);
+  background: linear-gradient(135deg, #7c5cbf 0%, #a06edb 100%);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(124,92,191,0.35);
 }
 
 /* Submit */

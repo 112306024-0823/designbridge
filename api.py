@@ -75,6 +75,8 @@ class DesignRequest(BaseModel):
     initial_image_path: Optional[str] = None
     style_reference_image_path: Optional[str] = None
     no_style_reference: bool = False
+    family_needs: List[str] = []
+    fengshui_rules: List[str] = []
 
 # 2. 快取 Graph 實例
 graph = get_compiled_graph()
@@ -295,6 +297,10 @@ async def generate_design(request: DesignRequest):
             user_input["style_reference_image"] = request.style_reference_image_path
         if request.no_style_reference:
             user_input["no_style_reference"] = True
+        if request.family_needs:
+            user_input["family_needs"] = request.family_needs
+        if request.fengshui_rules:
+            user_input["fengshui_rules"] = request.fengshui_rules
 
         initial_state = {"user_input": user_input}
 
