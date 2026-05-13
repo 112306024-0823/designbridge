@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +24,25 @@ def _load_model() -> tuple[CLIPModel, CLIPProcessor]:
         _model = CLIPModel.from_pretrained(_MODEL_ID)
         _model.eval()
     return _model, _processor
+
+
+def _translate_to_english(text: str) -> str:
+    """Translate text to English using the project LLM. Returns original text on failure."""
+    # Skip translation if already ASCII/English
+    if all(ord(c) < 128 for c in text):
+        return text
+    try:
+        from designbridge.llm import call_llm
+        result = call_llm(
+            f"Translate the following text to English. Output only the translated text, nothing else:\n{text}",
+            max_tokens=200,
+            temperature=0.0,
+        )
+        translated = result.strip()
+        # Sanity check: result should be non-empty and not identical to input
+        return translated if translated and translated != text else text
+    except Exception:
+        return text
 
 
 def compute_clip_score(image_path: str, text_prompt: str) -> float:
