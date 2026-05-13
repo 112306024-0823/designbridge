@@ -1,7 +1,7 @@
 # designbridge/prompts.py
 """Prompt templates for DesignBridge agents."""
 
-REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析師。請以自然語言分析使用者的設計需求，輸出結構化的需求報告。
+REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析師，同時負責決定設計任務的執行路由。
 
 ## 使用者輸入
 文字需求: {text_prompt}
@@ -9,30 +9,66 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
 初始圖片: {initial_image}
 
 ## 任務
+分析使用者需求，輸出一個 JSON 物件，包含 routing_decision 與 structured_requirement 兩個欄位。
 若訊息附有空間圖片，請根據圖片內容（空間配置、既有家具、風格等）與文字需求一併分析。
-請依照下列格式逐行輸出分析報告（純文字，每行一個欄位，不要輸出 JSON 或 markdown 區塊）：
 
-空間類型: [living_room / bedroom / kitchen / study 等英文識別碼]
-設計目標: [new_design 或 renovation]
-主要風格: [主要設計風格，如北歐、現代、工業、簡約等]
-次要風格: [次要風格，沒有則填無]
-色彩偏好: [偏好顏色，以逗號分隔，沒有則填無]
-材質偏好: [偏好材質，以逗號分隔，沒有則填無]
-必須保留: [必須保留的家具或元素，以逗號分隔，沒有則填無]
-必須新增: [需要新增的家具或功能，以逗號分隔，沒有則填無]
-必須移除: [需要移除的元素，以逗號分隔，沒有則填無]
-涉及佈局: [是 或 否]
-涉及風格: [是 或 否]
-僅局部微調: [是 或 否]
-設計描述: [完整的英文圖像生成描述，涵蓋空間類型、風格、材質、色彩、氛圍、光線等細節，適合直接作為 image generation prompt]
+## routing_decision 判斷規則（依語意理解，不是關鍵字比對）
 
-## 隱式需求推導
-- 「常在家工作」→ 必須新增包含書桌，涉及佈局: 是
-- 「家有寵物」→ 材質偏好包含耐刮材質、易清潔材質
-- 「收納不足」→ 必須新增包含收納櫃
-- 「光線不足」→ 設計描述強調自然採光
+選 "design_adjuster"：
+- 需求描述的是非常局部、孤立的單點修改，改動不影響整體空間感或視覺氛圍
+- 例：「只換沙發顏色」、「微調一下燈光」、「把那把椅子換成白色的」
 
-請開始分析。
+選 "design"（預設）：
+- 需求涉及整體設計方向、風格轉換、材質或色系的全面調整、空間佈局重整，或任何改動會影響整體視覺氛圍的情況
+- 當不確定時，預設選 "design"
+- 例：「北歐風格客廳」、「整體改成深色系」、「餐桌換成木頭、椅子換成皮革」、「把書房改成開放式」
+
+## spatial_change_level 判斷（影響深度圖對生成的約束強度）
+
+- "none"：需求不涉及空間配置改變，僅改風格、材質、顏色、氛圍
+  → 生成時高度遵守原始空間結構（深度圖影響力最大）
+- "minor"：需求涉及局部家具調整，但整體動線/分區不變
+  → 生成時中度參考原始空間結構（深度圖影響力中等）
+- "major"：需求涉及大幅空間重整、格局改變、打牆隔間、整體重新規劃
+  → 生成時不受原始空間結構約束（不使用深度圖）
+
+## 輸出格式（嚴格輸出純 JSON，不加任何說明文字或 markdown）
+
+{{
+  "routing_decision": "design_adjuster | design",
+  "structured_requirement": {{
+    "user_description_raw": "原始需求文字",
+    "design_description": "完整英文圖像生成描述，涵蓋空間類型、風格、材質、色彩、氛圍、光線、家具配置等細節",
+    "spatial_change_level": "none | minor | major",
+    "meta": {{
+      "room_type": "living_room | bedroom | bathroom | kitchen | study 等",
+      "design_goal": "new_design | renovation",
+      "user_experience_level": "general"
+    }},
+    "style_preferences": {{
+      "primary_style": "主要風格（若無則空字串）",
+      "secondary_style": null,
+      "color_palette": [],
+      "material_preferences": [],
+      "style_strength": 0.7
+    }},
+    "layout_constraints": {{
+      "must_keep": [],
+      "must_add": [],
+      "must_remove": [],
+      "functional_zones": []
+    }},
+    "edit_scope": {{
+      "scope_value": {edit_scope},
+      "allowed_operations": ["layout", "style"]
+    }},
+    "priority_weights": {{
+      "layout_rationality": 0.4,
+      "style_consistency": 0.4,
+      "novelty": 0.2
+    }}
+  }}
+}}
 """
 
 
@@ -46,19 +82,15 @@ DESIGN_DIRECTOR_ROUTER_PROMPT = """你是 DesignBridge 的路由決策器（Desi
 {requirement_json}
 
 ## 允許輸出值（只能擇一）
-- layout
-- style
-- layout_and_style
 - design_adjuster
+- design
 
 ## 決策準則
-1. 若需求包含空間配置重整、動線調整、家具大幅移動，優先選 `layout`。
-2. 若需求主要是風格、材質、色彩、氛圍調整，且不涉及明顯空間重規劃，選 `style`。
-3. 若同時明確涉及佈局與風格，選 `layout_and_style`。
-4. 若需求偏向局部修補、局部替換、局部移除/新增（如 inpaint 類任務），選 `design_adjuster`。
-5. 若資訊不足，請依最保守且可執行的策略判斷，避免輸出不存在的值。
+1. 若需求偏向局部修補、替換單一物件、局部微調，選 `design_adjuster`。
+2. 所有其他情況（整體設計、風格轉換、佈局重整、新方案等）一律選 `design`。
+3. 若資訊不足，預設選 `design`。
 
 ## 輸出格式（嚴格遵守）
 僅輸出單行 JSON，且不得有任何額外文字：
-{{"routing_decision":"layout|style|layout_and_style|design_adjuster"}}
+{{"routing_decision":"design_adjuster|design"}}
 """

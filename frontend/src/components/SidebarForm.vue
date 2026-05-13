@@ -12,7 +12,6 @@ const noStyleReference = defineModel('noStyleReference', { default: false })
 
 defineProps({
   spaceImage:       { type: Object, required: true },
-  layoutRefImage:   { type: Object, required: true },
   styleRefImage:    { type: Object, required: true },
   styleOptions:  { type: Array,  default: () => [] },
   styleLoading:  { type: Boolean, default: false },
@@ -64,24 +63,6 @@ defineEmits(['submit'])
     </div>
 
     <!-- divider -->
-    <div class="divider"></div>
-
-    <!-- 3. 佈局參考圖 -->
-    <div class="field">
-      <label class="field-label">佈局參考圖 <span class="optional">選填</span></label>
-      <ImageUpload
-        label="點擊或拖曳上傳"
-        icon="📐"
-        hint="上傳想要參考的空間佈局圖，AI 會依其家具位置與空間結構來生成"
-        :preview="layoutRefImage.preview"
-        @change="layoutRefImage.onChange"
-        @remove="layoutRefImage.remove"
-      />
-    </div>
-
-    <!-- divider -->
-    <div class="divider"></div>
-
     <!-- 4. 改動幅度 -->
     <div class="field">
       <label class="field-label">

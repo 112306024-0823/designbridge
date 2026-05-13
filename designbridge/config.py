@@ -58,6 +58,10 @@ class Config:
     ENABLE_HF_INFERENCE: bool = os.getenv("DESIGNBRIDGE_ENABLE_HF_INFERENCE", "true").lower() in ("1", "true", "yes")
     HF_TOKEN: str | None = os.getenv("HF_TOKEN")
     HF_INFERENCE_PROVIDER: str = os.getenv("DESIGNBRIDGE_HF_INFERENCE_PROVIDER", "hf-inference")
+
+    # Kontext LoRA (reference + depth fusion) via Replicate
+    KONTEXT_LORA_MODEL: str = "thedeoxen/FLUX.1-Kontext-dev-reference-depth-fusion-LORA"
+    KONTEXT_PROVIDER: str = os.getenv("DESIGNBRIDGE_KONTEXT_PROVIDER", "replicate")
     
     # ControlNet for SDXL (depth + segmentation guidance)
     ENABLE_CONTROLNET: bool = os.getenv("DESIGNBRIDGE_ENABLE_CONTROLNET", "true").lower() in ("1", "true", "yes")
