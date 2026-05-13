@@ -1,5 +1,5 @@
 # DesignBridge FastAPI 後端
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -61,10 +61,6 @@ app = FastAPI(
     description="室內設計 AI 工作流接口",
     lifespan=_app_lifespan,
 )
-
-artifacts_dir = Path("artifacts")
-artifacts_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/artifacts", StaticFiles(directory=str(artifacts_dir)), name="artifacts")
 
 artifacts_dir = Path("artifacts")
 artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -239,20 +235,39 @@ def read_root():
 
 
 @app.get("/api/history")
-def get_history(limit: int = 50):
-    """Return recent generation history, newest first."""
+def get_history(limit: int = 0):
+    """Return generation history, newest first. limit=0 means all."""
     if not _history_file.exists():
         return []
     try:
         records = json.loads(_history_file.read_text(encoding="utf-8"))
     except Exception:
         return []
-    records = list(reversed(records))[:limit]
+    records = list(reversed(records))
+    if limit > 0:
+        records = records[:limit]
     for r in records:
         path = r.get("generated_image_path", "")
         if path and not r.get("generated_image_url"):
             r["generated_image_url"] = "http://localhost:8000/" + path.replace("\\", "/")
     return records
+
+
+@app.delete("/api/history")
+def delete_history(task_ids: List[str] = Query(...)):
+    """Delete history records by task_ids."""
+    if not _history_file.exists():
+        return {"deleted": 0}
+    with _history_lock:
+        try:
+            records = json.loads(_history_file.read_text(encoding="utf-8"))
+        except Exception:
+            return {"deleted": 0}
+        id_set = set(task_ids)
+        original = len(records)
+        records = [r for r in records if r.get("task_id") not in id_set]
+        _history_file.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"deleted": original - len(records)}
 
 
 @app.get("/api/style-profiles")
@@ -371,9 +386,19 @@ async def generate_design(request: DesignRequest):
         # 儲存生成紀錄
         style_ref_path = request.style_reference_image_path or ""
         style_ref_url = None
+        style_ref_source = None
         if style_ref_path:
-            normalized_ref = style_ref_path.replace("\\", "/")
-            style_ref_url = f"http://localhost:8000/{normalized_ref}"
+            if style_ref_path.startswith(("http://", "https://")):
+                # Supabase URL passed directly from the KB image picker
+                style_ref_url = style_ref_path
+                style_ref_source = "supabase"
+            else:
+                normalized_ref = style_ref_path.replace("\\", "/")
+                style_ref_url = f"http://localhost:8000/{normalized_ref}"
+                style_ref_source = "user"
+        elif (result.get("style_params") or {}).get("reference_image_url"):
+            style_ref_url = (result.get("style_params") or {}).get("reference_image_url")
+            style_ref_source = "supabase"
 
         render_result = result.get("render_result") or {}
         generation_params = render_result.get("generation_params") or {}
@@ -388,6 +413,7 @@ async def generate_design(request: DesignRequest):
             "style_profile_id": request.style_profile_id,
             "style_reference_image_path": style_ref_path,
             "style_reference_image_url": style_ref_url,
+            "style_reference_source": style_ref_source,
             "routing_decision": result.get("routing_decision"),
             "generated_image_path": generated_image_path,
             "generated_image_url": generated_image_url,
@@ -395,6 +421,7 @@ async def generate_design(request: DesignRequest):
             "backend": generation_params.get("backend") or generation_params.get("model"),
             "gemini_style_description": generation_params.get("gemini_style_description"),
             "generation_params": generation_params,
+            "evaluation_result": result.get("evaluation_result"),
         })
 
         return response

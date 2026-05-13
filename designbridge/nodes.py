@@ -1341,11 +1341,23 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         control_img = user_style_reference_local
         controlnet_inputs["style_reference_image"] = user_style_reference_local
         if style_method == "ai_analysis":
-            style_vision_desc = _analyze_style_image_with_gemini(user_style_reference_local)
-            if style_vision_desc:
-                prompt = f"{prompt} Style reference: {style_vision_desc}"
-                generation_params["gemini_style_description"] = style_vision_desc
-                print(f"🎨 Gemini 風格描述已注入 prompt：{style_vision_desc[:80]}…")
+            _kb_url = (style_params or {}).get("reference_image_url", "")
+            _kb_text = (style_params or {}).get("style_summary", "").strip()
+            _is_kb_image = (
+                _kb_url
+                and _kb_text
+                and isinstance(style_reference_image, str)
+                and style_reference_image.strip() == _kb_url
+            )
+            if _is_kb_image:
+                prompt = f"{prompt} Style reference: {_kb_text}"
+                print(f"📚 Supabase KB 描述已注入 prompt（跳過 Gemini 分析）：{_kb_text[:80]}…")
+            else:
+                style_vision_desc = _analyze_style_image_with_gemini(user_style_reference_local)
+                if style_vision_desc:
+                    prompt = f"{prompt} Style reference: {style_vision_desc}"
+                    generation_params["gemini_style_description"] = style_vision_desc
+                    print(f"🎨 Gemini 風格描述已注入 prompt：{style_vision_desc[:80]}…")
     elif style_params and style_params.get("reference_image_path") and Path(style_params["reference_image_path"]).exists():
         control_img = style_params["reference_image_path"]
         controlnet_inputs["style_reference_image"] = control_img
