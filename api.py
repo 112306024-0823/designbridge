@@ -238,6 +238,23 @@ def read_root():
 
 
 
+@app.get("/api/history")
+def get_history(limit: int = 50):
+    """Return recent generation history, newest first."""
+    if not _history_file.exists():
+        return []
+    try:
+        records = json.loads(_history_file.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    records = list(reversed(records))[:limit]
+    for r in records:
+        path = r.get("generated_image_path", "")
+        if path and not r.get("generated_image_url"):
+            r["generated_image_url"] = "http://localhost:8000/" + path.replace("\\", "/")
+    return records
+
+
 @app.get("/api/style-profiles")
 def get_style_profiles():
     # 優先回傳磁碟上已有聚合檔的風格
@@ -352,18 +369,32 @@ async def generate_design(request: DesignRequest):
         }
 
         # 儲存生成紀錄
+        style_ref_path = request.style_reference_image_path or ""
+        style_ref_url = None
+        if style_ref_path:
+            normalized_ref = style_ref_path.replace("\\", "/")
+            style_ref_url = f"http://localhost:8000/{normalized_ref}"
+
+        render_result = result.get("render_result") or {}
+        generation_params = render_result.get("generation_params") or {}
+
         _save_history({
             "task_id": result.get("task_id"),
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "elapsed_seconds": round(elapsed, 2),
             "text_prompt": request.text_prompt,
             "model_type": request.model_type,
+            "style_method": request.style_method,
             "style_profile_id": request.style_profile_id,
-            "style_reference_image_path": request.style_reference_image_path,
+            "style_reference_image_path": style_ref_path,
+            "style_reference_image_url": style_ref_url,
             "routing_decision": result.get("routing_decision"),
             "generated_image_path": generated_image_path,
             "generated_image_url": generated_image_url,
             "style_params": result.get("style_params"),
+            "backend": generation_params.get("backend") or generation_params.get("model"),
+            "gemini_style_description": generation_params.get("gemini_style_description"),
+            "generation_params": generation_params,
         })
 
         return response

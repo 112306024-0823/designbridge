@@ -1106,6 +1106,89 @@ def _render_flux_redux_fal(
         return False
 
 
+def _render_flux_ipadapter_fal(
+    style_image_path: str,
+    out_path: Path,
+    prompt: str,
+    ip_adapter_scale: float = 0.6,
+    num_steps: int = 28,
+    guidance_scale: float = 3.5,
+    output_size: tuple[int, int] = (1024, 1024),
+) -> bool:
+    """Generate image via fal.ai FLUX-general + XLabs IP-Adapter.
+
+    Text prompt (T5 full sequence) controls room type and content.
+    Style reference image controls visual style via IP-Adapter cross-attention.
+    ip_adapter_scale: 0.0 = ignore image, 1.0 = full style transfer.
+    """
+    fal_key = Config.FAL_KEY
+    if not fal_key:
+        return False
+    if not prompt.strip():
+        print("⚠️  fal.ai IP-Adapter 需要文字 prompt 描述目標空間")
+        return False
+    try:
+        import fal_client
+        import requests
+        import os
+
+        os.environ["FAL_KEY"] = fal_key
+
+        print("☁️  fal.ai FLUX-general + IP-Adapter 推理中...")
+
+        with open(style_image_path, "rb") as f:
+            image_url = fal_client.upload(f.read(), content_type="image/jpeg")
+
+        width, height = output_size
+        size_map = {
+            (1024, 1024): "square_hd",
+            (512, 512): "square",
+            (1024, 768): "landscape_4_3",
+            (768, 1024): "portrait_4_3",
+            (1280, 720): "landscape_16_9",
+            (720, 1280): "portrait_16_9",
+        }
+        image_size = size_map.get((width, height), {"width": width, "height": height})
+
+        arguments: dict = {
+            "prompt": prompt.strip(),
+            "num_inference_steps": num_steps,
+            "guidance_scale": guidance_scale,
+            "image_size": image_size,
+            "ip_adapters": [
+                {
+                    "path": "XLabs-AI/flux-ip-adapter",
+                    "weight_name": "ip_adapter.safetensors",
+                    "image_encoder_path": "openai/clip-vit-large-patch14",
+                    "image_url": image_url,
+                    "scale": ip_adapter_scale,
+                }
+            ],
+        }
+
+        result = fal_client.subscribe(
+            "fal-ai/flux-general",
+            arguments=arguments,
+            with_logs=False,
+        )
+
+        img_url = result["images"][0]["url"]
+        resp = requests.get(img_url, timeout=60)
+        resp.raise_for_status()
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(resp.content)
+        print(f"✅ fal.ai FLUX IP-Adapter 完成：{out_path.name}")
+        return True
+
+    except ImportError:
+        print("⚠️  fal_client 未安裝，請執行：pip install fal-client")
+        return False
+    except Exception as e:
+        print(f"⚠️  fal.ai FLUX IP-Adapter 失敗：{e}")
+        return False
+
+
 def _render_sdxl(
     prompt: str,
     out_path: Path,
@@ -1257,7 +1340,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if user_style_reference_local:
         control_img = user_style_reference_local
         controlnet_inputs["style_reference_image"] = user_style_reference_local
-        if style_method != "redux":
+        if style_method == "ai_analysis":
             style_vision_desc = _analyze_style_image_with_gemini(user_style_reference_local)
             if style_vision_desc:
                 prompt = f"{prompt} Style reference: {style_vision_desc}"
@@ -1269,6 +1352,22 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         print(f"使用 Supabase 匹配圖作為風格參考：{Path(control_img).name}")
     else:
         control_img = depth_path if depth_path and Path(depth_path).exists() else None
+
+    # IP-Adapter 模式：文字控制空間類型，圖像注入風格（fal.ai FLUX-general）
+    if style_method == "ipadapter" and user_style_reference_local and backend == "placeholder":
+        if not Config.FAL_KEY:  
+            print("⚠️  IP-Adapter 模式需要 FAL_KEY，改走 ai_analysis fallback")
+        elif _render_flux_ipadapter_fal(
+            user_style_reference_local, out_path, prompt=prompt,
+            ip_adapter_scale=Config.FAL_IP_ADAPTER_SCALE,
+            num_steps=Config.FAL_IP_ADAPTER_STEPS,
+            guidance_scale=Config.FAL_IP_ADAPTER_GUIDANCE,
+            output_size=(Config.FAL_IP_ADAPTER_SIZE, Config.FAL_IP_ADAPTER_SIZE),
+        ):
+            backend = "flux_ipadapter_fal"
+            generation_params["model"] = "fal-ai/flux-general + XLabs IP-Adapter"
+            generation_params["style_reference"] = user_style_reference_local
+            generation_params["ip_adapter_scale"] = Config.FAL_IP_ADAPTER_SCALE
 
     # Redux 模式：本地 FLUX.1-Redux pipeline（需先在 HuggingFace 接受授權並下載模型）
     # DESIGNBRIDGE_ENABLE_FLUX_REDUX=true 才嘗試載入，避免未授權時每次報錯

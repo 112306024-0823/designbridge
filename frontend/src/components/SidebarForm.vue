@@ -163,6 +163,13 @@ defineEmits(['submit'])
               <small>以圖為主直接做風格遷移</small>
             </div>
           </label>
+          <label :class="{ active: styleMethod === 'ipadapter' }">
+            <input type="radio" v-model="styleMethod" value="ipadapter" />
+            <div class="radio-content">
+              <strong>IP-Adapter</strong>
+              <small>文字定空間類型，圖像注入風格</small>
+            </div>
+          </label>
         </div>
         <div v-if="!styleRefImage.preview && matchedStylePreview?.image_url" class="matched-preview">
           <div class="matched-label">
