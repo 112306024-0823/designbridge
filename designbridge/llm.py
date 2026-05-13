@@ -98,6 +98,20 @@ def _history_to_gemini(history: list[dict]) -> list[dict]:
 
 # ── Gemini direct path ───────────────────────────────────────────────────────
 
+def _build_gemini_parts(
+    prompt: str,
+    images: list[str | bytes | Path] | None,
+) -> list:
+    """Build a list of google.genai Part objects from images + text."""
+    from google.genai import types
+    parts: list = []
+    for img in (images or []):
+        blob = _image_to_gemini_blob(img)
+        parts.append(types.Part.from_bytes(data=blob["data"], mime_type=blob["mime_type"]))
+    parts.append(prompt)
+    return parts
+
+
 def _call_via_gemini(
     prompt: str,
     *,
@@ -108,29 +122,31 @@ def _call_via_gemini(
     max_tokens: int | None = None,
 ) -> str:
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
     except ImportError as exc:
-        raise RuntimeError("google-generativeai 未安裝。請先執行: pip install google-generativeai") from exc
+        raise RuntimeError("google-genai 未安裝。請先執行: pip install google-genai") from exc
 
     api_key = Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY 未設定。請在 .env 中設定 GEMINI_API_KEY。")
 
-    genai.configure(api_key=api_key)
-
-    gen_cfg = genai.GenerationConfig(
+    client = genai.Client(api_key=api_key)
+    cfg = types.GenerateContentConfig(
         temperature=temperature if temperature is not None else Config.GEMINI_TEMPERATURE,
         **({"max_output_tokens": max_tokens} if max_tokens is not None else {}),
+        **({"system_instruction": system} if system else {}),
     )
-    model = genai.GenerativeModel(Config.GEMINI_MODEL, system_instruction=system)
-
-    parts: list = ([_image_to_gemini_blob(img) for img in images] if images else []) + [prompt]
+    parts = _build_gemini_parts(prompt, images)
 
     if history:
-        chat = model.start_chat(history=_history_to_gemini(history))
-        response = chat.send_message(parts, generation_config=gen_cfg)
+        converted = _history_to_gemini(history)
+        chat = client.chats.create(model=Config.GEMINI_MODEL, config=cfg, history=converted)
+        response = chat.send_message(parts)
     else:
-        response = model.generate_content(parts, generation_config=gen_cfg)
+        response = client.models.generate_content(
+            model=Config.GEMINI_MODEL, contents=parts, config=cfg
+        )
 
     return response.text or ""
 
@@ -145,33 +161,35 @@ def _stream_via_gemini(
     max_tokens: int | None = None,
 ) -> Iterator[str]:
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
     except ImportError as exc:
-        raise RuntimeError("google-generativeai 未安裝。請先執行: pip install google-generativeai") from exc
+        raise RuntimeError("google-genai 未安裝。請先執行: pip install google-genai") from exc
 
     api_key = Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY 未設定。請在 .env 中設定 GEMINI_API_KEY。")
 
-    genai.configure(api_key=api_key)
-
-    gen_cfg = genai.GenerationConfig(
+    client = genai.Client(api_key=api_key)
+    cfg = types.GenerateContentConfig(
         temperature=temperature if temperature is not None else Config.GEMINI_TEMPERATURE,
         **({"max_output_tokens": max_tokens} if max_tokens is not None else {}),
+        **({"system_instruction": system} if system else {}),
     )
-    model = genai.GenerativeModel(Config.GEMINI_MODEL, system_instruction=system)
-
-    parts: list = ([_image_to_gemini_blob(img) for img in images] if images else []) + [prompt]
+    parts = _build_gemini_parts(prompt, images)
 
     if history:
-        chat = model.start_chat(history=_history_to_gemini(history))
-        stream = chat.send_message(parts, generation_config=gen_cfg, stream=True)
+        converted = _history_to_gemini(history)
+        chat = client.chats.create(model=Config.GEMINI_MODEL, config=cfg, history=converted)
+        for chunk in chat.send_message_stream(parts):
+            if chunk.text:
+                yield chunk.text
     else:
-        stream = model.generate_content(parts, generation_config=gen_cfg, stream=True)
-
-    for chunk in stream:
-        if chunk.text:
-            yield chunk.text
+        for chunk in client.models.generate_content_stream(
+            model=Config.GEMINI_MODEL, contents=parts, config=cfg
+        ):
+            if chunk.text:
+                yield chunk.text
 
 
 # ── LiteLLM proxy path ───────────────────────────────────────────────────────

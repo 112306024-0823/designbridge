@@ -74,6 +74,8 @@ class DesignRequest(BaseModel):
     style_reference_image_path: Optional[str] = None
     no_style_reference: bool = False
     refine_mode: bool = False  # 細部微調模式：強制 routing 到 design_adjuster
+    output_aspect: str = "auto"  # 輸出長寬比：auto | 1:1 | 4:3 | 3:4 | 16:9 | 9:16
+    mask_image_path: Optional[str] = None  # 手繪遮罩路徑（refine 模式選填）
 
 # 2. 快取 Graph 實例
 graph = get_compiled_graph()
@@ -293,6 +295,8 @@ async def generate_design(request: DesignRequest):
             user_input["no_style_reference"] = True
         if request.refine_mode:
             user_input["refine_mode"] = True
+        if request.mask_image_path:
+            user_input["mask_image"] = request.mask_image_path
 
         initial_state = {"user_input": user_input}
 

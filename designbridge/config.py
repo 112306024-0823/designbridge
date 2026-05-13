@@ -55,6 +55,10 @@ class Config:
     FLUX_STEPS: int = int(os.getenv("DESIGNBRIDGE_FLUX_STEPS", "4"))
     ENABLE_FLUX_FALLBACK: bool = os.getenv("DESIGNBRIDGE_ENABLE_FLUX_FALLBACK", "true").lower() in ("1", "true", "yes")
 
+    # fal.ai Inference API (cloud inpainting via FLUX.1-Fill)
+    FAL_KEY: str | None = os.getenv("FAL_KEY")
+    FAL_INPAINT_MODEL: str = os.getenv("DESIGNBRIDGE_FAL_INPAINT_MODEL", "fal-ai/flux-pro/v1/fill")
+
     # Hugging Face Inference API (cloud Flux; no local download). Tried first when HF_TOKEN set.
     ENABLE_HF_INFERENCE: bool = os.getenv("DESIGNBRIDGE_ENABLE_HF_INFERENCE", "true").lower() in ("1", "true", "yes")
     HF_TOKEN: str | None = os.getenv("HF_TOKEN")

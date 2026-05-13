@@ -17,10 +17,13 @@ from designbridge.vision import run_visual_preprocessing
 from designbridge.schemas import RequirementJSON, StyleParamsJSON
 from designbridge.inpaint import (
     mask_from_segmentation,
+    expand_mask_by_segmentation,
     fallback_center_mask,
     build_inpaint_prompt,
     run_inpainting,
     run_hf_inpainting,
+    run_fal_inpainting,
+    load_mask_from_path,
 )
 
 def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
@@ -434,6 +437,60 @@ def style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     }
 
 
+_ZH_TO_SEG_LABELS: dict[str, list[str]] = {
+    "沙發": ["sofa", "couch"],
+    "椅子": ["chair"],
+    "桌子": ["table", "desk"],
+    "茶几": ["table"],
+    "窗簾": ["curtain"],
+    "地毯": ["carpet", "rug", "floor mat"],
+    "燈": ["lamp", "light"],
+    "床": ["bed"],
+    "牆": ["wall"],
+    "地板": ["floor"],
+    "天花板": ["ceiling"],
+    "植物": ["plant", "potted plant"],
+    "電視": ["tv", "monitor"],
+    "書櫃": ["bookcase", "shelf"],
+}
+
+
+def _labels_from_prompt(text: str) -> list[str]:
+    """
+    從 prompt 提取語義分割標籤。
+    優先用關鍵字字典（0ms），miss 時才呼叫 Gemini（靈活但慢）。
+    """
+    if not text:
+        return []
+
+    # 1. 關鍵字字典（本地，0ms）
+    labels = []
+    for zh, segs in _ZH_TO_SEG_LABELS.items():
+        if zh in text:
+            labels.extend(segs)
+    if labels:
+        print(f"[adjuster] keyword extracted labels: {labels}")
+        return labels
+
+    # 2. Gemini（關鍵字 miss 時才呼叫）
+    try:
+        from designbridge.llm import call_llm
+        result = call_llm(
+            f"From this interior design modification request, extract the names of objects/furniture "
+            f"that need to be modified. Return ONLY a comma-separated list of English nouns "
+            f"(e.g. sofa, curtain, chair). If unclear, return: furniture\n\nRequest: {text}",
+            max_tokens=40,
+        )
+        labels = [l.strip().lower() for l in result.split(",") if l.strip()]
+        if labels:
+            print(f"[adjuster] Gemini extracted labels: {labels}")
+            return labels
+    except Exception:
+        pass
+
+    return []
+
+
 def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     """
     Design Adjuster Agent：對初始圖片進行局部 inpainting。
@@ -449,6 +506,7 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
 
     image_path = user_input.get("initial_image", "")
     edit_scope = float(user_input.get("edit_scope", 0.2))
+    manual_mask_path = user_input.get("mask_image")   # 手繪遮罩路徑（選填）
 
     # 沒有原圖就無法 inpaint，跳過
     if not image_path or not Path(image_path).is_file():
@@ -463,43 +521,115 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     constraints = req.get("layout_constraints") or {}
     must_remove = constraints.get("must_remove") or []
     must_add = constraints.get("must_add") or []
-    # 要移除的物件 = mask 目標；要新增的物件 = prompt 目標
     target_labels = must_remove if must_remove else ["furniture"]
     target_objects = must_add if must_add else target_labels
 
-    # Mask 生成
-    seg_path = vision.get("segmentation")
-    seg_meta = vision.get("segmentation_meta")
+    # Mask 生成優先序：
+    #   有手繪 + 有 segmentation → 展開成完整物件遮罩（方式二）
+    #   只有手繪                 → 直接用手繪遮罩
+    #   只有 segmentation        → 從文字 prompt 解析物件標籤
+    #   都沒有                   → 中央 fallback
     original_img = Image.open(image_path)
     img_size = original_img.size
 
-    if seg_path and seg_meta and Path(str(seg_path)).is_file() and Path(str(seg_meta)).is_file():
-        mask = mask_from_segmentation(str(seg_path), str(seg_meta), target_labels, img_size)
-        mask_source = "segmentation"
-    else:
-        mask = fallback_center_mask(img_size)
-        mask_source = "fallback_center"
+    seg_path = vision.get("segmentation")
+    seg_meta = vision.get("segmentation_meta")
+    has_seg  = bool(seg_path and seg_meta
+                    and Path(str(seg_path)).is_file()
+                    and Path(str(seg_meta)).is_file())
+    print(f"[adjuster] seg_path: {seg_path}  exists={has_seg}")
 
-    # Prompt 組裝
-    prompt, negative_prompt = build_inpaint_prompt(req, style_params, target_objects)
+    if manual_mask_path and Path(str(manual_mask_path)).is_file():
+        drawn_mask = load_mask_from_path(str(manual_mask_path), img_size)
+        if has_seg:
+            # 方式二：手繪 → 自動展開成完整物件遮罩
+            mask = expand_mask_by_segmentation(
+                drawn_mask, str(seg_path), str(seg_meta), img_size
+            )
+            mask_source = "manual_expanded_by_seg"
+        else:
+            mask = drawn_mask
+            mask_source = "manual_drawing"
+    else:
+        # 從 text_prompt 解析目標物件
+        text_labels = _labels_from_prompt(user_input.get("text_prompt") or "")
+        effective_labels = text_labels or target_labels
+        print(f"[adjuster] effective_labels: {effective_labels}")
+        if has_seg:
+            mask = mask_from_segmentation(str(seg_path), str(seg_meta), effective_labels, img_size)
+            mask_source = f"segmentation({'+'.join(effective_labels[:3])})"
+        else:
+            mask = fallback_center_mask(img_size)
+            mask_source = "fallback_center"
+
+    # Prompt 組裝：使用者輸入 text_prompt 為主，風格資訊為輔
+    user_text = (user_input.get("text_prompt") or "").strip()
+    auto_prompt, negative_prompt = build_inpaint_prompt(req, style_params, target_objects)
+    if user_text:
+        # 嘗試用 Gemini 翻譯成英文（FLUX 效果更好），失敗就直接用原文
+        en_text = user_text
+        try:
+            from designbridge.llm import call_llm
+            translated = call_llm(
+                f"Translate this interior design modification request to English in one sentence. "
+                f"Return ONLY the translation, no extra words.\n\n{user_text}",
+                max_tokens=60,
+            )
+            if translated.strip():
+                en_text = translated.strip()
+                print(f"[adjuster] translated prompt: {en_text}")
+        except Exception:
+            pass
+        prompt = f"{en_text}. Photorealistic, high quality, seamless integration, well-lit interior."
+    else:
+        prompt = auto_prompt
+
+    # Debug：印出送出的 prompt 與 mask 狀況
+    mask_white = sum(1 for p in mask.getdata() if p > 128) if hasattr(mask, 'getdata') else -1
+    mask_total = mask.width * mask.height if hasattr(mask, 'width') else -1
+    print(f"[adjuster] prompt: {prompt[:120]}")
+    print(f"[adjuster] mask: {mask_white}/{mask_total} white px ({mask_white/mask_total:.1%} edit area)" if mask_total > 0 else "[adjuster] mask: unknown")
+    print(f"[adjuster] mask_source: {mask_source}")
+
+    # DRY_RUN 模式：只存遮罩，不呼叫任何 inpainting API（測試用）
+    import os
+    if os.getenv("ADJUSTER_DRY_RUN"):
+        dry_out = Path(Config.ARTIFACTS_DIR) / "render" / f"{task_id}_dry_mask.png"
+        dry_out.parent.mkdir(parents=True, exist_ok=True)
+        mask.save(str(dry_out))
+        print(f"[adjuster] DRY_RUN: 遮罩已存到 {dry_out}，跳過 inpainting")
+        return {
+            "generated_image": image_path,   # 回傳原圖，讓 renderer 跳過
+            "intermediate_outputs": {
+                **(state.get("intermediate_outputs") or {}),
+                "adjuster_agent": {"status": "dry_run", "mask_path": str(dry_out), "mask_source": mask_source},
+            }
+        }
 
     # strength：edit_scope 越小改動越保守（0.4~0.85）
     strength = max(0.4, min(0.85, edit_scope + 0.4))
 
-    out_path = Path(Config.ARTIFACTS_DIR) / "render" / f"{task_id}.png"
+    render_suffix = uuid.uuid4().hex[:8]
+    out_path = Path(Config.ARTIFACTS_DIR) / "render" / f"{task_id}_{render_suffix}.png"
     backend = "placeholder"
 
-    # 1. HF Inference API（雲端，不需本地模型）
-    if Config.HF_TOKEN:
+    # 1. fal.ai FLUX.1-Fill（最優先，品質最好）
+    if Config.FAL_KEY:
+        if run_fal_inpainting(image_path, mask, prompt, out_path):
+            backend = "fal_inpainting"
+
+    # 2. HF Inference API
+    if backend == "placeholder" and Config.HF_TOKEN:
         if run_hf_inpainting(image_path, mask, prompt, out_path):
             backend = "hf_inpainting"
 
-    # 2. 本地 SD Inpainting
+    # 3. 本地 SD Inpainting
     if backend == "placeholder":
-        if run_inpainting(image_path, mask, prompt, negative_prompt, strength, out_path):
+        if run_inpainting(image_path, mask, prompt, negative_prompt, strength, out_path,
+                          mask_path=manual_mask_path):
             backend = "sd_inpainting"
 
-    # 3. Fallback：複製原圖
+    # 4. Fallback：複製原圖
     if backend == "placeholder":
         out_path.parent.mkdir(parents=True, exist_ok=True)
         original_img.save(str(out_path))

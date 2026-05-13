@@ -23,6 +23,21 @@ from designbridge.config import Config
 _inpaint_pipeline: Any = None
 
 
+def _resolve_inpaint_size(
+    image_size: tuple[int, int],
+    max_edge: int = 512,
+) -> tuple[int, int]:
+    """
+    計算 inpainting 的目標尺寸：等比縮放至 max_edge，並對齊 64 的倍數。
+    SD 1.5 建議 512×512，最大不超過 768。
+    """
+    w, h = image_size
+    scale = min(max_edge / max(w, h), 1.0)
+    new_w = max(64, round(w * scale / 64) * 64)
+    new_h = max(64, round(h * scale / 64) * 64)
+    return int(new_w), int(new_h)
+
+
 def _is_inpaint_model_cached() -> bool:
     """檢查 inpainting 模型主要權重是否已在本機完整快取，不觸發下載。"""
     try:
@@ -88,8 +103,9 @@ def mask_from_segmentation(
     with open(seg_meta_path) as f:
         meta = json.load(f)
 
-    # meta 格式: {"labels": {"0": "wall", "3": "sofa", ...}}
-    label_to_id = {v: int(k) for k, v in meta.get("labels", {}).items()}
+    # meta 格式: {"present_labels": {"0": "wall", "3": "sofa", ...}}
+    labels_dict = meta.get("present_labels") or meta.get("labels") or {}
+    label_to_id = {v: int(k) for k, v in labels_dict.items()}
 
     mask_array = np.zeros(seg_array.shape, dtype=np.uint8)
     matched = []
@@ -106,6 +122,90 @@ def mask_from_segmentation(
 
     mask = Image.fromarray(mask_array).resize(image_size)
     # 膨脹邊緣讓 inpainting 邊界更自然
+    mask = mask.filter(ImageFilter.MaxFilter(15))
+    return mask
+
+
+# 背景類別：不應該被當作修改目標
+_BG_LABELS = {
+    "wall", "floor", "ceiling", "sky", "earth", "ground",
+    "window", "door", "stairs", "stairway", "escalator",
+    "column", "column, pillar", "step", "path",
+}
+
+
+def expand_mask_by_segmentation(
+    manual_mask: Any,
+    seg_path: str,
+    seg_meta_path: str,
+    image_size: tuple[int, int],
+    top_k: int = 2,
+) -> Any:
+    """
+    方式二：手繪遮罩 → 自動偵測被觸碰的物件 → 展開成完整物件遮罩。
+
+    步驟：
+    1. 把手繪遮罩縮放到 segmentation 尺寸
+    2. 排除背景類別（floor, wall, ceiling...）
+    3. 只取重疊比例最高的 top_k 個 class
+    4. 把這些 class 的完整像素塗白 → 輸出完整物件遮罩
+    """
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    seg_img = Image.open(seg_path)
+    seg_array = np.array(seg_img)
+    seg_h, seg_w = seg_array.shape
+
+    # 手繪遮罩縮放到 segmentation 尺寸
+    drawn = manual_mask.resize((seg_w, seg_h), Image.NEAREST).convert("L")
+    drawn_array = np.array(drawn) > 128
+
+    if not drawn_array.any():
+        return fallback_center_mask(image_size)
+
+    with open(seg_meta_path) as f:
+        meta = json.load(f)
+    labels_dict = meta.get("present_labels") or meta.get("labels") or {}
+
+    drawn_count = int(drawn_array.sum())
+    touched_ids = set(seg_array[drawn_array].tolist())
+
+    # 計算每個 class 的重疊比例，排除背景
+    candidates = []
+    for cid in touched_ids:
+        label = labels_dict.get(str(cid), "").strip().lower()
+        if label in _BG_LABELS:
+            continue
+        overlap = int(((seg_array == cid) & drawn_array).sum())
+        ratio = overlap / drawn_count
+        candidates.append((ratio, cid, label))
+
+    if not candidates:
+        return fallback_center_mask(image_size)
+
+    # 只取重疊比例最高的 top_k 個
+    candidates.sort(reverse=True)
+    selected = candidates[:top_k]
+    for ratio, cid, label in selected:
+        print(f"[adjuster] expand: class {cid} ({label})  overlap={ratio:.1%}")
+
+    # 把選中 class 的完整像素塗白
+    valid_ids = [cid for _, cid, _ in selected]
+    mask_array = np.zeros(seg_array.shape, dtype=np.uint8)
+    for cid in valid_ids:
+        mask_array[seg_array == cid] = 255
+
+    mask = Image.fromarray(mask_array).resize(image_size, Image.NEAREST)
+    mask = mask.filter(ImageFilter.MaxFilter(15))
+    return mask
+
+    # 把這些 class 的完整像素塗白
+    mask_array = np.zeros(seg_array.shape, dtype=np.uint8)
+    for cid in valid_ids:
+        mask_array[seg_array == cid] = 255
+
+    mask = Image.fromarray(mask_array).resize(image_size, Image.NEAREST)
     mask = mask.filter(ImageFilter.MaxFilter(15))
     return mask
 
@@ -182,6 +282,13 @@ def build_inpaint_prompt(
 # Inpainting execution
 # ---------------------------------------------------------------------------
 
+def load_mask_from_path(mask_path: str, image_size: tuple[int, int]) -> Any:
+    """從路徑載入手繪遮罩並 resize 到 image_size。"""
+    from PIL import Image
+    mask = Image.open(mask_path).convert("L")
+    return mask.resize(image_size)
+
+
 def run_inpainting(
     image_path: str,
     mask: Any,
@@ -189,6 +296,7 @@ def run_inpainting(
     negative_prompt: str,
     strength: float,
     out_path: Path,
+    mask_path: str | None = None,
 ) -> bool:
     """
     執行 SD inpainting，輸出修改後圖片。
@@ -214,6 +322,10 @@ def run_inpainting(
 
         original = Image.open(image_path).convert("RGB")
         orig_w, orig_h = original.size
+
+        # 優先使用手繪遮罩，否則用自動生成的 mask
+        if mask_path:
+            mask = load_mask_from_path(mask_path, (orig_w, orig_h))
 
         # Keep original aspect ratio instead of forcing square output.
         target_size = _resolve_inpaint_size((orig_w, orig_h))
@@ -243,6 +355,100 @@ def run_inpainting(
     except Exception as e:
         import traceback
         print(f"⚠️  Inpainting failed ({type(e).__name__}: {e})")
+        traceback.print_exc()
+        return False
+
+
+def run_fal_inpainting(
+    image_path: str,
+    mask: Any,
+    prompt: str,
+    out_path: Path,
+    mask_path: str | None = None,
+) -> bool:
+    """
+    使用 fal.ai FLUX.1-Fill 執行 inpainting（雲端，免下載模型）。
+
+    Args:
+        image_path: 原始圖片路徑
+        mask: PIL.Image 灰階 mask（白=修改，黑=保留）
+        prompt: inpainting prompt
+        out_path: 輸出路徑
+        mask_path: 若有手繪遮罩路徑，優先使用
+
+    Returns:
+        True = 成功，False = 失敗
+    """
+    if not Config.FAL_KEY:
+        return False
+    try:
+        import base64
+        import io
+        import os
+        import urllib.request
+        import fal_client
+        from PIL import Image
+
+        os.environ.setdefault("FAL_KEY", Config.FAL_KEY)
+
+        # 載入原圖
+        original = Image.open(image_path).convert("RGB")
+        orig_size = original.size  # (width, height)
+
+        # 決定遮罩來源：手繪路徑 > 傳入的 PIL mask
+        if mask_path and Path(mask_path).is_file():
+            mask_img = Image.open(mask_path).convert("L")
+        else:
+            mask_img = mask.convert("L") if hasattr(mask, "convert") else mask
+
+        # 確保 mask 與原圖尺寸一致（畫布是縮放版本，必須 resize 回原圖大小）
+        if mask_img.size != orig_size:
+            mask_img = mask_img.resize(orig_size, Image.NEAREST)
+
+        # Debug：把實際傳給 fal.ai 的圖片和遮罩存到本地
+        _debug_dir = out_path.parent / "fal_debug"
+        _debug_dir.mkdir(parents=True, exist_ok=True)
+        original.save(str(_debug_dir / "input_image.png"))
+        mask_img.save(str(_debug_dir / "input_mask.png"))
+        white_px = sum(1 for p in mask_img.getdata() if p > 128)
+        total_px = mask_img.width * mask_img.height
+        print(f"[fal] prompt: {prompt[:100]}")
+        print(f"[fal] image size: {orig_size}")
+        print(f"[fal] mask white px: {white_px}/{total_px} ({white_px/total_px:.1%})")
+        print(f"[fal] debug files → {_debug_dir}")
+
+        def _to_data_url(img: Any) -> str:
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            return f"data:image/png;base64,{b64}"
+
+        result = fal_client.subscribe(
+            Config.FAL_INPAINT_MODEL,
+            arguments={
+                "prompt": prompt,
+                "image_url": _to_data_url(original),
+                "mask_url": _to_data_url(mask_img),
+                "num_images": 1,
+                "output_format": "png",
+                "safety_tolerance": "2",
+            },
+        )
+
+        images = result.get("images") or []
+        if not images:
+            print("⚠️  fal.ai returned no images")
+            return False
+
+        result_url = images[0]["url"]
+        print(f"✅  fal.ai inpainting success → {result_url[:60]}...")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        urllib.request.urlretrieve(result_url, str(out_path))
+        return True
+
+    except Exception as e:
+        import traceback
+        print(f"⚠️  fal.ai inpainting failed ({type(e).__name__}: {e})")
         traceback.print_exc()
         return False
 

@@ -4,6 +4,7 @@ import { useImageField } from '@/composables/useImageField'
 import SidebarForm from '@/components/SidebarForm.vue'
 import ResultPanel from '@/components/ResultPanel.vue'
 import StyleSuggestions from '@/components/StyleSuggestions.vue'
+import RefineCanvas from '@/components/RefineCanvas.vue'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -16,6 +17,7 @@ const styleError = ref('')
 const manualImagePath  = ref('')
 const showManualPath   = ref(false)
 const noStyleReference = ref(false)
+const outputAspect     = ref('auto')
 const spaceImage    = useImageField()
 const styleRefImage = useImageField()
 const result = ref(null)
@@ -24,6 +26,10 @@ const error = ref('')
 let currentRequestId = 0
 const submitKey = ref(0)
 const matchedStylePreview = ref(null)
+const manualMaskPath = ref('')   // 手繪遮罩上傳後的伺服器路徑
+const brushSize      = ref(32)
+const drawMode       = ref('draw')
+const refineCanvasRef = ref(null)
 const styleRetrievalMode = ref('text-to-image')
 
 // 模式：'design'（整體設計） | 'refine'（細部微調）
@@ -144,6 +150,11 @@ async function fetchStyleOptions(retries = 5, delayMs = 1500) {
   styleLoading.value = false
 }
 
+async function handleMaskReady(blob) {
+  const file = new File([blob], 'mask.png', { type: 'image/png' })
+  manualMaskPath.value = await uploadFile(file)
+}
+
 async function uploadFile(file) {
   const body = new FormData()
   body.append('file', file) 
@@ -201,6 +212,8 @@ async function handleSubmit() {
         style_reference_image_path,
         no_style_reference: mode.value === 'refine' || noStyleReference.value,
         refine_mode: mode.value === 'refine',
+        output_aspect: outputAspect.value,
+        mask_image_path: manualMaskPath.value || undefined,
       }),
     })
     if (!res.ok) throw new Error(`${res.status}`)
@@ -222,10 +235,71 @@ async function handleSubmit() {
   }
 }
 
+function handleConfirmStyle(candidate) {
+  confirmedStyle.value = candidate
+}
+
+function handleClearConfirmedStyle() {
+  confirmedStyle.value = null
+}
+
+function handleChangeRetrievalMode(mode) {
+  styleRetrievalMode.value = mode
+  fetchStyleCandidates()
+}
+
 // ResultPanel 的「細部微調」按鈕觸發：切換模式並鎖定當前生圖為基底
 function handleRefine() {
   mode.value = 'refine'
-  // lastGeneratedImage 已在 handleSubmit 的 result 賦值時更新，這裡不需要再設定
+}
+
+// refine 模式送出：從 RefineCanvas 取得遮罩後送 API
+async function handleRefineSubmit() {
+  if (!textPrompt.value.trim()) { error.value = '請輸入調整需求'; return }
+  const requestId = ++currentRequestId
+  error.value = ''
+  result.value = null
+  loading.value = true
+  try {
+    let mask_image_path
+    const maskBlob = await refineCanvasRef.value?.getMaskBlob()
+    if (maskBlob) {
+      mask_image_path = await uploadFile(new File([maskBlob], 'mask.png', { type: 'image/png' }))
+      manualMaskPath.value = mask_image_path
+    }
+
+    const initial_image_path = lastGeneratedImage.value?.path
+      || (spaceImage.file ? await uploadFile(spaceImage.file) : manualImagePath.value.trim() || undefined)
+
+    const res = await fetch(`${API_BASE}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text_prompt: textPrompt.value,
+        edit_scope: editScope.value,
+        initial_image_path,
+        no_style_reference: true,
+        refine_mode: true,
+        output_aspect: outputAspect.value,
+        mask_image_path,
+      }),
+    })
+    if (!res.ok) throw new Error(`${res.status}`)
+    const data = await res.json()
+    if (requestId === currentRequestId) {
+      result.value = data
+      if (data.generated_image_path) {
+        lastGeneratedImage.value = {
+          path: data.generated_image_path,
+          url: data.generated_image_url || null,
+        }
+      }
+    }
+  } catch (e) {
+    if (requestId === currentRequestId) error.value = e.message
+  } finally {
+    if (requestId === currentRequestId) loading.value = false
+  }
 }
 
 onMounted(fetchStyleOptions)
@@ -240,8 +314,24 @@ onMounted(fetchStyleOptions)
           <span class="logo-text">DesignBridge</span>
         </div>
         <p class="logo-tagline">AI 室內設計助手</p>
+
+        <div class="mode-tabs">
+          <button
+            :class="['mode-tab', { active: mode === 'design' }]"
+            @click="mode = 'design'"
+          >
+            裝潢圖生成
+          </button>
+          <button
+            :class="['mode-tab', { active: mode === 'refine' }]"
+            @click="mode = 'refine'"
+          >
+            細部編輯
+          </button>
+        </div>
       </div>
 
+      <div class="sidebar-body">
       <SidebarForm
         v-model:textPrompt="textPrompt"
         v-model:editScope="editScope"
@@ -250,6 +340,9 @@ onMounted(fetchStyleOptions)
         v-model:showManualPath="showManualPath"
         v-model:noStyleReference="noStyleReference"
         v-model:mode="mode"
+        v-model:outputAspect="outputAspect"
+        v-model:brushSize="brushSize"
+        v-model:drawMode="drawMode"
         :spaceImage="spaceImage"
         :styleRefImage="styleRefImage"
         :styleOptions="styleOptions"
@@ -260,23 +353,56 @@ onMounted(fetchStyleOptions)
         :baseImageLabel="baseImageLabel"
         :loading="loading"
         :error="error"
-        @submit="handleSubmit"
+        @submit="mode === 'refine' ? handleRefineSubmit() : handleSubmit()"
+        @mask-ready="handleMaskReady"
       />
+      </div>
     </aside>
 
     <main class="content">
-      <StyleSuggestions
-        v-if="showSuggestions"
-        :candidates="styleCandidates"
-        :confirmed="confirmedStyle"
-        :loading="candidatesLoading"
-        :retrieval-mode="styleRetrievalMode"
-        :api-base="API_BASE"
-        @confirm="handleConfirmStyle"
-        @clear="handleClearConfirmedStyle"
-        @change-mode="handleChangeRetrievalMode"
-      />
-      <ResultPanel v-else :key="submitKey" :result="result" :loading="loading" @refine="handleRefine" />
+      <!-- 細部微調模式 -->
+      <template v-if="mode === 'refine' && baseImagePreview">
+        <!-- 生成中遮罩 -->
+        <div v-if="loading" class="refine-loading">
+          <div class="refine-spinner" />
+          <span>AI 生成中...</span>
+        </div>
+
+        <!-- 生成結果（有結果時顯示，可繼續再次編輯） -->
+        <div v-else-if="result?.generated_image_url" class="refine-result">
+          <div class="refine-result-header">
+            <span class="refine-result-label">生成結果</span>
+            <button class="refine-continue-btn" @click="result = null">繼續編輯</button>
+          </div>
+          <img :src="result.generated_image_url" class="refine-result-img" alt="生成結果" />
+        </div>
+
+        <!-- 編輯畫布 -->
+        <RefineCanvas
+          v-else
+          ref="refineCanvasRef"
+          :imageUrl="baseImagePreview"
+          :brushSize="brushSize"
+          :drawMode="drawMode"
+          class="refine-canvas-area"
+        />
+      </template>
+
+      <!-- 整體設計：風格推薦 / 結果 -->
+      <template v-else>
+        <StyleSuggestions
+          v-if="showSuggestions"
+          :candidates="styleCandidates"
+          :confirmed="confirmedStyle"
+          :loading="candidatesLoading"
+          :retrieval-mode="styleRetrievalMode"
+          :api-base="API_BASE"
+          @confirm="handleConfirmStyle"
+          @clear="handleClearConfirmedStyle"
+          @change-mode="handleChangeRetrievalMode"
+        />
+        <ResultPanel v-else :key="submitKey" :result="result" :loading="loading" @refine="handleRefine" />
+      </template>
     </main>
   </div>
 </template>
@@ -293,8 +419,8 @@ onMounted(fetchStyleOptions)
 
 /* ── Sidebar ── */
 .sidebar {
-  width: 380px;
-  min-width: 380px;
+  width: 420px;
+  min-width: 420px;
   background: rgba(255, 255, 255, 0.84);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
@@ -304,10 +430,110 @@ onMounted(fetchStyleOptions)
   overflow-y: auto;
 }
 
+.refine-canvas-area {
+  width: 100%;
+  height: 100%;
+  flex: 1;
+}
+
+/* 生成中 */
+.refine-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  color: #7c5cbf;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.refine-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(124, 92, 191, 0.2);
+  border-top-color: #7c5cbf;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 生成結果 */
+.refine-result {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+.refine-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 720px;
+}
+.refine-result-label {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #3d2b6e;
+}
+.refine-continue-btn {
+  padding: 0.4rem 1rem;
+  border: 1.5px solid #7c5cbf;
+  border-radius: 8px;
+  background: transparent;
+  color: #7c5cbf;
+  font-size: 0.82rem;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.refine-continue-btn:hover { background: #f0eaff; }
+.refine-result-img {
+  width: 100%;
+  max-width: 720px;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  object-fit: contain;
+}
+
 .sidebar-header {
   padding: 1.75rem 2rem 1.25rem;
   border-bottom: 1px solid rgba(180, 150, 230, 0.14);
   flex-shrink: 0;
+}
+
+.mode-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.mode-tab {
+  flex: 1;
+  padding: 0.6rem 0;
+  border: 2px solid #d4c4ef;
+  border-radius: 12px;
+  background: transparent;
+  color: #7c5cbf;
+  font-size: 0.88rem;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+.mode-tab:hover:not(.active) {
+  background: #f0eaff;
+  border-color: #b49edd;
+}
+.mode-tab.active {
+  background: linear-gradient(135deg, #7c5cbf 0%, #a06edb 100%);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(124, 92, 191, 0.35);
 }
 
 .logo {

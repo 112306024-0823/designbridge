@@ -7,9 +7,6 @@ const props = defineProps({
   result:  { type: Object,  default: null },
   loading: { type: Boolean, default: false },
 })
-<<<<<<< HEAD
-defineEmits(['refine'])
-=======
 
 const styleReferenceImageUrl = computed(() => {
   const result = props.result
@@ -34,7 +31,6 @@ const styleReferenceImageUrl = computed(() => {
   }
   return ''
 })
->>>>>>> 6b5634833ee0064b68d8eb625af2a9e4536a9e85
 </script>
 
 <template>
@@ -75,21 +71,6 @@ const styleReferenceImageUrl = computed(() => {
         </div>
       </div>
 
-<<<<<<< HEAD
-      <!-- 生成圖 -->
-      <div v-if="result.generated_image_path" class="result-section">
-        <h3>🖼 生成圖</h3>
-        <img
-          v-if="result.generated_image_url"
-          :src="result.generated_image_url"
-          alt="生成圖"
-          class="generated-image"
-        />
-        <p class="path">{{ result.generated_image_path }}</p>
-        <button class="refine-btn" @click="$emit('refine')">
-          ✏️ 在此基礎上細部微調
-        </button>
-=======
       <!-- 生成圖 + 風格參考圖 -->
       <div
         v-if="result.generated_image_path || styleReferenceImageUrl"
@@ -133,7 +114,6 @@ const styleReferenceImageUrl = computed(() => {
           </div>
         </div>
 
->>>>>>> 6b5634833ee0064b68d8eb625af2a9e4536a9e85
       </div>
 
       <!-- 結構化需求 -->
@@ -444,37 +424,6 @@ const styleReferenceImageUrl = computed(() => {
   }
 }
 
-<<<<<<< HEAD
-.refine-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin-top: 0.75rem;
-  padding: 0.55rem 1.1rem;
-  border: 1.5px solid #7c5cbf;
-  border-radius: 8px;
-  background: var(--primary-light);
-  color: var(--primary);
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.refine-btn:hover {
-  background: #ede0ff;
-  border-color: #5a3d8a;
-  color: #3d2b6e;
-}
-
-pre {
-  background: rgba(240, 235, 251, 0.8);
-  padding: 1rem;
-  border-radius: 8px;
-  overflow-x: auto;
-  font-size: 0.8rem;
-  line-height: 1.6;
-  color: #3d2b6e;
-=======
 /* Responsive */
 @media (max-width: 768px) {
   .image-row {
@@ -492,7 +441,6 @@ pre {
     height: 44px;
   }
   .strip-text { writing-mode: unset; }
->>>>>>> 6b5634833ee0064b68d8eb625af2a9e4536a9e85
 }
 
 /* Cards */
