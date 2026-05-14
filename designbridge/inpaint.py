@@ -191,7 +191,6 @@ def build_inpaint_prompt(
 
     return positive_prompt, negative_prompt
 
-
 # ---------------------------------------------------------------------------
 # Inpainting execution
 # ---------------------------------------------------------------------------
@@ -238,7 +237,7 @@ def run_inpainting(
             mask_image=mask_resized,
             strength=strength,
             num_inference_steps=30,
-            guidance_scale=7.5,
+            guidance_scale=2.5,
         ).images[0]
 
         # 將結果貼回原始解析度（只更新 mask 區域）

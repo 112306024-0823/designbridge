@@ -11,6 +11,7 @@ const showManualPath   = defineModel('showManualPath',   { default: false })
 const noStyleReference = defineModel('noStyleReference', { default: false })
 const familyNeeds  = defineModel('familyNeeds',  { default: () => [] })
 const fengshuiRules = defineModel('fengshuiRules', { default: () => [] })
+const styleMethod      = defineModel('styleMethod',      { default: 'ai_analysis' })
 
 const FAMILY_OPTIONS = [
   { value: 'children',    label: '有小孩' },
@@ -200,6 +201,29 @@ defineEmits(['submit'])
           @change="styleRefImage.onChange"
           @remove="styleRefImage.remove"
         />
+        <div v-if="styleRefImage.preview" class="radio-group style-method-group">
+          <label :class="{ active: styleMethod === 'ai_analysis' }">
+            <input type="radio" v-model="styleMethod" value="ai_analysis" />
+            <div class="radio-content">
+              <strong>AI 分析風格</strong>
+              <small>Gemini 解析圖片色調，注入 prompt</small>
+            </div>
+          </label>
+          <label :class="{ active: styleMethod === 'redux' }">
+            <input type="radio" v-model="styleMethod" value="redux" />
+            <div class="radio-content">
+              <strong>FLUX.1-Redux</strong>
+              <small>以圖為主直接做風格遷移</small>
+            </div>
+          </label>
+          <label :class="{ active: styleMethod === 'ipadapter' }">
+            <input type="radio" v-model="styleMethod" value="ipadapter" />
+            <div class="radio-content">
+              <strong>IP-Adapter</strong>
+              <small>文字定空間類型，圖像注入風格</small>
+            </div>
+          </label>
+        </div>
         <div v-if="!styleRefImage.preview && matchedStylePreview?.image_url" class="matched-preview">
           <div class="matched-label">
             AI 依描述自動選取：<strong>{{ matchedStylePreview.style_name }}</strong>
@@ -361,6 +385,12 @@ select:focus { outline: none; border-color: var(--primary); background: #fff; }
   border-radius: var(--radius-md);
   border: 1px dashed var(--primary-border);
 }
+
+/* Style method toggle (compact) */
+.style-method-group { margin-top: 0.25rem; }
+.style-method-group label { padding: 0.45rem 0.75rem; }
+.style-method-group .radio-content strong { font-size: 0.8rem; }
+.style-method-group .radio-content small  { font-size: 0.68rem; }
 
 /* Matched preview */
 .matched-preview { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.15rem; }

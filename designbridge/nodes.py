@@ -576,6 +576,27 @@ def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     }
 
 
+def _analyze_style_image_with_gemini(image_path: str) -> str:
+    """Use Gemini vision to extract a concise style description from a reference image.
+    Returns an English string ready to append to a generation prompt.
+    """
+    try:
+        from designbridge.llm import call_llm
+
+        analysis_prompt = (
+            "Analyze this interior design style reference image. "
+            "Describe concisely in English: color palette, materials and textures, "
+            "furniture style, lighting mood, and overall atmosphere. "
+            "Output only the description (no headers, no bullet points), "
+            "suitable for appending to an image generation prompt. Under 60 words."
+        )
+        desc = call_llm(analysis_prompt, images=[image_path])
+        return desc.strip()
+    except Exception as e:
+        print(f"⚠️  Gemini style image analysis failed: {e}")
+        return ""
+
+
 def _build_imagen_prompt_from_requirement(
     req: dict[str, Any],
     style_params: dict[str, Any] | None = None,
@@ -726,6 +747,8 @@ def _renderer_placeholder_image(
 # 快取模型，不用每次都載入
 _sdxl_pipeline: Any = None
 _controlnet_pipeline: Any = None
+_flux_redux_prior: Any = None
+_flux_redux_pipe: Any = None
 
 
 def _get_sdxl_pipeline():
@@ -817,6 +840,76 @@ def _render_hf_inference(
         return False
 
 
+def _render_hf_inference_redux(
+    prompt: str,
+    style_image_path: str,
+    out_path: Path,
+    output_size: tuple[int, int] = (1024, 1024),
+) -> bool:
+    """
+    Generate image via FLUX.1-Redux-dev using a style reference image + text prompt.
+    Tries JSON payload (image base64 + prompt) first; falls back to raw image bytes.
+    Returns True on success.
+    """
+    api_key = Config.HF_TOKEN
+    if not api_key:
+        return False
+    try:
+        import base64
+        import io
+        import requests
+        from PIL import Image
+
+        style_img = Image.open(style_image_path).convert("RGB")
+        buf = io.BytesIO()
+        style_img.save(buf, format="JPEG", quality=90)
+        image_bytes = buf.getvalue()
+        width, height = output_size
+
+        url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-Redux-dev"
+        auth_header = {"Authorization": f"Bearer {api_key}"}
+
+        print(f"🎨 FLUX.1-Redux 風格參考生圖：{Path(style_image_path).name}")
+
+        # 優先：JSON payload 帶入 prompt，讓文字需求也影響生成
+        payload: dict = {
+            "inputs": base64.b64encode(image_bytes).decode(),
+            "parameters": {"width": width, "height": height},
+        }
+        if prompt.strip():
+            payload["parameters"]["prompt"] = prompt.strip()
+
+        response = requests.post(
+            url,
+            headers={**auth_header, "Content-Type": "application/json"},
+            json=payload,
+            timeout=120,
+        )
+
+        # 若 API 不支援 JSON 格式，退回純圖片 bytes
+        if response.status_code in (400, 422):
+            print(f"⚠️  FLUX.1-Redux JSON payload 不支援，改用 raw image bytes")
+            response = requests.post(
+                url,
+                headers={**auth_header, "Content-Type": "image/jpeg"},
+                data=image_bytes,
+                timeout=120,
+            )
+
+        if response.status_code != 200:
+            print(f"⚠️  FLUX.1-Redux HTTP {response.status_code}: {response.text[:200]}")
+            return False
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        result_img = Image.open(io.BytesIO(response.content))
+        result_img.save(str(out_path))
+        return True
+    except Exception as e:
+        import traceback
+        print(f"⚠️  FLUX.1-Redux render failed ({type(e).__name__}: {e})")
+        traceback.print_exc()
+        return False
+
+
 def _get_sd_pipeline():
     """Load SD 3.5 pipeline once and cache it."""
     global _sd_pipeline
@@ -849,6 +942,280 @@ def _get_flux_pipeline():
         kwargs["token"] = Config.HF_TOKEN
     _flux_pipeline = FluxPipeline.from_pretrained(Config.FLUX_MODEL, **kwargs).to(device)
     return _flux_pipeline
+
+
+def _get_flux_redux_pipelines():
+    """Load FLUX.1-Redux prior + FLUX.1-dev backbone once and cache them.
+    CPU 推理非常慢（30 分鐘以上 / 張），建議有 GPU 再用。
+    需要 HF_TOKEN 且已接受 black-forest-labs/FLUX.1-dev 授權。
+    """
+    global _flux_redux_prior, _flux_redux_pipe
+    if _flux_redux_prior is not None and _flux_redux_pipe is not None:
+        return _flux_redux_prior, _flux_redux_pipe
+
+    from diffusers import FluxPriorReduxPipeline, FluxPipeline
+    import torch
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if device == "cuda" else torch.float32
+
+    # CPU 模式明確指定 device_map=None，避免 accelerate 用 meta tensor 初始化
+    # 造成後續 .to() / enable_sequential_cpu_offload() 失敗
+    load_kwargs: dict = {"torch_dtype": dtype}
+    if device == "cpu":
+        load_kwargs["device_map"] = None
+
+    print("⏳ 載入 FLUX.1-Redux prior（首次約需數分鐘下載）...")
+    _flux_redux_prior = FluxPriorReduxPipeline.from_pretrained(
+        "black-forest-labs/FLUX.1-Redux-dev",
+        **load_kwargs,
+    )
+
+    print("⏳ 載入 FLUX.1-dev backbone（含文字編碼器，支援 prompt + 風格圖）...")
+    _flux_redux_pipe = FluxPipeline.from_pretrained(
+        "black-forest-labs/FLUX.1-dev",
+        **load_kwargs,
+    )
+
+    if device == "cuda":
+        # GPU 模式：model cpu offload 讓各層推理完即釋放 VRAM，峰值從 ~50GB 降到約 8-12GB
+        _flux_redux_prior.enable_model_cpu_offload()
+        _flux_redux_pipe.enable_model_cpu_offload()
+    else:
+        # CPU 模式：模型已直接載入 CPU RAM，無需額外 offload
+        print("⚠️  CPU 模式：推理速度極慢，每張可能需要 30 分鐘以上")
+
+    print("✅ FLUX.1-Redux 載入完成")
+    return _flux_redux_prior, _flux_redux_pipe
+
+
+def _render_flux_redux_local(
+    style_image_path: str,
+    out_path: Path,
+    prompt: str = "",
+    num_steps: int = 4,
+    guidance_scale: float = 3.5,
+    output_size: tuple[int, int] = (512, 512),
+    text_weight: float = 0.35,
+) -> bool:
+    """Generate image via local FLUX.1-Redux pipeline using a style reference image + text prompt.
+
+    text_weight controls how much the text prompt steers the global semantic direction
+    via CLIP pooled_prompt_embeds (0.0 = pure image style, 1.0 = pure text direction).
+    prompt_embeds (T5-equivalent spatial path) always comes from the Redux image encoder.
+    """
+    try:
+        from PIL import Image
+        import torch
+
+        pipe_prior, pipe = _get_flux_redux_pipelines()
+        style_img = Image.open(style_image_path).convert("RGB")
+        width, height = output_size
+        print(f"🎨 FLUX.1-Redux 本地推理中（{width}×{height}，steps={num_steps}）...")
+
+        prior_out = pipe_prior(style_img)
+
+        pipe_kwargs: dict = {
+            "guidance_scale": guidance_scale,
+            "num_inference_steps": num_steps,
+            "height": height,
+            "width": width,
+            **prior_out,  # prompt_embeds + pooled_prompt_embeds，均來自圖像
+        }
+
+        if prompt.strip() and text_weight > 0.0 and pipe.text_encoder is not None:
+            # CLIP 路（pooled_prompt_embeds）：用文字的全局語意向量取代/混合圖像的
+            # T5 路（prompt_embeds）保持 Redux 圖像版本不動，維持視覺風格細節
+            clip_inputs = pipe.tokenizer(
+                [prompt.strip()],
+                padding="max_length",
+                max_length=77,
+                truncation=True,
+                return_tensors="pt",
+            )
+            with torch.no_grad():
+                text_pooled = pipe.text_encoder(
+                    clip_inputs.input_ids.to(pipe.text_encoder.device),
+                    output_hidden_states=False,
+                ).pooler_output  # [1, 768]
+
+            image_pooled = prior_out.get("pooled_prompt_embeds")
+            if image_pooled is not None and text_weight < 1.0:
+                # 在圖像 pooled 和文字 pooled 之間插值，保留圖像風格的全局感
+                pipe_kwargs["pooled_prompt_embeds"] = (
+                    (1.0 - text_weight) * image_pooled + text_weight * text_pooled
+                )
+            else:
+                pipe_kwargs["pooled_prompt_embeds"] = text_pooled
+
+            print(f"   文字語意注入 text_weight={text_weight}：{prompt[:60]}...")
+
+        result = pipe(**pipe_kwargs).images[0]
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        result.save(str(out_path))
+        return True
+    except Exception as e:
+        err = str(e)
+        if "GatedRepo" in err or "local cache" in err or "connection" in err.lower():
+            print(f"⚠️  FLUX.1-Redux 無法載入（模型未下載或授權未接受）：{err[:120]}")
+            print("    → 請至 https://huggingface.co/black-forest-labs/FLUX.1-Redux-dev 接受授權後重試")
+        else:
+            import traceback
+            print(f"⚠️  FLUX.1-Redux 本地推理失敗：{e}")
+            traceback.print_exc()
+        return False
+
+
+def _render_flux_redux_fal(
+    style_image_path: str,
+    out_path: Path,
+    prompt: str = "",
+    num_steps: int = 28,
+    guidance_scale: float = 3.5,
+    output_size: tuple[int, int] = (1024, 1024),
+) -> bool:
+    """Generate image via fal.ai FLUX.1-Redux API (cloud, fast)."""
+    fal_key = Config.FAL_KEY
+    if not fal_key:
+        return False
+    try:
+        import fal_client
+        import requests
+        import os
+
+        os.environ["FAL_KEY"] = fal_key
+
+        print("☁️  fal.ai FLUX.1-Redux 推理中...")
+
+        # 上傳本地風格圖到 fal.ai storage
+        with open(style_image_path, "rb") as f:
+            image_url = fal_client.upload(f.read(), content_type="image/jpeg")
+
+        width, height = output_size
+        size_map = {
+            (1024, 1024): "square_hd",
+            (512, 512): "square",
+            (1024, 768): "landscape_4_3",
+            (768, 1024): "portrait_4_3",
+            (1280, 720): "landscape_16_9",
+            (720, 1280): "portrait_16_9",
+        }
+        image_size = size_map.get((width, height), {"width": width, "height": height})
+
+        arguments: dict = {
+            "image_url": image_url,
+            "num_inference_steps": num_steps,
+            "guidance_scale": guidance_scale,
+            "image_size": image_size,
+        }
+        if prompt.strip():
+            arguments["prompt"] = prompt.strip()
+
+        result = fal_client.subscribe(
+            "fal-ai/flux-1/dev/redux",
+            arguments=arguments,
+            with_logs=False,
+        )
+
+        img_url = result["images"][0]["url"]
+        resp = requests.get(img_url, timeout=60)
+        resp.raise_for_status()
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(resp.content)
+        print(f"✅ fal.ai FLUX.1-Redux 完成：{out_path.name}")
+        return True
+
+    except ImportError:
+        print("⚠️  fal_client 未安裝，請執行：pip install fal-client")
+        return False
+    except Exception as e:
+        print(f"⚠️  fal.ai FLUX.1-Redux 失敗：{e}")
+        return False
+
+
+def _render_flux_ipadapter_fal(
+    style_image_path: str,
+    out_path: Path,
+    prompt: str,
+    ip_adapter_scale: float = 0.6,
+    num_steps: int = 28,
+    guidance_scale: float = 3.5,
+    output_size: tuple[int, int] = (1024, 1024),
+) -> bool:
+    """Generate image via fal.ai FLUX-general + XLabs IP-Adapter.
+
+    Text prompt (T5 full sequence) controls room type and content.
+    Style reference image controls visual style via IP-Adapter cross-attention.
+    ip_adapter_scale: 0.0 = ignore image, 1.0 = full style transfer.
+    """
+    fal_key = Config.FAL_KEY
+    if not fal_key:
+        return False
+    if not prompt.strip():
+        print("⚠️  fal.ai IP-Adapter 需要文字 prompt 描述目標空間")
+        return False
+    try:
+        import fal_client
+        import requests
+        import os
+
+        os.environ["FAL_KEY"] = fal_key
+
+        print("☁️  fal.ai FLUX-general + IP-Adapter 推理中...")
+
+        with open(style_image_path, "rb") as f:
+            image_url = fal_client.upload(f.read(), content_type="image/jpeg")
+
+        width, height = output_size
+        size_map = {
+            (1024, 1024): "square_hd",
+            (512, 512): "square",
+            (1024, 768): "landscape_4_3",
+            (768, 1024): "portrait_4_3",
+            (1280, 720): "landscape_16_9",
+            (720, 1280): "portrait_16_9",
+        }
+        image_size = size_map.get((width, height), {"width": width, "height": height})
+
+        arguments: dict = {
+            "prompt": prompt.strip(),
+            "num_inference_steps": num_steps,
+            "guidance_scale": guidance_scale,
+            "image_size": image_size,
+            "ip_adapters": [
+                {
+                    "path": "XLabs-AI/flux-ip-adapter",
+                    "weight_name": "ip_adapter.safetensors",
+                    "image_encoder_path": "openai/clip-vit-large-patch14",
+                    "image_url": image_url,
+                    "scale": ip_adapter_scale,
+                }
+            ],
+        }
+
+        result = fal_client.subscribe(
+            "fal-ai/flux-general",
+            arguments=arguments,
+            with_logs=False,
+        )
+
+        img_url = result["images"][0]["url"]
+        resp = requests.get(img_url, timeout=60)
+        resp.raise_for_status()
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(resp.content)
+        print(f"✅ fal.ai FLUX IP-Adapter 完成：{out_path.name}")
+        return True
+
+    except ImportError:
+        print("⚠️  fal_client 未安裝，請執行：pip install fal-client")
+        return False
+    except Exception as e:
+        print(f"⚠️  fal.ai FLUX IP-Adapter 失敗：{e}")
+        return False
 
 
 def _render_sdxl(
@@ -990,6 +1357,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
 
     # Use style_reference_image as control image:
     # priority: user upload > Supabase matched image > depth map
+    style_method = user_input.get("style_method", "ai_analysis")
     style_reference_image = user_input.get("style_reference_image")
     user_style_reference_local: str | None = None
     if isinstance(style_reference_image, str) and style_reference_image.strip():
@@ -1009,6 +1377,24 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if user_style_reference_local:
         control_img = user_style_reference_local
         controlnet_inputs["style_reference_image"] = user_style_reference_local
+        if style_method == "ai_analysis":
+            _kb_url = (style_params or {}).get("reference_image_url", "")
+            _kb_text = (style_params or {}).get("style_summary", "").strip()
+            _is_kb_image = (
+                _kb_url
+                and _kb_text
+                and isinstance(style_reference_image, str)
+                and style_reference_image.strip() == _kb_url
+            )
+            if _is_kb_image:
+                prompt = f"{prompt} Style reference: {_kb_text}"
+                print(f"📚 Supabase KB 描述已注入 prompt（跳過 Gemini 分析）：{_kb_text[:80]}…")
+            else:
+                style_vision_desc = _analyze_style_image_with_gemini(user_style_reference_local)
+                if style_vision_desc:
+                    prompt = f"{prompt} Style reference: {style_vision_desc}"
+                    generation_params["gemini_style_description"] = style_vision_desc
+                    print(f"🎨 Gemini 風格描述已注入 prompt：{style_vision_desc[:80]}…")
     elif style_params and style_params.get("reference_image_path") and Path(style_params["reference_image_path"]).exists():
         control_img = style_params["reference_image_path"]
         controlnet_inputs["style_reference_image"] = control_img
@@ -1016,6 +1402,37 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     else:
         control_img = depth_path if depth_path and Path(depth_path).exists() else None
 
+    # IP-Adapter 模式：文字控制空間類型，圖像注入風格（fal.ai FLUX-general）
+    if style_method == "ipadapter" and user_style_reference_local and backend == "placeholder":
+        if not Config.FAL_KEY:  
+            print("⚠️  IP-Adapter 模式需要 FAL_KEY，改走 ai_analysis fallback")
+        elif _render_flux_ipadapter_fal(
+            user_style_reference_local, out_path, prompt=prompt,
+            ip_adapter_scale=Config.FAL_IP_ADAPTER_SCALE,
+            num_steps=Config.FAL_IP_ADAPTER_STEPS,
+            guidance_scale=Config.FAL_IP_ADAPTER_GUIDANCE,
+            output_size=(Config.FAL_IP_ADAPTER_SIZE, Config.FAL_IP_ADAPTER_SIZE),
+        ):
+            backend = "flux_ipadapter_fal"
+            generation_params["model"] = "fal-ai/flux-general + XLabs IP-Adapter"
+            generation_params["style_reference"] = user_style_reference_local
+            generation_params["ip_adapter_scale"] = Config.FAL_IP_ADAPTER_SCALE
+
+    # Redux 模式：本地 FLUX.1-Redux pipeline（需先在 HuggingFace 接受授權並下載模型）
+    # DESIGNBRIDGE_ENABLE_FLUX_REDUX=true 才嘗試載入，避免未授權時每次報錯
+    if style_method == "redux" and user_style_reference_local and backend == "placeholder":
+        if not Config.ENABLE_FLUX_REDUX:
+            print("⚠️  FLUX.1-Redux 未啟用（DESIGNBRIDGE_ENABLE_FLUX_REDUX=false），改走 ai_analysis fallback")
+        elif Config.FAL_KEY and _render_flux_redux_fal(user_style_reference_local, out_path, prompt=prompt, output_size=output_size, num_steps=Config.FAL_REDUX_STEPS, guidance_scale=Config.FAL_REDUX_GUIDANCE):
+            backend = "flux_redux_fal"
+            generation_params["model"] = "fal-ai/flux-1/dev/redux"
+            generation_params["style_reference"] = user_style_reference_local
+        elif _render_flux_redux_local(user_style_reference_local, out_path, prompt=prompt, output_size=output_size):
+            backend = "flux_redux_local"
+            generation_params["model"] = "black-forest-labs/FLUX.1-Redux-dev (local)"
+            generation_params["style_reference"] = user_style_reference_local
+
+    # AI 分析模式 or Redux 失敗 fallback：HF Inference API
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
         if _render_hf_inference(prompt, out_path, model=hf_model_id, output_size=output_size):
             backend = "hf_inference"
@@ -1059,19 +1476,24 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
 
 
 def clip_evaluator_node(state: DesignBridgeState) -> dict[str, Any]:
-    """Run CLIP evaluation on the generated image against the user's text prompt."""
+    """Run CLIP evaluation on the generated image against the user's original input.
+
+    Translates the raw user text_prompt to English before scoring so that the
+    English-trained CLIP model can compare faithfully against what the user asked for.
+    """
     image_path = state.get("generated_image")
     user = state.get("user_input") or {}
-    text_prompt = (user.get("text_prompt") or "").strip()
+    raw_prompt = (user.get("text_prompt") or "").strip()
 
     if not image_path or not Path(image_path).is_file():
         return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no generated image", "issues_found": [], "suggestions": []}}
 
-    if not text_prompt:
+    if not raw_prompt:
         return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no text prompt", "issues_found": [], "suggestions": []}}
 
     try:
-        from designbridge.clip_evaluator import evaluate
+        from designbridge.clip_evaluator import evaluate, _translate_to_english
+        text_prompt = _translate_to_english(raw_prompt)
         result = evaluate(image_path, text_prompt)
     except Exception as e:
         result = {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": f"CLIP evaluation failed: {e}", "issues_found": [], "suggestions": []}

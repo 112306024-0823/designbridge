@@ -168,16 +168,23 @@ const styleReferenceImageUrl = computed(() => {
           <pre>{{ JSON.stringify(result.style_params, null, 2) }}</pre>
         </details>
       </div>
+      <div v-else-if="result.render_result?.generation_params?.gemini_style_description" class="card card-style">
+        <h3 class="card-title">套用風格參數</h3>
+        <div class="style-meta">
+          <span class="style-badge">使用者上傳</span>
+          <span class="style-name">Gemini 視覺分析</span>
+        </div>
+        <p class="gemini-desc">{{ result.render_result.generation_params.gemini_style_description }}</p>
+      </div>
       <div v-else class="card card-muted">
         <h3 class="card-title">套用風格參數</h3>
         <p class="muted-text">未載入聚合風格檔，將依文字需求與預設 prompt 生成。</p>
       </div>
-<<<<<<< HEAD
-=======
+
 
       <!-- Evaluation Result -->
       <div v-if="result.evaluation_result" class="result-section">
-        <h3>📊 Evaluation Result</h3>
+        <h3>Evaluation Result</h3>
         <div class="req-grid">
           <div class="req-item" v-if="result.evaluation_result.decision">
             <span class="req-label">Decision</span>
@@ -494,7 +501,13 @@ const styleReferenceImageUrl = computed(() => {
 .eval-suggestions ul { margin: 0.3rem 0 0 1.2rem; padding: 0; font-size: 0.85rem; color: #5a3d8a; line-height: 1.7; }
 .result-section { background: rgba(255,255,255,0.78); border: 1px solid #ddd4f0; border-radius: var(--radius-lg); padding: 1.25rem 1.5rem; }
 
->>>>>>> d45236bed21aeb51e27505f1e37cff27afa92781
+>.gemini-desc {
+  font-size: 0.875rem;
+  color: var(--text-2);
+  line-height: 1.65;
+  margin: 0;
+}
+
 .json-details { margin-top: 0.5rem; }
 .json-details summary { cursor: pointer; font-size: 0.78rem; color: var(--primary); font-weight: 600; user-select: none; padding: 0.25rem 0; }
 .json-details summary:hover { color: var(--primary-hover); }

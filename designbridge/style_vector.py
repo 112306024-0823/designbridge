@@ -51,6 +51,13 @@ def is_vector_store_ready() -> bool:
         return False
 
 
+def warmup_vector_collection() -> None:
+    """Preload Chroma client and SentenceTransformer embedder if the store exists and is non-empty."""
+    if not is_vector_store_ready():
+        return
+    _get_collection()
+
+
 def _get_collection():
     """取得（或初始化）ChromaDB collection，使用模組層級快取。"""
     global _client, _collection
