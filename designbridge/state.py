@@ -15,7 +15,7 @@ from designbridge.schemas import (
 )
 
 # Routing decision: which agent(s) Design Director assigns
-RoutingDecision = Literal["layout", "style", "design_adjuster", "layout_and_style"]
+RoutingDecision = Literal["design_adjuster", "design"]
 
 
 class UserInput(TypedDict):

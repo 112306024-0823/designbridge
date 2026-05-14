@@ -37,8 +37,8 @@ function toggleFengshuiRule(value) {
 }
 
 defineProps({
-  spaceImage:    { type: Object, required: true },
-  styleRefImage: { type: Object, required: true },
+  spaceImage:       { type: Object, required: true },
+  styleRefImage:    { type: Object, required: true },
   styleOptions:  { type: Array,  default: () => [] },
   styleLoading:  { type: Boolean, default: false },
   styleError:          { type: String,  default: '' },
@@ -117,9 +117,7 @@ defineEmits(['submit'])
     </div>
 
     <!-- divider -->
-    <div class="divider"></div>
-
-    <!-- 3. 改動幅度 -->
+    <!-- 4. 改動幅度 -->
     <div class="field">
       <label class="field-label">
         改動幅度
@@ -129,7 +127,7 @@ defineEmits(['submit'])
       <div class="range-hint"><span>局部微調</span><span>大幅改動</span></div>
     </div>
 
-    <!-- 4. 生成模型 -->
+    <!-- 5. 生成模型 -->
     <div class="field">
       <label class="field-label">生成模型</label>
       <div class="radio-group">

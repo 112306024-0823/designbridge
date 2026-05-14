@@ -10,11 +10,9 @@ from designbridge.nodes import (
     adjuster_agent_stub,
     clip_evaluator_node,
     design_director,
-    layout_agent_stub,
     layout_and_style_agent_stub,
     requirement_analyzer,
     renderer,
-    style_agent_stub,
     visual_preprocessing_local,
 )
 from designbridge.state import DesignBridgeState, RoutingDecision
@@ -26,10 +24,8 @@ def _route_after_director(state: DesignBridgeState) -> str:
     if not decision:
         return "layout_and_style_agent"
     return {
-        "layout": "layout_agent",
-        "style": "style_agent",
         "design_adjuster": "adjuster_agent",
-        "layout_and_style": "layout_and_style_agent",
+        "design": "layout_and_style_agent",
     }.get(decision, "layout_and_style_agent")
 
 
@@ -37,15 +33,13 @@ def build_graph() -> StateGraph:
     """
     Build DesignBridge workflow:
     START -> requirement_analyzer -> visual_preprocessing -> design_director
-      -> (layout_agent | style_agent | adjuster_agent | layout_and_style_agent) -> renderer -> END
+      -> (adjuster_agent | layout_and_style_agent) -> renderer -> END
     """
     graph: StateGraph[DesignBridgeState] = StateGraph(DesignBridgeState)
 
     graph.add_node("requirement_analyzer", requirement_analyzer)
     graph.add_node("visual_preprocessing", visual_preprocessing_local)
     graph.add_node("design_director", design_director)
-    graph.add_node("layout_agent", layout_agent_stub)
-    graph.add_node("style_agent", style_agent_stub)
     graph.add_node("adjuster_agent", adjuster_agent_stub)
     graph.add_node("layout_and_style_agent", layout_and_style_agent_stub)
     graph.add_node("renderer", renderer)
@@ -58,14 +52,10 @@ def build_graph() -> StateGraph:
         "design_director",
         _route_after_director,
         path_map={
-            "layout_agent": "layout_agent",
-            "style_agent": "style_agent",
             "adjuster_agent": "adjuster_agent",
             "layout_and_style_agent": "layout_and_style_agent",
         },
     )
-    graph.add_edge("layout_agent", "renderer")
-    graph.add_edge("style_agent", "renderer")
     graph.add_edge("adjuster_agent", "renderer")
     graph.add_edge("layout_and_style_agent", "renderer")
     graph.add_edge("renderer", "clip_evaluator")
