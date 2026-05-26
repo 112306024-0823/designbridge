@@ -127,10 +127,16 @@ def mask_from_segmentation(
 
 
 # 背景類別：不應該被當作修改目標
+# 包含 UPerNet/ADE20K 的實際標籤名稱（windowpane ≠ window）
 _BG_LABELS = {
     "wall", "floor", "ceiling", "sky", "earth", "ground",
-    "window", "door", "stairs", "stairway", "escalator",
+    "window", "windowpane", "windowpane, window",
+    "door", "door, double; double, door",
+    "stairs", "stairway", "stairway, staircase", "escalator",
     "column", "column, pillar", "step", "path",
+    "fence", "fencing", "fence, fencing",
+    "railing", "rail", "bannister", "balustrade",
+    "building", "house", "skyscraper",
 }
 
 

@@ -76,7 +76,7 @@ defineEmits(['submit', 'mask-ready'])
     </div>
 
     <!-- 2. 家庭結構特殊需求 -->
-    <div class="field">
+    <div v-if="mode !== 'refine'" class="field">
       <label class="field-label">家庭結構特殊需求 <span class="optional">選填</span></label>
       <div class="chip-group">
         <button
@@ -90,7 +90,7 @@ defineEmits(['submit', 'mask-ready'])
     </div>
 
     <!-- 3. 風水需求 -->
-    <div class="field">
+    <div v-if="mode !== 'refine'" class="field">
       <label class="field-label">風水需求 <span class="optional">選填</span></label>
       <div class="chip-group">
         <button
