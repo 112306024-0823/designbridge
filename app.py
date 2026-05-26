@@ -380,7 +380,7 @@ else:
     st.info("👈 請在左側輸入參數，然後點擊「執行工作流」按鈕")
 
     # Display workflow diagram
-    st.subheader("📊 DesignBridge 工作流")
+    st.subheader("DesignBridge 工作流")
     st.markdown(
         """
 ```

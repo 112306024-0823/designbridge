@@ -13,8 +13,34 @@ const mode             = defineModel('mode',             { default: 'design' })
 const outputAspect     = defineModel('outputAspect',     { default: 'auto' })
 const brushSize        = defineModel('brushSize',        { default: 32 })
 const drawMode         = defineModel('drawMode',         { default: 'draw' })
+const familyNeeds      = defineModel('familyNeeds',      { default: () => [] })
+const fengshuiRules    = defineModel('fengshuiRules',    { default: () => [] })
+const styleMethod      = defineModel('styleMethod',      { default: 'ai_analysis' })
 
 const showMaskEditor = ref(false)
+
+const FAMILY_OPTIONS = [
+  { value: 'children',    label: '有小孩' },
+  { value: 'wheelchair',  label: '有輪椅使用者' },
+  { value: 'pets',        label: '有寵物' },
+]
+const FENGSHUI_OPTIONS = [
+  { value: 'bed_not_facing_door',       label: '床不對門' },
+  { value: 'sofa_not_back_to_door',     label: '沙發不背門' },
+  { value: 'desk_not_facing_window',    label: '書桌不背窗' },
+]
+
+function toggleFamilyNeed(value) {
+  familyNeeds.value = familyNeeds.value.includes(value)
+    ? familyNeeds.value.filter(v => v !== value)
+    : [...familyNeeds.value, value]
+}
+
+function toggleFengshuiRule(value) {
+  fengshuiRules.value = fengshuiRules.value.includes(value)
+    ? fengshuiRules.value.filter(v => v !== value)
+    : [...fengshuiRules.value, value]
+}
 
 defineProps({
   spaceImage:       { type: Object, required: true },
@@ -49,10 +75,38 @@ defineEmits(['submit', 'mask-ready'])
       />
     </div>
 
+    <!-- 2. 家庭結構特殊需求 -->
+    <div class="field">
+      <label class="field-label">家庭結構特殊需求 <span class="optional">選填</span></label>
+      <div class="chip-group">
+        <button
+          v-for="opt in FAMILY_OPTIONS"
+          :key="opt.value"
+          type="button"
+          :class="['chip', { active: familyNeeds.includes(opt.value) }]"
+          @click="toggleFamilyNeed(opt.value)"
+        >{{ opt.label }}</button>
+      </div>
+    </div>
+
+    <!-- 3. 風水需求 -->
+    <div class="field">
+      <label class="field-label">風水需求 <span class="optional">選填</span></label>
+      <div class="chip-group">
+        <button
+          v-for="opt in FENGSHUI_OPTIONS"
+          :key="opt.value"
+          type="button"
+          :class="['chip', { active: fengshuiRules.includes(opt.value) }]"
+          @click="toggleFengshuiRule(opt.value)"
+        >{{ opt.label }}</button>
+      </div>
+    </div>
+
     <!-- divider -->
     <div class="divider"></div>
 
-    <!-- 2. 原始空間圖片 -->
+    <!-- 4. 原始空間圖片 -->
     <div class="field">
       <label class="field-label">
         {{ mode === 'refine' ? '空間圖片（細部微調基底）' : '原始空間圖片（Optional）' }}
@@ -152,6 +206,29 @@ defineEmits(['submit', 'mask-ready'])
           @change="styleRefImage.onChange"
           @remove="styleRefImage.remove"
         />
+        <div v-if="styleRefImage.preview" class="radio-group style-method-group">
+          <label :class="{ active: styleMethod === 'ai_analysis' }">
+            <input type="radio" v-model="styleMethod" value="ai_analysis" />
+            <div class="radio-content">
+              <strong>AI 分析風格</strong>
+              <small>Gemini 解析圖片色調，注入 prompt</small>
+            </div>
+          </label>
+          <label :class="{ active: styleMethod === 'redux' }">
+            <input type="radio" v-model="styleMethod" value="redux" />
+            <div class="radio-content">
+              <strong>FLUX.1-Redux</strong>
+              <small>以圖為主直接做風格遷移</small>
+            </div>
+          </label>
+          <label :class="{ active: styleMethod === 'ipadapter' }">
+            <input type="radio" v-model="styleMethod" value="ipadapter" />
+            <div class="radio-content">
+              <strong>IP-Adapter</strong>
+              <small>文字定空間類型，圖像注入風格</small>
+            </div>
+          </label>
+        </div>
         <div v-if="!styleRefImage.preview && matchedStylePreview?.image_url" class="matched-preview">
           <div class="matched-label">
             AI 依描述自動選取：<strong>{{ matchedStylePreview.style_name }}</strong>
@@ -391,6 +468,12 @@ select:focus { outline: none; border-color: var(--primary); background: #fff; }
   border: 1px dashed var(--primary-border);
 }
 
+/* Style method toggle (compact) */
+.style-method-group { margin-top: 0.25rem; }
+.style-method-group label { padding: 0.45rem 0.75rem; }
+.style-method-group .radio-content strong { font-size: 0.8rem; }
+.style-method-group .radio-content small  { font-size: 0.68rem; }
+
 /* Matched preview */
 .matched-preview { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.15rem; }
 .matched-preview img {
@@ -411,6 +494,30 @@ select:focus { outline: none; border-color: var(--primary); background: #fff; }
 .score {
   background: var(--primary-light); color: var(--primary);
   padding: 0.05rem 0.4rem; border-radius: 99px; font-size: 0.7rem; font-weight: 600;
+}
+
+/* Chips */
+.chip-group { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.chip {
+  padding: 0.35rem 0.75rem;
+  border: 1.5px solid #ddd4f0;
+  border-radius: 99px;
+  font-size: 0.8rem;
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--text-2);
+  background: rgba(255,255,255,0.7);
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.4;
+}
+.chip:hover { border-color: var(--primary-border); background: rgba(255,255,255,0.95); color: var(--primary); }
+.chip.active {
+  border-color: var(--primary);
+  background: linear-gradient(135deg, #7c5cbf 0%, #a06edb 100%);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(124,92,191,0.35);
 }
 
 /* Submit */

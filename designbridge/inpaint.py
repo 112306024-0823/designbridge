@@ -256,15 +256,25 @@ def build_inpaint_prompt(
 
     base_prompt = ""
     negative_prompt = (
+        "people, person, human, man, woman, child, hands, face, "
+        "animal, pet, cat, dog, bird, "
         "blurry, low quality, distorted, deformed, watermark, "
         "inconsistent lighting, unrealistic"
     )
 
     if style_params:
         base_prompt = style_params.get("style_prompt", "")
-        neg = style_params.get("negative_prompt", "")
+        neg = (style_params.get("negative_prompt") or "").strip(", ")
         if neg:
-            negative_prompt = neg
+            negative_prompt = f"{negative_prompt}, {neg}"
+
+    _special = req.get("special_constraints") or {}
+    if _special.get("wheelchair"):
+        negative_prompt = f"{negative_prompt}, wheelchair, wheelchair user, mobility aid, disability equipment"
+    if _special.get("children"):
+        negative_prompt = f"{negative_prompt}, child, children, baby, toddler, kid"
+    if _special.get("pets"):
+        negative_prompt = f"{negative_prompt}, cat, dog, bird, rabbit, hamster, pet, animal"
 
     obj_desc = ", ".join(target_objects) if target_objects else "furniture"
     color_hint = f", {colors}" if colors else ""
@@ -276,7 +286,6 @@ def build_inpaint_prompt(
     ).strip()
 
     return positive_prompt, negative_prompt
-
 
 # ---------------------------------------------------------------------------
 # Inpainting execution
@@ -339,7 +348,7 @@ def run_inpainting(
             mask_image=mask_resized,
             strength=strength,
             num_inference_steps=30,
-            guidance_scale=7.5,
+            guidance_scale=2.5,
         ).images[0]
 
         # 將結果貼回原始解析度（只更新 mask 區域）

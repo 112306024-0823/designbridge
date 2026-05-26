@@ -18,6 +18,9 @@ const manualImagePath  = ref('')
 const showManualPath   = ref(false)
 const noStyleReference = ref(false)
 const outputAspect     = ref('auto')
+const familyNeeds      = ref([])
+const fengshuiRules    = ref([])
+const styleMethod      = ref('ai_analysis')
 const spaceImage    = useImageField()
 const styleRefImage = useImageField()
 const result = ref(null)
@@ -54,8 +57,8 @@ const confirmedStyle = ref(null)
 // 只有在設計模式、無結果、無 loading、有候選時才顯示 StyleSuggestions
 const showSuggestions = computed(() =>
   mode.value === 'design' &&
-  !result.value && !loading.value &&
-  (styleCandidates.value.length > 0 || candidatesLoading.value)
+  !result.value && !loading.value && !styleRefImage.file &&
+  (styleCandidates.value.length > 0 || candidatesLoading.value || candidatesSearched.value)
 )
 
 let searchTimer = null
@@ -119,6 +122,18 @@ watch(mode, (val) => {
     styleCandidates.value = []
     confirmedStyle.value = null
     matchedStylePreview.value = null
+  }
+})
+
+watch(() => styleRefImage.file, (newFile) => {
+  if (newFile) {
+    clearTimeout(searchTimer)
+    styleCandidates.value = []
+    candidatesSearched.value = false
+    confirmedStyle.value = null
+    matchedStylePreview.value = null
+  } else {
+    styleMethod.value = 'ai_analysis'
   }
 })
 
@@ -214,6 +229,10 @@ async function handleSubmit() {
         refine_mode: mode.value === 'refine',
         output_aspect: outputAspect.value,
         mask_image_path: manualMaskPath.value || undefined,
+        style_retrieval_mode: styleRetrievalMode.value,
+        family_needs: familyNeeds.value,
+        fengshui_rules: fengshuiRules.value,
+        style_method: styleMethod.value,
       }),
     })
     if (!res.ok) throw new Error(`${res.status}`)
@@ -343,6 +362,9 @@ onMounted(fetchStyleOptions)
         v-model:outputAspect="outputAspect"
         v-model:brushSize="brushSize"
         v-model:drawMode="drawMode"
+        v-model:familyNeeds="familyNeeds"
+        v-model:fengshuiRules="fengshuiRules"
+        v-model:styleMethod="styleMethod"
         :spaceImage="spaceImage"
         :styleRefImage="styleRefImage"
         :styleOptions="styleOptions"
@@ -358,6 +380,13 @@ onMounted(fetchStyleOptions)
       />
       </div>
     </aside>
+
+    <RouterLink to="/history" class="history-fab" title="歷史紀錄">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
+    </RouterLink>
 
     <main class="content">
       <!-- 細部微調模式 -->
@@ -562,6 +591,32 @@ onMounted(fetchStyleOptions)
   font-weight: 800;
   color: var(--text-1);
   letter-spacing: -0.03em;
+}
+
+.history-fab {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.5rem;
+  z-index: 100;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(180, 150, 230, 0.35);
+  box-shadow: 0 2px 10px rgba(124, 92, 191, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7c5cbf;
+  text-decoration: none;
+  transition: box-shadow 0.15s, background 0.15s, transform 0.15s;
+}
+.history-fab:hover {
+  background: rgba(255, 255, 255, 1);
+  box-shadow: 0 4px 16px rgba(124, 92, 191, 0.35);
+  transform: scale(1.08);
 }
 
 .logo-tagline {

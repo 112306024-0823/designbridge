@@ -1,5 +1,5 @@
 # DesignBridge FastAPI 後端
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +10,7 @@ import time
 import shutil
 import uuid
 from pathlib import Path
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -38,11 +39,28 @@ from designbridge import get_compiled_graph
 from designbridge.style_apply import list_available_style_profiles
 from style_kb.styles import STYLES
 
-app = FastAPI(title="DesignBridge API", description="室內設計 AI 工作流接口")
 
-artifacts_dir = Path("artifacts")
-artifacts_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/artifacts", StaticFiles(directory=str(artifacts_dir)), name="artifacts")
+@asynccontextmanager
+async def _app_lifespan(_: FastAPI):
+    """Preload heavy ML stacks in background so the server accepts requests immediately."""
+    import threading
+
+    def _warmup():
+        try:
+            from designbridge.warmup import run_startup_warmup
+            run_startup_warmup()
+        except Exception as e:
+            print(f"⚠️ DesignBridge startup warmup failed: {e}")
+
+    threading.Thread(target=_warmup, daemon=True).start()
+    yield
+
+
+app = FastAPI(
+    title="DesignBridge API",
+    description="室內設計 AI 工作流接口",
+    lifespan=_app_lifespan,
+)
 
 artifacts_dir = Path("artifacts")
 artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -76,6 +94,9 @@ class DesignRequest(BaseModel):
     refine_mode: bool = False  # 細部微調模式：強制 routing 到 design_adjuster
     output_aspect: str = "auto"  # 輸出長寬比：auto | 1:1 | 4:3 | 3:4 | 16:9 | 9:16
     mask_image_path: Optional[str] = None  # 手繪遮罩路徑（refine 模式選填）
+    family_needs: List[str] = []
+    fengshui_rules: List[str] = []
+    style_method: str = "ai_analysis"
 
 # 2. 快取 Graph 實例
 graph = get_compiled_graph()
@@ -216,6 +237,42 @@ def read_root():
 
 
 
+@app.get("/api/history")
+def get_history(limit: int = 0):
+    """Return generation history, newest first. limit=0 means all."""
+    if not _history_file.exists():
+        return []
+    try:
+        records = json.loads(_history_file.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    records = list(reversed(records))
+    if limit > 0:
+        records = records[:limit]
+    for r in records:
+        path = r.get("generated_image_path", "")
+        if path and not r.get("generated_image_url"):
+            r["generated_image_url"] = "http://localhost:8000/" + path.replace("\\", "/")
+    return records
+
+
+@app.delete("/api/history")
+def delete_history(task_ids: List[str] = Query(...)):
+    """Delete history records by task_ids."""
+    if not _history_file.exists():
+        return {"deleted": 0}
+    with _history_lock:
+        try:
+            records = json.loads(_history_file.read_text(encoding="utf-8"))
+        except Exception:
+            return {"deleted": 0}
+        id_set = set(task_ids)
+        original = len(records)
+        records = [r for r in records if r.get("task_id") not in id_set]
+        _history_file.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"deleted": original - len(records)}
+
+
 @app.get("/api/style-profiles")
 def get_style_profiles():
     # 優先回傳磁碟上已有聚合檔的風格
@@ -297,6 +354,12 @@ async def generate_design(request: DesignRequest):
             user_input["refine_mode"] = True
         if request.mask_image_path:
             user_input["mask_image"] = request.mask_image_path
+        if request.family_needs:
+            user_input["family_needs"] = request.family_needs
+        if request.fengshui_rules:
+            user_input["fengshui_rules"] = request.fengshui_rules
+        if request.style_method:
+            user_input["style_method"] = request.style_method
 
         initial_state = {"user_input": user_input}
 
@@ -329,18 +392,44 @@ async def generate_design(request: DesignRequest):
         }
 
         # 儲存生成紀錄
+        style_ref_path = request.style_reference_image_path or ""
+        style_ref_url = None
+        style_ref_source = None
+        if style_ref_path:
+            if style_ref_path.startswith(("http://", "https://")):
+                # Supabase URL passed directly from the KB image picker
+                style_ref_url = style_ref_path
+                style_ref_source = "supabase"
+            else:
+                normalized_ref = style_ref_path.replace("\\", "/")
+                style_ref_url = f"http://localhost:8000/{normalized_ref}"
+                style_ref_source = "user"
+        elif (result.get("style_params") or {}).get("reference_image_url"):
+            style_ref_url = (result.get("style_params") or {}).get("reference_image_url")
+            style_ref_source = "supabase"
+
+        render_result = result.get("render_result") or {}
+        generation_params = render_result.get("generation_params") or {}
+
         _save_history({
             "task_id": result.get("task_id"),
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "elapsed_seconds": round(elapsed, 2),
             "text_prompt": request.text_prompt,
             "model_type": "flux",
+            "style_method": request.style_method,
             "style_profile_id": request.style_profile_id,
-            "style_reference_image_path": request.style_reference_image_path,
+            "style_reference_image_path": style_ref_path,
+            "style_reference_image_url": style_ref_url,
+            "style_reference_source": style_ref_source,
             "routing_decision": result.get("routing_decision"),
             "generated_image_path": generated_image_path,
             "generated_image_url": generated_image_url,
             "style_params": result.get("style_params"),
+            "backend": generation_params.get("backend") or generation_params.get("model"),
+            "gemini_style_description": generation_params.get("gemini_style_description"),
+            "generation_params": generation_params,
+            "evaluation_result": result.get("evaluation_result"),
         })
 
         return response

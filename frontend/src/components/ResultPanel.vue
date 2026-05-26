@@ -8,6 +8,13 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 })
 
+const spatialLevelColor = computed(() => {
+  const level = props.result?.structured_requirement?.spatial_change_level
+  if (level === 'major') return 'badge-red'
+  if (level === 'minor') return 'badge-orange'
+  return 'badge-teal'
+})
+
 const styleReferenceImageUrl = computed(() => {
   const result = props.result
   if (!result) return ''
@@ -67,6 +74,10 @@ const styleReferenceImageUrl = computed(() => {
             <span class="badge green">✓ 成功</span>
             <span class="badge gray">{{ result.elapsed_time }}</span>
             <span class="badge purple">{{ result.routing_decision }}</span>
+            <span
+              v-if="result.structured_requirement?.spatial_change_level"
+              :class="['badge', spatialLevelColor]"
+            >depth: {{ result.structured_requirement.spatial_change_level }}</span>
           </div>
         </div>
       </div>
@@ -167,6 +178,14 @@ const styleReferenceImageUrl = computed(() => {
           <summary>完整 style_params JSON</summary>
           <pre>{{ JSON.stringify(result.style_params, null, 2) }}</pre>
         </details>
+      </div>
+      <div v-else-if="result.render_result?.generation_params?.gemini_style_description" class="card card-style">
+        <h3 class="card-title">套用風格參數</h3>
+        <div class="style-meta">
+          <span class="style-badge">使用者上傳</span>
+          <span class="style-name">Gemini 視覺分析</span>
+        </div>
+        <p class="gemini-desc">{{ result.render_result.generation_params.gemini_style_description }}</p>
       </div>
       <div v-else class="card card-muted">
         <h3 class="card-title">套用風格參數</h3>
@@ -285,9 +304,12 @@ const styleReferenceImageUrl = computed(() => {
 
 .badges { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .badge  { padding: 0.2rem 0.65rem; border-radius: 99px; font-size: 0.75rem; font-weight: 600; }
-.badge.green  { background: #e8f6ee; color: #276749; }
-.badge.gray   { background: rgba(255,255,255,0.7); color: #666; border: 1px solid #e5e5e5; }
-.badge.purple { background: var(--primary-light); color: var(--primary); }
+.badge.green       { background: #e8f6ee; color: #276749; }
+.badge.gray        { background: rgba(255,255,255,0.7); color: #666; border: 1px solid #e5e5e5; }
+.badge.purple      { background: var(--primary-light); color: var(--primary); }
+.badge.badge-teal  { background: #e0f4f1; color: #1a7a6b; }
+.badge.badge-orange{ background: #fff3e0; color: #b45309; }
+.badge.badge-red   { background: #fdecea; color: #b91c1c; }
 
 /* ── Image Row ── */
 .image-row {
@@ -493,7 +515,14 @@ const styleReferenceImageUrl = computed(() => {
 .eval-suggestions ul { margin: 0.3rem 0 0 1.2rem; padding: 0; font-size: 0.85rem; color: #5a3d8a; line-height: 1.7; }
 .result-section { background: rgba(255,255,255,0.78); border: 1px solid #ddd4f0; border-radius: var(--radius-lg); padding: 1.25rem 1.5rem; }
 
->>>>>>> d45236bed21aeb51e27505f1e37cff27afa92781
+.gemini-desc {
+  font-size: 0.875rem;
+  color: var(--text-2);
+  line-height: 1.65;
+  margin: 0;
+}
+
+
 .json-details { margin-top: 0.5rem; }
 .json-details summary { cursor: pointer; font-size: 0.78rem; color: var(--primary); font-weight: 600; user-select: none; padding: 0.25rem 0; }
 .json-details summary:hover { color: var(--primary-hover); }

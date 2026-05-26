@@ -60,6 +60,12 @@ def build_style_params(
     if (user_input or {}).get("no_style_reference"):
         return None
 
+    # 使用者自行上傳的風格參考圖（本機路徑，非 URL）：
+    # 由 renderer 直接透過 Gemini 分析該圖，不再查 Supabase，避免兩個來源相互干擾
+    style_ref = (user_input or {}).get("style_reference_image", "")
+    if style_ref and isinstance(style_ref, str) and not style_ref.startswith(("http://", "https://")):
+        return None
+
     style_profile_id = resolve_style_profile_id(req, user_input)
     text_query = (user_input or {}).get("text_prompt", "").strip()
     query = text_query or style_profile_id or "interior design"
