@@ -54,7 +54,7 @@ defineProps({
   error:               { type: String,  default: '' },
 })
 
-defineEmits(['submit', 'mask-ready'])
+const emit = defineEmits(['submit', 'mask-ready', 'retry-style-options'])
 </script>
 
 <template>
@@ -110,7 +110,17 @@ defineEmits(['submit', 'mask-ready'])
           <option v-for="opt in styleOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
         <div v-if="styleLoading" class="status-hint">載入中...</div>
-        <div v-if="styleError"   class="status-error">{{ styleError }}</div>
+        <div v-if="styleError" class="status-error-row">
+          <span class="status-error">{{ styleError }}</span>
+          <button
+            type="button"
+            class="retry-btn"
+            :disabled="styleLoading"
+            @click="emit('retry-style-options')"
+          >
+            重試
+          </button>
+        </div>
       </div>
 
       <!-- 4. 風格參考圖 -->
@@ -361,7 +371,35 @@ select {
 select:focus { outline: none; border-color: var(--primary); background: #fffaf5; }
 
 .status-hint  { font-size: 0.8rem; color: var(--text-3); }
-.status-error { font-size: 0.8rem; color: #c0392b; }
+.status-error-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.status-error { font-size: 0.8rem; color: #c0392b; flex: 1; min-width: 0; }
+.retry-btn {
+  flex-shrink: 0;
+  padding: 0.25rem 0.65rem;
+  border: 1px solid #e0b4b4;
+  border-radius: var(--radius-sm);
+  background: #fff5f5;
+  color: #c0392b;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.retry-btn:hover:not(:disabled) {
+  background: #ffe8e8;
+  border-color: #c0392b;
+}
+.retry-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 
 /* Brush toolbar */
 .brush-title { font-size: 0.8rem; font-weight: 700; color: #444; }

@@ -5,7 +5,7 @@ const props = defineProps({
   candidates:  { type: Array,  default: () => [] },  // [{ style_id, style_name, image_url, similarity, description }]
   confirmed:   { type: Object, default: null },       // 使用者選中的那筆
   loading:     { type: Boolean, default: false },
-  retrievalMode: { type: String, default: 'text-to-image' },
+  retrievalMode: { type: String, default: 'text-to-text' },
   apiBase: { type: String, default: 'http://localhost:8000' },
 })
 

@@ -98,8 +98,21 @@ class DesignRequest(BaseModel):
     fengshui_rules: List[str] = []
     style_method: str = "ai_analysis"
 
-# 2. 快取 Graph 實例
-graph = get_compiled_graph()
+# 2. 延遲編譯 Graph（避免 uvicorn 啟動前長時間阻塞，導致前端連不上）
+_compiled_graph = None
+
+
+def _get_graph():
+    global _compiled_graph
+    if _compiled_graph is None:
+        _compiled_graph = get_compiled_graph()
+    return _compiled_graph
+
+
+@app.get("/api/health")
+def health():
+    """Lightweight readiness probe for the frontend (no ML load)."""
+    return {"status": "ok"}
 
 
 @app.post("/api/upload-image")
@@ -138,7 +151,7 @@ def search_styles(
     query: str = "",
     style_id: str = "",
     top_k: int = 3,
-    retrieval_mode: str = "text-to-image",
+    retrieval_mode: str = "text-to-text",
 ):
     """向量搜尋最相似的風格參考圖，回傳多筆候選供使用者選擇。"""
     from designbridge.style_supabase import _STYLE_PROMPTS
@@ -203,7 +216,7 @@ def search_styles(
 def get_style_preview(
     query: str = "",
     style_id: str = "",
-    retrieval_mode: str = "text-to-image",
+    retrieval_mode: str = "text-to-text",
 ):
     """根據文字語意搜尋最符合的風格參考圖（Supabase pgvector），供前端即時預覽。"""
     sid = style_id.strip() or ""
@@ -365,7 +378,7 @@ async def generate_design(request: DesignRequest):
 
         # 執行工作流
         t0 = time.perf_counter()
-        result = graph.invoke(initial_state)
+        result = _get_graph().invoke(initial_state)
         elapsed = time.perf_counter() - t0
         generated_image_path = result.get("generated_image")
         generated_image_url = None

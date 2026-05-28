@@ -1,12 +1,12 @@
 <script setup>
 import { ref, onMounted, watch, computed } from 'vue'
 import { useImageField } from '@/composables/useImageField'
+import designbridgeLogo from '../../asset/designbridge_logo.png'
 import SidebarForm from '@/components/SidebarForm.vue'
 import ResultPanel from '@/components/ResultPanel.vue'
 import StyleSuggestions from '@/components/StyleSuggestions.vue'
 import RefineCanvas from '@/components/RefineCanvas.vue'
-
-const API_BASE = 'http://localhost:8000'
+import { API_BASE, apiUrl, mediaUrl } from '@/config/api'
 
 const textPrompt = ref('')
 const editScope = ref(0.6)
@@ -32,7 +32,7 @@ const manualMaskPath = ref('')   // 手繪遮罩上傳後的伺服器路徑
 const brushSize      = ref(32)
 const drawMode       = ref('draw')
 const refineCanvasRef = ref(null)
-const styleRetrievalMode = ref('text-to-image')
+const styleRetrievalMode = ref('text-to-text')
 
 // 模式：'design'（整體設計） | 'refine'（細部微調）
 const mode = ref('design')
@@ -76,7 +76,7 @@ async function fetchStyleCandidates() {
   candidatesLoading.value = true
   try {
     const res = await fetch(
-      `${API_BASE}/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=10&retrieval_mode=${encodeURIComponent(styleRetrievalMode.value)}`
+      apiUrl(`/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=10&retrieval_mode=${encodeURIComponent(styleRetrievalMode.value)}`)
     )
     if (res.ok) {
       const data = await res.json()
@@ -136,32 +136,51 @@ watch(() => styleRefImage.file, (newFile) => {
   }
 })
 
-async function fetchStyleOptions(retries = 5, delayMs = 1500) {
+async function waitForBackend(maxWaitMs = 120000, intervalMs = 2000) {
+  const deadline = Date.now() + maxWaitMs
+  while (Date.now() < deadline) {
+    try {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), 4000)
+      const res = await fetch(apiUrl('/api/health'), { signal: ctrl.signal })
+      clearTimeout(timer)
+      if (res.ok) return true
+    } catch {
+      /* backend still starting */
+    }
+    styleError.value = '等待後端啟動中…（請確認已執行 python -m uvicorn api:app）'
+    await new Promise(r => setTimeout(r, intervalMs))
+  }
+  return false
+}
+
+async function fetchStyleOptions() {
   styleLoading.value = true
   styleError.value = ''
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch(`${API_BASE}/api/style-profiles`)
-      if (!res.ok) throw new Error('載入風格選項失敗')
-      const data = await res.json()
-      styleOptions.value = [
-        { label: '自動', value: 'auto' },
-        ...data.map(({ style_name, style_id }) => ({
-          label: `${style_name} (${style_id})`,
-          value: style_id,
-        })),
-      ]
-      styleLoading.value = false
-      return
-    } catch (e) {
-      if (attempt < retries) {
-        await new Promise(r => setTimeout(r, delayMs))
-      } else {
-        styleError.value = '無法連線後端，請確認伺服器是否已啟動'
-      }
-    }
+
+  if (!(await waitForBackend())) {
+    styleError.value = '無法連線後端，請確認伺服器是否已啟動（python -m uvicorn api:app）'
+    styleLoading.value = false
+    return
   }
-  styleLoading.value = false
+
+  try {
+    const res = await fetch(apiUrl('/api/style-profiles'))
+    if (!res.ok) throw new Error('載入風格選項失敗')
+    const data = await res.json()
+    styleOptions.value = [
+      { label: '自動', value: 'auto' },
+      ...data.map(({ style_name, style_id }) => ({
+        label: `${style_name} (${style_id})`,
+        value: style_id,
+      })),
+    ]
+    styleError.value = ''
+  } catch {
+    styleError.value = '無法載入風格選項，請稍後重試'
+  } finally {
+    styleLoading.value = false
+  }
 }
 
 async function handleMaskReady(blob) {
@@ -172,7 +191,7 @@ async function handleMaskReady(blob) {
 async function uploadFile(file) {
   const body = new FormData()
   body.append('file', file) 
-  const res = await fetch(`${API_BASE}/api/upload-image`, { method: 'POST', body })
+  const res = await fetch(apiUrl('/api/upload-image'), { method: 'POST', body })
   if (!res.ok) throw new Error(`{res.status}`)
   return (await res.json()).path
 }
@@ -213,7 +232,7 @@ async function handleSubmit() {
       }
     }
 
-    const res = await fetch(`${API_BASE}/api/generate`, {
+    const res = await fetch(apiUrl('/api/generate'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -261,8 +280,9 @@ function handleClearConfirmedStyle() {
   confirmedStyle.value = null
 }
 
-function handleChangeRetrievalMode(mode) {
-  styleRetrievalMode.value = mode
+function handleChangeRetrievalMode(nextMode) {
+  if (nextMode === styleRetrievalMode.value) return
+  styleRetrievalMode.value = nextMode
   fetchStyleCandidates()
 }
 
@@ -289,7 +309,7 @@ async function handleRefineSubmit() {
     const initial_image_path = lastGeneratedImage.value?.path
       || (spaceImage.file ? await uploadFile(spaceImage.file) : manualImagePath.value.trim() || undefined)
 
-    const res = await fetch(`${API_BASE}/api/generate`, {
+    const res = await fetch(apiUrl('/api/generate'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -328,8 +348,7 @@ onMounted(fetchStyleOptions)
     <aside class="sidebar">
       <div class="sidebar-header">
         <div class="logo">
-          <div class="logo-mark">✦</div>
-          <span class="logo-text">DesignBridge</span>
+          <img :src="designbridgeLogo" alt="DesignBridge" class="logo-img" />
         </div>
 
         <div class="mode-tabs">
@@ -366,6 +385,7 @@ onMounted(fetchStyleOptions)
         :styleOptions="styleOptions"
         :styleLoading="styleLoading"
         :styleError="styleError"
+        @retry-style-options="fetchStyleOptions"
         :matchedStylePreview="matchedStylePreview"
         :baseImagePreview="baseImagePreview"
         :baseImageLabel="baseImageLabel"
@@ -444,7 +464,7 @@ onMounted(fetchStyleOptions)
 
 /* ── Sidebar ── */
 .sidebar {
-  width: 420px;
+  width: 500px;
   min-width: 420px;
   background: rgba(255, 248, 240, 0.88);
   backdrop-filter: blur(18px);
@@ -562,31 +582,13 @@ onMounted(fetchStyleOptions)
 }
 
 .logo {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
   margin-bottom: 0.25rem;
 }
 
-.logo-mark {
-  width: 30px;
-  height: 30px;
-  background: linear-gradient(135deg, #8B5E3C 0%, #b07845 100%);
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.9rem;
-  color: white;
-  flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(139, 94, 60, 0.35);
-}
-
-.logo-text {
-  font-size: 1.35rem;
-  font-weight: 800;
-  color: var(--text-1);
-  letter-spacing: -0.03em;
+.logo-img {
+  height: auto;
+  width: 200px;
+  display: block;
 }
 
 .history-fab {
