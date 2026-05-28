@@ -101,6 +101,35 @@ class SupabaseStyleResult:
     image_url: str
     style_name: str
     similarity: float
+    style_kb: dict[str, Any] | None = None
+
+
+def _batch_load_style_kb(
+    client,
+    results: list["SupabaseStyleResult"],
+) -> None:
+
+    if not results:
+        return
+    image_urls = [r.image_url for r in results]
+    try:
+        rows = (
+            client.table("style_images")
+            .select("image_url,style_kb")
+            .in_("image_url", image_urls)
+            .execute()
+            .data
+            or []
+        )
+        kb_map: dict[str, dict[str, Any]] = {
+            row["image_url"]: row["style_kb"]
+            for row in rows
+            if isinstance(row.get("style_kb"), dict)
+        }
+        for r in results:
+            r.style_kb = kb_map.get(r.image_url)
+    except Exception as e:
+        print(f"⚠️ Batch style_kb 載入失敗：{e}")
 
 
 def query_style_images_supabase(
@@ -146,6 +175,7 @@ def query_style_images_supabase(
             style_name=style_name,
             similarity=round(float(row["similarity"]), 4),
         ))
+    _batch_load_style_kb(client, results)
     return results
 
 
@@ -241,6 +271,7 @@ def _query_style_text_to_text(
                         similarity=round(float(row["similarity"]), 4),
                     )
                 )
+            _batch_load_style_kb(client, results)
             return results
     except Exception:
         # silent fallback (keeps current behavior for older DBs)
@@ -277,12 +308,14 @@ def _query_style_text_to_text(
     results: list[SupabaseStyleResult] = []
     for row, score in ranked:
         style_name = (row.get("source_meta") or {}).get("style", row["style_id"])
+        kb = row.get("style_kb")
         results.append(
             SupabaseStyleResult(
                 style_id=row["style_id"],
                 image_url=row["image_url"],
                 style_name=style_name,
                 similarity=round(float(score), 4),
+                style_kb=kb if isinstance(kb, dict) else None,
             )
         )
     return results
@@ -306,28 +339,6 @@ def download_style_image(image_url: str) -> Path | None:
         print(f"下載風格參考圖失敗：{e}")
         return None
 
-
-def _load_style_kb_for_result(result: SupabaseStyleResult) -> dict[str, Any] | None:
-    """Load style_kb for top matched image from Supabase table."""
-    try:
-        client = _get_supabase()
-        rows = (
-            client.table("style_images")
-            .select("style_kb")
-            .eq("image_url", result.image_url)
-            .eq("style_id", result.style_id)
-            .limit(1)
-            .execute()
-            .data
-            or []
-        )
-        if not rows:
-            return None
-        style_kb = rows[0].get("style_kb")
-        return style_kb if isinstance(style_kb, dict) else None
-    except Exception as e:
-        print(f"⚠️讀取 style_kb 失敗：{e}")
-        return None
 
 
 def _extract_material_recommendations(style_kb: dict[str, Any]) -> list[str]:
@@ -366,8 +377,7 @@ def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str,
     # Download the top matched image
     ref_path = download_style_image(top.image_url)
 
-    # Priority 1: use the matched image's style_kb directly
-    style_kb = _load_style_kb_for_result(top)
+    style_kb = top.style_kb
     ai_params = style_kb.get("ai_params") if isinstance(style_kb, dict) else {}
     prompts_from_kb = ai_params.get("prompts") if isinstance(ai_params, dict) else {}
     pos_from_kb = (

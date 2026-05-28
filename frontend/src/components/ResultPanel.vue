@@ -244,7 +244,7 @@ const styleReferenceImageUrl = computed(() => {
 }
 .placeholder-icon {
   width: 64px; height: 64px;
-  background: linear-gradient(135deg, #ede6fa, #ddd0f5);
+  background: linear-gradient(135deg, #f5e8d8, #e8d4b8);
   border-radius: 20px;
   display: flex; align-items: center; justify-content: center;
   font-size: 1.6rem; color: var(--primary);
@@ -281,7 +281,7 @@ const styleReferenceImageUrl = computed(() => {
 }
 .loading-spinner {
   position: absolute; inset: 0;
-  border: 3px solid rgba(180,150,230,0.25);
+  border: 3px solid rgba(180,140,100,0.25);
   border-top-color: var(--primary);
   border-radius: 50%;
   animation: spin 0.9s linear infinite;
@@ -467,9 +467,9 @@ const styleReferenceImageUrl = computed(() => {
 
 /* Cards */
 .card {
-  background: rgba(255,255,255,0.78);
+  background: rgba(255,250,243,0.82);
   backdrop-filter: blur(8px);
-  border: 1px solid #ddd4f0;
+  border: 1px solid #ddd0c0;
   border-radius: var(--radius-lg);
   padding: 1.25rem 1.5rem;
 }
@@ -510,10 +510,10 @@ const styleReferenceImageUrl = computed(() => {
 .eval-feedback { font-size: 0.875rem; color: #b05520; background: #fff5ee; border: 1px solid #f0c8a0; border-radius: 8px; padding: 0.6rem 0.9rem; margin: 0.5rem 0; line-height: 1.5; }
 .eval-scores   { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.5rem 0; }
 .score-row     { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 0.25rem 0.5rem; background: var(--primary-light); border-radius: 6px; }
-.score-key     { color: #7c5cbf; font-weight: 600; }
-.score-val     { color: #3d2b6e; font-weight: 700; }
-.eval-suggestions ul { margin: 0.3rem 0 0 1.2rem; padding: 0; font-size: 0.85rem; color: #5a3d8a; line-height: 1.7; }
-.result-section { background: rgba(255,255,255,0.78); border: 1px solid #ddd4f0; border-radius: var(--radius-lg); padding: 1.25rem 1.5rem; }
+.score-key     { color: #8B5E3C; font-weight: 600; }
+.score-val     { color: #5c3d24; font-weight: 700; }
+.eval-suggestions ul { margin: 0.3rem 0 0 1.2rem; padding: 0; font-size: 0.85rem; color: #6b4a28; line-height: 1.7; }
+.result-section { background: rgba(255,250,243,0.82); border: 1px solid #ddd0c0; border-radius: var(--radius-lg); padding: 1.25rem 1.5rem; }
 
 .gemini-desc {
   font-size: 0.875rem;

@@ -112,7 +112,7 @@ else:
             initial_image = manual_path.strip()
 
 
-run_button = st.sidebar.button("▶️ 執行工作流", type="primary", width="stretch")
+run_button = st.sidebar.button("▶️ 生成設計", type="primary", width="stretch")
 
 # Example prompts
 st.sidebar.markdown("---")

@@ -6,8 +6,6 @@ import MaskEditor from './MaskEditor.vue'
 const textPrompt      = defineModel('textPrompt',      { default: '' })
 const editScope       = defineModel('editScope',       { default: 0.6 })
 const selectedStyle   = defineModel('selectedStyle',   { default: 'auto' })
-const manualImagePath  = defineModel('manualImagePath',  { default: '' })
-const showManualPath   = defineModel('showManualPath',   { default: false })
 const noStyleReference = defineModel('noStyleReference', { default: false })
 const mode             = defineModel('mode',             { default: 'design' })
 const outputAspect     = defineModel('outputAspect',     { default: 'auto' })
@@ -18,16 +16,17 @@ const fengshuiRules    = defineModel('fengshuiRules',    { default: () => [] })
 const styleMethod      = defineModel('styleMethod',      { default: 'ai_analysis' })
 
 const showMaskEditor = ref(false)
+const showAdvanced   = ref(false)
 
 const FAMILY_OPTIONS = [
-  { value: 'children',    label: '有小孩' },
-  { value: 'wheelchair',  label: '有輪椅使用者' },
-  { value: 'pets',        label: '有寵物' },
+  { value: 'children',   label: '有小孩' },
+  { value: 'wheelchair', label: '有輪椅使用者' },
+  { value: 'pets',       label: '有寵物' },
 ]
 const FENGSHUI_OPTIONS = [
-  { value: 'bed_not_facing_door',       label: '床不對門' },
-  { value: 'sofa_not_back_to_door',     label: '沙發不背門' },
-  { value: 'desk_not_facing_window',    label: '書桌不背窗' },
+  { value: 'bed_not_facing_door',    label: '床不對門' },
+  { value: 'sofa_not_back_to_door',  label: '沙發不背門' },
+  { value: 'desk_not_facing_window', label: '書桌不背窗' },
 ]
 
 function toggleFamilyNeed(value) {
@@ -43,10 +42,10 @@ function toggleFengshuiRule(value) {
 }
 
 defineProps({
-  spaceImage:       { type: Object, required: true },
-  styleRefImage:    { type: Object, required: true },
-  styleOptions:     { type: Array,  default: () => [] },
-  styleLoading:     { type: Boolean, default: false },
+  spaceImage:          { type: Object,  required: true },
+  styleRefImage:       { type: Object,  required: true },
+  styleOptions:        { type: Array,   default: () => [] },
+  styleLoading:        { type: Boolean, default: false },
   styleError:          { type: String,  default: '' },
   matchedStylePreview: { type: Object,  default: null },
   baseImagePreview:    { type: String,  default: null },
@@ -68,48 +67,18 @@ defineEmits(['submit', 'mask-ready'])
       </label>
       <textarea
         v-model="textPrompt"
-        rows="5"
+        rows="4"
         :placeholder="mode === 'refine'
           ? '例如：把沙發換成藍色布藝款式、窗簾改為白色薄紗'
-          : '例如：開門回家的瞬間就能感到放鬆的客廳設計，喜歡北歐風、木質感...'"
+          : '例如：開門回家的瞬間就能感到放鬆的客廳，喜歡北歐風、木質感...'"
       />
     </div>
 
-    <!-- 2. 家庭結構特殊需求 -->
-    <div v-if="mode !== 'refine'" class="field">
-      <label class="field-label">家庭結構特殊需求 <span class="optional">選填</span></label>
-      <div class="chip-group">
-        <button
-          v-for="opt in FAMILY_OPTIONS"
-          :key="opt.value"
-          type="button"
-          :class="['chip', { active: familyNeeds.includes(opt.value) }]"
-          @click="toggleFamilyNeed(opt.value)"
-        >{{ opt.label }}</button>
-      </div>
-    </div>
-
-    <!-- 3. 風水需求 -->
-    <div v-if="mode !== 'refine'" class="field">
-      <label class="field-label">風水需求 <span class="optional">選填</span></label>
-      <div class="chip-group">
-        <button
-          v-for="opt in FENGSHUI_OPTIONS"
-          :key="opt.value"
-          type="button"
-          :class="['chip', { active: fengshuiRules.includes(opt.value) }]"
-          @click="toggleFengshuiRule(opt.value)"
-        >{{ opt.label }}</button>
-      </div>
-    </div>
-
-    <!-- divider -->
-    <div class="divider"></div>
-
-    <!-- 4. 原始空間圖片 -->
+    <!-- 2. 空間圖片 -->
     <div class="field">
       <label class="field-label">
-        {{ mode === 'refine' ? '空間圖片（細部微調基底）' : '原始空間圖片（Optional）' }}
+        {{ mode === 'refine' ? '空間圖片' : '空間照片' }}
+        <span v-if="mode === 'design'" class="optional">選填</span>
       </label>
       <ImageUpload
         label="點擊或拖曳上傳"
@@ -118,141 +87,162 @@ defineEmits(['submit', 'mask-ready'])
         @change="spaceImage.onChange"
         @remove="spaceImage.remove"
       />
-      <!-- 細部微調：畫筆工具列 -->
       <div v-if="mode === 'refine'" class="brush-toolbar">
         <span class="brush-title">塗抹想修改的區域</span>
         <div class="brush-btns">
-          <button
-            :class="['brush-tool', { active: drawMode === 'draw' }]"
-            type="button"
-            @click="drawMode = 'draw'"
-          >畫筆</button>
-          <button
-            :class="['brush-tool', { active: drawMode === 'erase' }]"
-            type="button"
-            @click="drawMode = 'erase'"
-          >橡皮擦</button>
+          <button :class="['brush-tool', { active: drawMode === 'draw' }]"  type="button" @click="drawMode = 'draw'">畫筆</button>
+          <button :class="['brush-tool', { active: drawMode === 'erase' }]" type="button" @click="drawMode = 'erase'">橡皮擦</button>
         </div>
         <label class="brush-size-label">
           筆刷 {{ brushSize }}px
           <input type="range" v-model.number="brushSize" min="5" max="120" step="5" class="brush-range" />
         </label>
       </div>
-
-      <button type="button" class="toggle-btn" @click="showManualPath = !showManualPath">
-        {{ showManualPath ? '收合' : '手動輸入路徑' }}
-      </button>
-      <input
-        v-if="showManualPath"
-        v-model="manualImagePath"
-        type="text"
-        placeholder="本機圖片路徑"
-        class="manual-input"
-      />
     </div>
 
-    <!-- 3. 改動幅度（細部微調不顯示） -->
-    <div v-if="mode === 'design'" class="field">
-      <label class="field-label">
-        改動幅度
-        <span class="value-badge">{{ editScope.toFixed(1) }}</span>
-      </label>
-      <input type="range" v-model.number="editScope" min="0" max="1" step="0.1" />
-      <div class="range-hint"><span>局部微調</span><span>大幅改動</span></div>
-    </div>
-
-    <!-- 4. 風格選擇（整體設計模式） -->
+    <!-- design mode -->
     <template v-if="mode === 'design'">
+
+      <!-- 3. 裝潢風格 -->
       <div class="field">
-        <label class="field-label">選擇裝潢風格</label>
+        <label class="field-label">裝潢風格</label>
         <select v-model="selectedStyle" :disabled="styleLoading">
           <option v-for="opt in styleOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
         <div v-if="styleLoading" class="status-hint">載入中...</div>
-        <div v-if="styleError" class="status-error">{{ styleError }}</div>
+        <div v-if="styleError"   class="status-error">{{ styleError }}</div>
       </div>
 
-    <!-- 5. 輸出比例 -->
-    <div class="field">
-      <label class="field-label">輸出比例</label>
-      <select v-model="outputAspect">
-        <option value="auto">自動（依原圖比例）</option>
-        <option value="1:1">1:1</option>
-        <option value="4:3">4:3</option>
-        <option value="3:4">3:4</option>
-        <option value="16:9">16:9</option>
-        <option value="9:16">9:16</option>
-      </select>
-    </div>
-
-    <!-- divider -->
-    <div class="divider"></div>
-
-    <!-- 6. 風格參考圖 -->
-    <div class="field">
-      <div class="field-label-row">
-        <label class="field-label">風格參考圖</label>
-        <label class="toggle-label">
-          <input type="checkbox" v-model="noStyleReference" />
-          <span>不套用風格</span>
-        </label>
-      </div>
-      <template v-if="!noStyleReference">
-        <ImageUpload
-          label="點擊或拖曳上傳"
-          icon="🖼️"
-          hint="上傳想要的風格圖片，AI 會參考其色調與氛圍"
-          :preview="styleRefImage.preview"
-          @change="styleRefImage.onChange"
-          @remove="styleRefImage.remove"
-        />
-        <div v-if="styleRefImage.preview" class="radio-group style-method-group">
-          <label :class="{ active: styleMethod === 'ai_analysis' }">
-            <input type="radio" v-model="styleMethod" value="ai_analysis" />
-            <div class="radio-content">
-              <strong>AI 分析風格</strong>
-              <small>Gemini 解析圖片色調，注入 prompt</small>
-            </div>
-          </label>
-          <label :class="{ active: styleMethod === 'redux' }">
-            <input type="radio" v-model="styleMethod" value="redux" />
-            <div class="radio-content">
-              <strong>FLUX.1-Redux</strong>
-              <small>以圖為主直接做風格遷移</small>
-            </div>
-          </label>
-          <label :class="{ active: styleMethod === 'ipadapter' }">
-            <input type="radio" v-model="styleMethod" value="ipadapter" />
-            <div class="radio-content">
-              <strong>IP-Adapter</strong>
-              <small>文字定空間類型，圖像注入風格</small>
-            </div>
+      <!-- 4. 風格參考圖 -->
+      <div class="field">
+        <div class="field-label-row">
+          <label class="field-label">風格參考圖</label>
+          <label class="toggle-label">
+            <input type="checkbox" v-model="noStyleReference" />
+            <span>不套用風格</span>
           </label>
         </div>
-        <div v-if="!styleRefImage.preview && matchedStylePreview?.image_url" class="matched-preview">
-          <div class="matched-label">
-            AI 依描述自動選取：<strong>{{ matchedStylePreview.style_name }}</strong>
-            <span class="score">{{ (matchedStylePreview.similarity * 100).toFixed(0) }}%</span>
-          </div>
-          <img
-            :src="`http://localhost:8000${matchedStylePreview.image_url}`"
-            alt="風格參考圖"
-            @error="$event.target.style.display='none'"
+        <template v-if="!noStyleReference">
+          <ImageUpload
+            label="點擊或拖曳上傳"
+            icon="🖼️"
+            hint="上傳想要的風格圖片，AI 會參考其色調與氛圍"
+            :preview="styleRefImage.preview"
+            @change="styleRefImage.onChange"
+            @remove="styleRefImage.remove"
           />
+          <div v-if="styleRefImage.preview" class="radio-group style-method-group">
+            <label :class="{ active: styleMethod === 'ai_analysis' }">
+              <input type="radio" v-model="styleMethod" value="ai_analysis" />
+              <div class="radio-content">
+                <strong>AI 分析風格</strong>
+                <small>Gemini 解析圖片色調，注入 prompt</small>
+              </div>
+            </label>
+            <label :class="{ active: styleMethod === 'redux' }">
+              <input type="radio" v-model="styleMethod" value="redux" />
+              <div class="radio-content">
+                <strong>FLUX.1-Redux</strong>
+                <small>以圖為主直接做風格遷移</small>
+              </div>
+            </label>
+            <label :class="{ active: styleMethod === 'ipadapter' }">
+              <input type="radio" v-model="styleMethod" value="ipadapter" />
+              <div class="radio-content">
+                <strong>IP-Adapter</strong>
+                <small>文字定空間類型，圖像注入風格</small>
+              </div>
+            </label>
+          </div>
+          <div v-if="!styleRefImage.preview && matchedStylePreview?.image_url" class="matched-preview">
+            <div class="matched-label">
+              AI 依描述自動選取：<strong>{{ matchedStylePreview.style_name }}</strong>
+              <span class="score">{{ (matchedStylePreview.similarity * 100).toFixed(0) }}%</span>
+            </div>
+            <img
+              :src="`http://localhost:8000${matchedStylePreview.image_url}`"
+              alt="風格參考圖"
+              @error="$event.target.style.display='none'"
+            />
+          </div>
+        </template>
+        <div v-else class="no-style-hint">純文字 prompt 生圖，不套用風格參考圖</div>
+      </div>
+
+      <!-- 5. 進階設定（折疊） -->
+      <div class="advanced-wrapper">
+        <button type="button" class="advanced-toggle" @click="showAdvanced = !showAdvanced">
+          <span>進階設定</span>
+          <svg class="advanced-arrow" :class="{ open: showAdvanced }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+
+        <div v-show="showAdvanced" class="advanced-section">
+
+          <!-- 家庭結構 -->
+          <div class="field">
+            <label class="field-label">家庭結構 <span class="optional">選填</span></label>
+            <div class="chip-group">
+              <button
+                v-for="opt in FAMILY_OPTIONS" :key="opt.value"
+                type="button"
+                :class="['chip', { active: familyNeeds.includes(opt.value) }]"
+                @click="toggleFamilyNeed(opt.value)"
+              >{{ opt.label }}</button>
+            </div>
+          </div>
+
+          <!-- 風水需求 -->
+          <div class="field">
+            <label class="field-label">風水需求 <span class="optional">選填</span></label>
+            <div class="chip-group">
+              <button
+                v-for="opt in FENGSHUI_OPTIONS" :key="opt.value"
+                type="button"
+                :class="['chip', { active: fengshuiRules.includes(opt.value) }]"
+                @click="toggleFengshuiRule(opt.value)"
+              >{{ opt.label }}</button>
+            </div>
+          </div>
+
+          <!-- 改動幅度 -->
+          <div class="field">
+            <label class="field-label">
+              改動幅度
+              <span class="value-badge">{{ editScope.toFixed(1) }}</span>
+            </label>
+            <input type="range" v-model.number="editScope" min="0" max="1" step="0.1" />
+            <div class="range-hint"><span>局部微調</span><span>大幅改動</span></div>
+          </div>
+
+          <!-- 輸出比例 -->
+          <div class="field">
+            <label class="field-label">輸出比例</label>
+            <select v-model="outputAspect">
+              <option value="auto">自動（依原圖比例）</option>
+              <option value="1:1">1:1</option>
+              <option value="4:3">4:3</option>
+              <option value="3:4">3:4</option>
+              <option value="16:9">16:9</option>
+              <option value="9:16">9:16</option>
+            </select>
+          </div>
+
         </div>
-      </template>
-      <div v-else class="no-style-hint">純文字 prompt 生圖，不套用風格參考圖</div>
+      </div>
+
+    </template><!-- /mode === 'design' -->
+
+    <!-- CTA — sticky -->
+    <div class="submit-wrap">
+      <button class="submit-btn" @click="$emit('submit')" :disabled="loading">
+        <span v-if="loading" class="spinner"></span>
+        <span>{{ loading ? 'AI 生成中...' : '生成設計圖' }}</span>
+      </button>
+      <p v-if="error" class="error-msg">{{ error }}</p>
     </div>
 
-  </template><!-- /mode === 'design' -->
-
-    <!-- CTA -->
-    <button class="submit-btn" @click="$emit('submit')" :disabled="loading">
-      <span v-if="loading" class="spinner"></span>
-      <span>{{ loading ? 'AI 生成中...' : '執行工作流' }}</span>
-    </button>
-
-    <p v-if="error" class="error-msg">{{ error }}</p>
   </div>
 
   <!-- 遮罩編輯器 Modal -->
@@ -265,11 +255,16 @@ defineEmits(['submit', 'mask-ready'])
 </template>
 
 <style scoped>
-.form { display: flex; flex-direction: column; gap: 1.25rem; }
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-height: 100%;
+}
 
 .divider {
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(180,150,230,0.2), transparent);
+  background: linear-gradient(90deg, transparent, rgba(180,140,100,0.2), transparent);
   margin: 0.1rem 0;
 }
 
@@ -308,7 +303,7 @@ defineEmits(['submit', 'mask-ready'])
 /* Textarea */
 textarea {
   padding: 0.85rem 1rem;
-  border: 1.5px solid #ddd4f0;
+  border: 1.5px solid #ddd0c0;
   border-radius: var(--radius-md);
   resize: vertical;
   font-size: 0.875rem;
@@ -316,13 +311,13 @@ textarea {
   color: var(--text-1);
   line-height: 1.65;
   transition: border-color 0.18s, box-shadow 0.18s;
-  background: rgba(255,255,255,0.75);
+  background: rgba(255,250,243,0.75);
 }
 textarea:focus {
   outline: none;
   border-color: var(--primary);
-  background: #fff;
-  box-shadow: 0 0 0 3px rgba(124,92,191,0.1);
+  background: #fffaf5;
+  box-shadow: 0 0 0 3px rgba(139,94,60,0.1);
 }
 textarea::placeholder { color: var(--text-4); }
 
@@ -337,13 +332,13 @@ input[type='range'] { width: 100%; accent-color: var(--primary); cursor: pointer
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0.85rem;
-  border: 1.5px solid #ddd4f0;
+  border: 1.5px solid #ddd0c0;
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.18s;
-  background: rgba(255,255,255,0.65);
+  background: rgba(255,250,243,0.65);
 }
-.radio-group label:hover { border-color: var(--primary-border); background: rgba(255,255,255,0.9); }
+.radio-group label:hover { border-color: var(--primary-border); background: rgba(255,250,243,0.9); }
 .radio-group label.active { border-color: var(--primary); background: var(--primary-light); }
 .radio-group input[type='radio'] { accent-color: var(--primary); flex-shrink: 0; }
 .radio-content { display: flex; flex-direction: column; gap: 0.05rem; }
@@ -353,110 +348,62 @@ input[type='range'] { width: 100%; accent-color: var(--primary); cursor: pointer
 /* Select */
 select {
   padding: 0.65rem 0.85rem;
-  border: 1.5px solid #ddd4f0;
+  border: 1.5px solid #ddd0c0;
   border-radius: var(--radius-md);
   font-size: 0.875rem;
   font-family: inherit;
-  background: rgba(255,255,255,0.75);
+  background: rgba(255,250,243,0.75);
   color: var(--text-1);
   cursor: pointer;
   transition: border-color 0.18s;
   appearance: auto;
 }
-select:focus { outline: none; border-color: var(--primary); background: #fff; }
+select:focus { outline: none; border-color: var(--primary); background: #fffaf5; }
 
 .status-hint  { font-size: 0.8rem; color: var(--text-3); }
 .status-error { font-size: 0.8rem; color: #c0392b; }
 
-/* Manual path */
-
-.brush-title {
-  font-size: 0.8rem;
-  font-weight: 700;
-  color: var(--primary);
-}
-
+/* Brush toolbar */
+.brush-title { font-size: 0.8rem; font-weight: 700; color: #444; }
 .brush-toolbar {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.65rem 0.75rem;
-  background: var(--primary-subtle);
-  border: 1.5px solid var(--primary-border);
+  background: rgba(0,0,0,0.03);
+  border: 1.5px solid #ddd;
   border-radius: var(--radius-md);
 }
-.brush-btns {
-  display: flex;
-  gap: 0.4rem;
-}
+.brush-btns { display: flex; gap: 0.4rem; }
 .brush-tool {
   flex: 1;
   padding: 0.35rem 0;
-  border: 1.5px solid var(--primary-border);
+  border: 1.5px solid #ccc;
   border-radius: 8px;
   background: #fff;
-  color: var(--primary);
+  color: #555;
   font-size: 0.8rem;
   font-family: inherit;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
 }
-.brush-tool.active {
-  background: var(--primary);
-  color: #fff;
-  border-color: var(--primary);
-}
+.brush-tool.active { background: #1c1c1e; color: #fff; border-color: #1c1c1e; }
 .brush-size-label {
   font-size: 0.75rem;
-  color: var(--primary);
+  color: #555;
   font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-.brush-range {
-  width: 120px;
-  accent-color: var(--primary);
-  cursor: pointer;
-}
-
-.mask-btn {
-  padding: 0.45rem 0.85rem;
-  border: 1.5px dashed var(--primary-border);
-  border-radius: var(--radius-md);
-  background: var(--primary-subtle);
-  color: var(--primary);
-  font-size: 0.8rem;
-  font-family: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.18s;
-  text-align: left;
-}
-.mask-btn:hover { background: var(--primary-light); border-style: solid; }
-
-.toggle-btn {
-  background: none; border: none;
-  color: var(--primary); cursor: pointer;
-  font-size: 0.78rem; font-family: inherit;
-  padding: 0; text-align: left;
-  opacity: 0.7;
-}
-.toggle-btn:hover { opacity: 1; }
-.manual-input {
-  width: 100%; padding: 0.5rem 0.75rem;
-  border: 1.5px solid #ddd4f0; border-radius: var(--radius-sm);
-  font-size: 0.83rem; font-family: inherit; color: var(--text-1);
-  background: rgba(255,255,255,0.75);
-}
-.manual-input:focus { outline: none; border-color: var(--primary); }
+.brush-range { width: 120px; accent-color: #1c1c1e; cursor: pointer; }
 
 /* Style toggle */
 .field-label-row { display: flex; align-items: center; justify-content: space-between; }
 .toggle-label {
   display: flex; align-items: center; gap: 0.35rem;
-  font-size: 0.75rem; color: var(--primary); cursor: pointer; font-weight: 600;
+  font-size: 0.75rem; color: #505050; cursor: pointer; font-weight: 600;
 }
 .toggle-label input[type='checkbox'] { accent-color: var(--primary); cursor: pointer; }
 
@@ -479,13 +426,7 @@ select:focus { outline: none; border-color: var(--primary); background: #fff; }
 .matched-preview img {
   width: 100%; max-height: 160px; object-fit: cover;
   border-radius: var(--radius-md); border: 1.5px solid var(--primary-border);
-  display: block;
-  cursor: zoom-in;
-}
-.matched-preview img:focus-visible {
-  outline: 3px solid rgba(124, 92, 191, 0.25);
-  outline-offset: 3px;
-  border-radius: var(--radius-md);
+  display: block; cursor: zoom-in;
 }
 .matched-label {
   font-size: 0.75rem; color: var(--primary);
@@ -500,31 +441,71 @@ select:focus { outline: none; border-color: var(--primary); background: #fff; }
 .chip-group { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .chip {
   padding: 0.35rem 0.75rem;
-  border: 1.5px solid #ddd4f0;
+  border: 1.5px solid #d0d0d0;
   border-radius: 99px;
   font-size: 0.8rem;
   font-family: inherit;
   font-weight: 500;
-  color: var(--text-2);
-  background: rgba(255,255,255,0.7);
+  color: #555;
+  background: #fff;
   cursor: pointer;
   transition: all 0.15s;
   line-height: 1.4;
 }
-.chip:hover { border-color: var(--primary-border); background: rgba(255,255,255,0.95); color: var(--primary); }
+.chip:hover { border-color: #999; color: #222; }
 .chip.active {
-  border-color: var(--primary);
-  background: linear-gradient(135deg, #7c5cbf 0%, #a06edb 100%);
+  border-color: #1c1c1e;
+  background: #1c1c1e;
   color: #fff;
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(124,92,191,0.35);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
 }
 
-/* Submit */
+/* Advanced section */
+.advanced-wrapper { display: flex; flex-direction: column; }
+
+.advanced-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.6rem 0.9rem;
+  background: rgba(0,0,0,0.03);
+  border: 1.5px solid #ddd;
+  border-radius: var(--radius-md);
+  color: #555;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s;
+}
+.advanced-toggle:hover { background: rgba(0,0,0,0.06); border-color: #bbb; }
+
+.advanced-arrow { transition: transform 0.25s ease; flex-shrink: 0; }
+.advanced-arrow.open { transform: rotate(180deg); }
+
+.advanced-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  padding: 1rem 0.25rem 0.25rem;
+}
+
+/* Sticky submit */
+.submit-wrap {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding-top: 1.25rem;
+  padding-bottom: 0.25rem;
+  background: linear-gradient(to top, rgba(255,248,240,1) 65%, rgba(255,248,240,0));
+}
+
 .submit-btn {
-  margin-top: 0.25rem;
+  width: 100%;
   padding: 0.9rem 1rem;
-  background: linear-gradient(135deg, #7c5cbf 0%, #a06edb 100%);
+  background: #1c1c1e;
   color: white;
   border: none;
   border-radius: var(--radius-lg);
@@ -538,16 +519,15 @@ select:focus { outline: none; border-color: var(--primary); background: #fff; }
   gap: 0.5rem;
   transition: all 0.2s;
   letter-spacing: 0.02em;
-  box-shadow: 0 4px 16px rgba(124, 92, 191, 0.38);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
 }
 .submit-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 8px 24px rgba(124, 92, 191, 0.48);
+  background: #333;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 .submit-btn:active:not(:disabled) { transform: translateY(0); }
-.submit-btn:disabled {
-  opacity: 0.6; cursor: not-allowed; box-shadow: none; transform: none;
-}
+.submit-btn:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; transform: none; }
 
 .spinner {
   width: 15px; height: 15px;
@@ -562,6 +542,7 @@ select:focus { outline: none; border-color: var(--primary); background: #fff; }
 .error-msg {
   font-size: 0.82rem; color: #c0392b;
   background: #fff5f5; padding: 0.55rem 0.8rem;
+  margin-top: 0.5rem;
   border-radius: var(--radius-sm); border: 1px solid #f5c6c6;
 }
 </style>

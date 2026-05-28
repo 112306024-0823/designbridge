@@ -1,28 +1,28 @@
 @import './base.css';
 
 :root {
-  --primary:        #7c5cbf;
-  --primary-light:  #f0ebfb;
-  --primary-hover:  #6347a8;
-  --primary-border: #c9b8e8;
-  --primary-subtle: rgba(124, 92, 191, 0.07);
+  --primary:        #8B5E3C;
+  --primary-light:  #f7f0e8;
+  --primary-hover:  #714c2e;
+  --primary-border: #d4b89a;
+  --primary-subtle: rgba(139, 94, 60, 0.07);
 
-  --text-1: #1a0f2e;
-  --text-2: #4a3370;
-  --text-3: #9880bb;
-  --text-4: #c4b3e0;
+  --text-1: #1c1c1e;
+  --text-2: #3d3d3f;
+  --text-3: #a07850;
+  --text-4: #c8a882;
 
-  --surface:        rgba(255, 255, 255, 0.85);
-  --surface-border: rgba(180, 150, 230, 0.22);
+  --surface:        rgba(255, 250, 245, 0.85);
+  --surface-border: rgba(180, 140, 100, 0.22);
 
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
 
-  --shadow-sm:  0 1px 4px rgba(80, 50, 140, 0.07);
-  --shadow-md:  0 4px 16px rgba(124, 92, 191, 0.13);
-  --shadow-lg:  0 10px 32px rgba(124, 92, 191, 0.18);
-  --shadow-xl:  0 20px 48px rgba(124, 92, 191, 0.22);
+  --shadow-sm:  0 1px 4px rgba(100, 60, 20, 0.07);
+  --shadow-md:  0 4px 16px rgba(139, 94, 60, 0.13);
+  --shadow-lg:  0 10px 32px rgba(139, 94, 60, 0.18);
+  --shadow-xl:  0 20px 48px rgba(139, 94, 60, 0.22);
 }
 
 *, *::before, *::after { box-sizing: border-box; }

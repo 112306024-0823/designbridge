@@ -15,7 +15,6 @@ const styleOptions = ref([{ label: '自動', value: 'auto' }])
 const styleLoading = ref(false)
 const styleError = ref('')
 const manualImagePath  = ref('')
-const showManualPath   = ref(false)
 const noStyleReference = ref(false)
 const outputAspect     = ref('auto')
 const familyNeeds      = ref([])
@@ -332,7 +331,6 @@ onMounted(fetchStyleOptions)
           <div class="logo-mark">✦</div>
           <span class="logo-text">DesignBridge</span>
         </div>
-        <p class="logo-tagline">AI 室內設計助手</p>
 
         <div class="mode-tabs">
           <button
@@ -355,8 +353,6 @@ onMounted(fetchStyleOptions)
         v-model:textPrompt="textPrompt"
         v-model:editScope="editScope"
         v-model:selectedStyle="selectedStyle"
-        v-model:manualImagePath="manualImagePath"
-        v-model:showManualPath="showManualPath"
         v-model:noStyleReference="noStyleReference"
         v-model:mode="mode"
         v-model:outputAspect="outputAspect"
@@ -441,16 +437,16 @@ onMounted(fetchStyleOptions)
   display: flex;
   min-height: 100vh;
   background:
-    radial-gradient(ellipse at 12% 20%, rgba(167, 139, 250, 0.16) 0%, transparent 48%),
-    radial-gradient(ellipse at 88% 80%, rgba(124, 92, 191, 0.12) 0%, transparent 48%),
-    linear-gradient(150deg, #f6f1ff 0%, #ede6fa 45%, #e8dff5 100%);
+    radial-gradient(ellipse at 12% 20%, rgba(200, 160, 110, 0.18) 0%, transparent 48%),
+    radial-gradient(ellipse at 88% 80%, rgba(160, 120, 80, 0.14) 0%, transparent 48%),
+    linear-gradient(150deg, #fdf6ee 0%, #f5e8d8 45%, #ede0cf 100%);
 }
 
 /* ── Sidebar ── */
 .sidebar {
   width: 420px;
   min-width: 420px;
-  background: rgba(255, 255, 255, 0.84);
+  background: rgba(255, 248, 240, 0.88);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   border-right: 1px solid var(--surface-border);
@@ -473,15 +469,15 @@ onMounted(fetchStyleOptions)
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  color: #7c5cbf;
+  color: #8B5E3C;
   font-size: 0.95rem;
   font-weight: 600;
 }
 .refine-spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid rgba(124, 92, 191, 0.2);
-  border-top-color: #7c5cbf;
+  border: 3px solid rgba(139, 94, 60, 0.2);
+  border-top-color: #8B5E3C;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -507,20 +503,20 @@ onMounted(fetchStyleOptions)
 .refine-result-label {
   font-size: 1rem;
   font-weight: 700;
-  color: #3d2b6e;
+  color: #5c3d24;
 }
 .refine-continue-btn {
   padding: 0.4rem 1rem;
-  border: 1.5px solid #7c5cbf;
+  border: 1.5px solid #999;
   border-radius: 8px;
   background: transparent;
-  color: #7c5cbf;
+  color: #444;
   font-size: 0.82rem;
   font-family: inherit;
   font-weight: 600;
   cursor: pointer;
 }
-.refine-continue-btn:hover { background: #f0eaff; }
+.refine-continue-btn:hover { background: #f0f0f0; border-color: #666; }
 .refine-result-img {
   width: 100%;
   max-width: 720px;
@@ -531,7 +527,7 @@ onMounted(fetchStyleOptions)
 
 .sidebar-header {
   padding: 1.75rem 2rem 1.25rem;
-  border-bottom: 1px solid rgba(180, 150, 230, 0.14);
+  border-bottom: 1px solid rgba(180, 140, 100, 0.14);
   flex-shrink: 0;
 }
 
@@ -544,10 +540,10 @@ onMounted(fetchStyleOptions)
 .mode-tab {
   flex: 1;
   padding: 0.6rem 0;
-  border: 2px solid #d4c4ef;
+  border: 2px solid #d8d8d8;
   border-radius: 12px;
   background: transparent;
-  color: #7c5cbf;
+  color: #444;
   font-size: 0.88rem;
   font-family: inherit;
   font-weight: 600;
@@ -555,14 +551,14 @@ onMounted(fetchStyleOptions)
   transition: all 0.18s;
 }
 .mode-tab:hover:not(.active) {
-  background: #f0eaff;
-  border-color: #b49edd;
+  background: #f5f5f5;
+  border-color: #bbb;
 }
 .mode-tab.active {
-  background: linear-gradient(135deg, #7c5cbf 0%, #a06edb 100%);
+  background: linear-gradient(135deg, #8B5E3C 0%, #b07845 100%);
   border-color: transparent;
   color: #fff;
-  box-shadow: 0 4px 14px rgba(124, 92, 191, 0.35);
+  box-shadow: 0 4px 14px rgba(139, 94, 60, 0.35);
 }
 
 .logo {
@@ -575,7 +571,7 @@ onMounted(fetchStyleOptions)
 .logo-mark {
   width: 30px;
   height: 30px;
-  background: linear-gradient(135deg, #7c5cbf 0%, #b07de0 100%);
+  background: linear-gradient(135deg, #8B5E3C 0%, #b07845 100%);
   border-radius: 8px;
   display: flex;
   align-items: center;
@@ -583,7 +579,7 @@ onMounted(fetchStyleOptions)
   font-size: 0.9rem;
   color: white;
   flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(124, 92, 191, 0.35);
+  box-shadow: 0 2px 8px rgba(139, 94, 60, 0.35);
 }
 
 .logo-text {
@@ -601,21 +597,21 @@ onMounted(fetchStyleOptions)
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 248, 240, 0.92);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(180, 150, 230, 0.35);
-  box-shadow: 0 2px 10px rgba(124, 92, 191, 0.2);
+  border: 1px solid rgba(180, 140, 100, 0.35);
+  box-shadow: 0 2px 10px rgba(139, 94, 60, 0.2);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #7c5cbf;
+  color: #8B5E3C;
   text-decoration: none;
   transition: box-shadow 0.15s, background 0.15s, transform 0.15s;
 }
 .history-fab:hover {
-  background: rgba(255, 255, 255, 1);
-  box-shadow: 0 4px 16px rgba(124, 92, 191, 0.35);
+  background: rgba(255, 248, 240, 1);
+  box-shadow: 0 4px 16px rgba(139, 94, 60, 0.35);
   transform: scale(1.08);
 }
 

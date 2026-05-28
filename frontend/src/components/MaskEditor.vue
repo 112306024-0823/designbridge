@@ -183,7 +183,7 @@ function confirmMask() {
 .title {
   font-size: 0.95rem;
   font-weight: 700;
-  color: #2d1b5e;
+  color: #2c1810;
   flex-shrink: 0;
 }
 .tools {
@@ -194,10 +194,10 @@ function confirmMask() {
 }
 .tool-btn {
   padding: 0.3rem 0.75rem;
-  border: 1.5px solid #c4b0e8;
+  border: 1.5px solid #d4b89a;
   border-radius: 8px;
-  background: #f5f0ff;
-  color: #5c3e9e;
+  background: #f7f0e8;
+  color: #5c3d24;
   font-size: 0.8rem;
   font-family: inherit;
   cursor: pointer;
@@ -205,13 +205,13 @@ function confirmMask() {
   transition: all 0.15s;
 }
 .tool-btn.active {
-  background: #7c5cbf;
+  background: #8B5E3C;
   color: #fff;
-  border-color: #7c5cbf;
+  border-color: #8B5E3C;
 }
 .brush-label {
   font-size: 0.78rem;
-  color: #5c3e9e;
+  color: #5c3d24;
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -219,7 +219,7 @@ function confirmMask() {
 }
 .brush-label input[type='range'] {
   width: 90px;
-  accent-color: #7c5cbf;
+  accent-color: #8B5E3C;
   cursor: pointer;
 }
 .clear-btn {
@@ -241,7 +241,7 @@ function confirmMask() {
   display: inline-block;
   border-radius: 10px;
   overflow: hidden;
-  border: 2px solid #ddd4f0;
+  border: 2px solid #ddd0c0;
   line-height: 0;
 }
 .image-layer,
@@ -260,7 +260,7 @@ function confirmMask() {
 /* Hint */
 .hint {
   font-size: 0.75rem;
-  color: #8a7aaa;
+  color: #a07850;
   margin: 0;
   text-align: center;
 }
@@ -273,26 +273,27 @@ function confirmMask() {
 }
 .cancel-btn {
   padding: 0.55rem 1.2rem;
-  border: 1.5px solid #ddd4f0;
+  border: 1.5px solid #ccc;
   border-radius: 10px;
-  background: #f8f5ff;
-  color: #7c5cbf;
+  background: #f5f5f5;
+  color: #444;
   font-size: 0.88rem;
   font-family: inherit;
   cursor: pointer;
   font-weight: 600;
 }
+.cancel-btn:hover { background: #eee; }
 .confirm-btn {
   padding: 0.55rem 1.4rem;
   border: none;
   border-radius: 10px;
-  background: linear-gradient(135deg, #7c5cbf 0%, #a06edb 100%);
+  background: linear-gradient(135deg, #8B5E3C 0%, #b07845 100%);
   color: #fff;
   font-size: 0.88rem;
   font-family: inherit;
   cursor: pointer;
   font-weight: 700;
-  box-shadow: 0 4px 14px rgba(124, 92, 191, 0.4);
+  box-shadow: 0 4px 14px rgba(139, 94, 60, 0.4);
 }
 .confirm-btn:hover { opacity: 0.9; }
 </style>

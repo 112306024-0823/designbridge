@@ -216,7 +216,7 @@ function handleSubmit() {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: #1a1128;
+  background: #1a0d08;
 }
 
 .layer {
@@ -272,9 +272,9 @@ function handleSubmit() {
   align-items: center;
   gap: 1rem;
   padding: 0.75rem 1.25rem;
-  background: #fff;
-  border-top: 1.5px solid #e0d6f5;
-  box-shadow: 0 -4px 20px rgba(100, 70, 170, 0.08);
+  background: #fdf6ee;
+  border-top: 1.5px solid #e0d4b8;
+  box-shadow: 0 -4px 20px rgba(100, 60, 20, 0.08);
   min-height: 88px;
 }
 
@@ -288,10 +288,10 @@ function handleSubmit() {
 
 .tool-btn {
   padding: 0.35rem 0.75rem;
-  border: 1.5px solid #c4b0e8;
+  border: 1.5px solid #d4b89a;
   border-radius: 8px;
-  background: #f5f0ff;
-  color: #5c3e9e;
+  background: #f7f0e8;
+  color: #5c3d24;
   font-size: 0.8rem;
   font-family: inherit;
   font-weight: 600;
@@ -300,9 +300,9 @@ function handleSubmit() {
   white-space: nowrap;
 }
 .tool-btn.active {
-  background: #7c5cbf;
+  background: #8B5E3C;
   color: #fff;
-  border-color: #7c5cbf;
+  border-color: #8B5E3C;
 }
 
 .brush-label {
@@ -311,12 +311,12 @@ function handleSubmit() {
   align-items: center;
   gap: 0.2rem;
   font-size: 0.72rem;
-  color: #7c5cbf;
+  color: #8B5E3C;
   font-weight: 600;
 }
 .brush-label input[type='range'] {
   width: 80px;
-  accent-color: #7c5cbf;
+  accent-color: #8B5E3C;
   cursor: pointer;
 }
 
@@ -340,7 +340,7 @@ function handleSubmit() {
   display: block;
   width: 1px;
   height: 40px;
-  background: #e0d6f5;
+  background: #e0d4b8;
   margin-left: 0.3rem;
 }
 
@@ -353,19 +353,19 @@ function handleSubmit() {
   width: 100%;
   box-sizing: border-box;
   padding: 0.55rem 0.85rem;
-  border: 1.5px solid #d4c4ef;
+  border: 1.5px solid #ddd0c0;
   border-radius: 10px;
   font-size: 0.88rem;
   font-family: inherit;
-  color: #2d1b5e;
-  background: #faf7ff;
+  color: #2c1810;
+  background: #fffaf5;
   resize: none;
   outline: none;
   line-height: 1.5;
   transition: border-color 0.15s;
 }
-.prompt-input:focus { border-color: #7c5cbf; }
-.prompt-input::placeholder { color: #b0a0cc; }
+.prompt-input:focus { border-color: #8B5E3C; }
+.prompt-input::placeholder { color: #c8a882; }
 
 /* 右：動作 */
 .action-group {
@@ -388,13 +388,13 @@ function handleSubmit() {
   padding: 0.65rem 1.6rem;
   border: none;
   border-radius: 12px;
-  background: linear-gradient(135deg, #7c5cbf 0%, #a06edb 100%);
+  background: linear-gradient(135deg, #8B5E3C 0%, #b07845 100%);
   color: #fff;
   font-size: 0.9rem;
   font-family: inherit;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(124, 92, 191, 0.4);
+  box-shadow: 0 4px 14px rgba(139, 94, 60, 0.4);
   white-space: nowrap;
   display: flex;
   align-items: center;

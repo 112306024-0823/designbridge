@@ -130,7 +130,7 @@ defineExpose({ getMaskBlob, clearMask })
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #1a1128;
+  background: #1a0d08;
   border-radius: 16px;
   overflow: hidden;
 }
