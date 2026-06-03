@@ -78,7 +78,8 @@ class RequirementJSON(TypedDict):
     language: NotRequired[str]              # "zh-TW" / "en" 等
     source_image_id: NotRequired[str]       # 對應 Vision JSON 的 image ref
     has_vision_input: NotRequired[bool]     # 是否有圖片輸入
-    success_conditions: NotRequired[list[str]] 
+    success_conditions: NotRequired[list[str]]
+    depth_conditioning_scale: NotRequired[float]  # 0.0 (ignore depth) ~ 1.0 (fully preserve structure)
 
 # ========== Vision JSON ==========
 class VisionJSON(TypedDict):

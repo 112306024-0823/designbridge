@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -168,8 +167,8 @@ def _call_llm_requirement_analyzer(
 
     try:
         parsed = _json.loads(text)
-    except Exception:
-        return _parse_nl_requirement(text, edit_scope, text_prompt)
+    except Exception as exc:
+        raise ValueError(f"Requirement analyzer LLM returned unparseable JSON: {text[:200]!r}") from exc
 
     # New format: {"routing_decision": "...", "structured_requirement": {...}}
     if "structured_requirement" in parsed and "routing_decision" in parsed:
@@ -184,89 +183,6 @@ def _call_llm_requirement_analyzer(
     return parsed
 
 
-def _parse_nl_requirement(nl_text: str, edit_scope: float, text_prompt: str = "") -> dict[str, Any]:
-    """Parse natural language requirement report (labeled fields) into a compatible dict."""
-
-    def extract_field(field: str) -> str:
-        m = re.search(rf'^{re.escape(field)}:\s*(.+)$', nl_text, re.MULTILINE)
-        return m.group(1).strip() if m else ""
-
-    def extract_list(field: str) -> list[str]:
-        val = extract_field(field)
-        if not val or val.strip() in ("無", "none", ""):
-            return []
-        return [item.strip() for item in re.split(r'[,，]', val) if item.strip() not in ("", "無")]
-
-    room_type = extract_field("空間類型") or "living_room"
-    design_goal = extract_field("設計目標") or "renovation"
-    primary_style = extract_field("主要風格") or "現代"
-    secondary_style = extract_field("次要風格") or None
-    if secondary_style in ("無", ""):
-        secondary_style = None
-    color_palette = extract_list("色彩偏好")
-    material_preferences = extract_list("材質偏好")
-    must_keep = extract_list("必須保留")
-    must_add = extract_list("必須新增")
-    must_remove = extract_list("必須移除")
-    hint_layout = extract_field("涉及佈局") == "是"
-    hint_style = extract_field("涉及風格") == "是"
-    hint_adjuster = extract_field("僅局部微調") == "是" or edit_scope < 0.3
-    design_description = extract_field("設計描述") or ""
-
-    if edit_scope < 0.3:
-        allowed_ops = ["inpaint"]
-    elif edit_scope > 0.7:
-        allowed_ops = ["layout", "style"]
-    elif hint_layout and hint_style:
-        allowed_ops = ["layout", "style"]
-    elif hint_layout:
-        allowed_ops = ["layout"]
-    elif hint_style:
-        allowed_ops = ["style"]
-    else:
-        allowed_ops = ["layout", "style"]
-
-    return {
-        "user_description_raw": text_prompt or nl_text,
-        "design_description": design_description,
-        "meta": {
-            "room_type": room_type,
-            "design_goal": design_goal,
-            "user_experience_level": "general",
-        },
-        "space_info": {
-            "estimated_size": {"width": 5.0, "height": 3.0, "depth": 4.0},
-            "windows": [],
-            "doors": [],
-        },
-        "style_preferences": {
-            "primary_style": primary_style,
-            "secondary_style": secondary_style,
-            "color_palette": color_palette,
-            "material_preferences": material_preferences,
-            "style_strength": 0.7,
-            "reference_images": [],
-        },
-        "layout_constraints": {
-            "must_keep": must_keep,
-            "must_add": must_add,
-            "must_remove": must_remove,
-            "immutable_regions": [],
-            "functional_zones": [],
-        },
-        "edit_scope": {
-            "scope_value": edit_scope,
-            "allowed_operations": allowed_ops,
-        },
-        "priority_weights": {
-            "layout_rationality": 0.4,
-            "style_consistency": 0.6,
-            "novelty": 0.2,
-        },
-        "hint_layout": hint_layout,
-        "hint_style": hint_style,
-        "hint_adjuster": hint_adjuster,
-    }
 
 
 
@@ -784,16 +700,20 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
             generation_params["style_reference"] = user_style_reference_local
 
     # Kontext LoRA via Replicate：有 depth map 時優先，保留空間結構
-    _SPATIAL_STRENGTH = {"none": 0.55, "minor": 0.60, "major": 0.75}
-    spatial_level = (req.get("spatial_change_level") or "minor").lower()
-    kontext_strength = _SPATIAL_STRENGTH.get(spatial_level, 0.70)
+    # depth_conditioning_scale: 1.0=完全保留結構, 0.0=忽略深度圖
+    # img2img strength 是反向：strength = 1.0 - depth_conditioning_scale
+    depth_conditioning_scale = float(req.get("depth_conditioning_scale") or 0.50)
+    depth_conditioning_scale = max(0.0, min(1.0, depth_conditioning_scale))
+    kontext_strength = round(1.0 - depth_conditioning_scale, 2)
+    effective_depth_path = depth_path if depth_conditioning_scale >= 0.15 else None
 
     if backend == "placeholder" and Config.HF_TOKEN:
-        if depth_path and Path(str(depth_path)).is_file():
-            if _render_hf_kontext(prompt, str(depth_path), out_path, strength=kontext_strength):
+        if effective_depth_path and Path(str(effective_depth_path)).is_file():
+            if _render_hf_kontext(prompt, str(effective_depth_path), out_path, strength=kontext_strength):
                 backend = "hf_kontext"
                 generation_params["model"] = Config.KONTEXT_LORA_MODEL
                 generation_params["provider"] = Config.KONTEXT_PROVIDER
+                generation_params["depth_conditioning_scale"] = depth_conditioning_scale
                 generation_params["kontext_strength"] = kontext_strength
 
     # AI 分析模式 fallback：HF Inference API
