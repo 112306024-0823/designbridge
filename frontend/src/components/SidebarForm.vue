@@ -426,7 +426,11 @@ select:focus { outline: none; border-color: var(--primary); background: #fffaf5;
   cursor: pointer;
   transition: all 0.15s;
 }
-.brush-tool.active { background: #1c1c1e; color: #fff; border-color: #1c1c1e; }
+.brush-tool.active {
+  background: var(--btn-gradient);
+  color: #fff;
+  border-color: transparent;
+}
 .brush-size-label {
   font-size: 0.75rem;
   color: #555;
@@ -492,11 +496,11 @@ select:focus { outline: none; border-color: var(--primary); background: #fffaf5;
 }
 .chip:hover { border-color: #999; color: #222; }
 .chip.active {
-  border-color: #1c1c1e;
-  background: #1c1c1e;
+  border-color: transparent;
+  background: var(--btn-gradient);
   color: #fff;
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  box-shadow: var(--btn-shadow);
 }
 
 /* Advanced section */
@@ -543,7 +547,7 @@ select:focus { outline: none; border-color: var(--primary); background: #fffaf5;
 .submit-btn {
   width: 100%;
   padding: 0.9rem 1rem;
-  background: #1c1c1e;
+  background: var(--btn-gradient);
   color: white;
   border: none;
   border-radius: var(--radius-lg);
@@ -557,12 +561,12 @@ select:focus { outline: none; border-color: var(--primary); background: #fffaf5;
   gap: 0.5rem;
   transition: all 0.2s;
   letter-spacing: 0.02em;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--btn-shadow);
 }
 .submit-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  background: #333;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  background: var(--btn-gradient-hover);
+  box-shadow: var(--btn-shadow-hover);
 }
 .submit-btn:active:not(:disabled) { transform: translateY(0); }
 .submit-btn:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; transform: none; }

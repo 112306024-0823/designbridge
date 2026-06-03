@@ -300,9 +300,9 @@ function handleSubmit() {
   white-space: nowrap;
 }
 .tool-btn.active {
-  background: #8B5E3C;
+  background: var(--btn-gradient);
   color: #fff;
-  border-color: #8B5E3C;
+  border-color: transparent;
 }
 
 .brush-label {
@@ -388,24 +388,28 @@ function handleSubmit() {
   padding: 0.65rem 1.6rem;
   border: none;
   border-radius: 12px;
-  background: linear-gradient(135deg, #8B5E3C 0%, #b07845 100%);
+  background: var(--btn-gradient);
   color: #fff;
   font-size: 0.9rem;
   font-family: inherit;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(139, 94, 60, 0.4);
+  box-shadow: var(--btn-shadow);
   white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  transition: opacity 0.15s;
+  transition: background 0.18s, transform 0.18s, box-shadow 0.18s;
 }
 .submit-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.submit-btn:not(:disabled):hover { opacity: 0.88; }
+.submit-btn:not(:disabled):hover {
+  background: var(--btn-gradient-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--btn-shadow-hover);
+}
 
 /* Loading spinner */
 .spinner {

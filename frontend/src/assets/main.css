@@ -1,11 +1,19 @@
 @import './base.css';
 
 :root {
-  --primary:        #8B5E3C;
+  /* Warm earthy brown — lighter than before, horizontal gradient feel */
+  --primary:        #a88768;
+  --primary-mid:    #b89a82;
   --primary-light:  #f7f0e8;
-  --primary-hover:  #714c2e;
-  --primary-border: #d4b89a;
-  --primary-subtle: rgba(139, 94, 60, 0.07);
+  --primary-hover:  #947662;
+  --primary-border: #d9c4ad;
+  --primary-subtle: rgba(168, 135, 104, 0.08);
+  --primary-rgb:    168, 135, 104;
+
+  --btn-gradient:       linear-gradient(90deg, #a88768 0%, #c4ad94 100%);
+  --btn-gradient-hover: linear-gradient(90deg, #9a7860 0%, #b9a088 100%);
+  --btn-shadow:         0 4px 14px rgba(168, 135, 104, 0.28);
+  --btn-shadow-hover:   0 6px 18px rgba(168, 135, 104, 0.38);
 
   --text-1: #1c1c1e;
   --text-2: #3d3d3f;

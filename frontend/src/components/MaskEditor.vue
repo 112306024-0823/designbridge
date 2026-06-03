@@ -205,9 +205,9 @@ function confirmMask() {
   transition: all 0.15s;
 }
 .tool-btn.active {
-  background: #8B5E3C;
+  background: var(--btn-gradient);
   color: #fff;
-  border-color: #8B5E3C;
+  border-color: transparent;
 }
 .brush-label {
   font-size: 0.78rem;
@@ -287,13 +287,18 @@ function confirmMask() {
   padding: 0.55rem 1.4rem;
   border: none;
   border-radius: 10px;
-  background: linear-gradient(135deg, #8B5E3C 0%, #b07845 100%);
+  background: var(--btn-gradient);
   color: #fff;
   font-size: 0.88rem;
   font-family: inherit;
   cursor: pointer;
   font-weight: 700;
-  box-shadow: 0 4px 14px rgba(139, 94, 60, 0.4);
+  box-shadow: var(--btn-shadow);
+  transition: background 0.18s, transform 0.18s, box-shadow 0.18s;
 }
-.confirm-btn:hover { opacity: 0.9; }
+.confirm-btn:hover {
+  background: var(--btn-gradient-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--btn-shadow-hover);
+}
 </style>

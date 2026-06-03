@@ -2,14 +2,17 @@
 import { computed } from 'vue'
 
 const props = defineProps({
-  candidates:  { type: Array,  default: () => [] },  // [{ style_id, style_name, image_url, similarity, description }]
-  confirmed:   { type: Object, default: null },       // 使用者選中的那筆
-  loading:     { type: Boolean, default: false },
-  retrievalMode: { type: String, default: 'text-to-text' },
-  apiBase: { type: String, default: 'http://localhost:8000' },
+  candidates:     { type: Array,   default: () => [] },
+  confirmed:      { type: Object,  default: null },
+  loading:        { type: Boolean, default: false },
+  apiBase:        { type: String,  default: 'http://localhost:8000' },
+  styleOptions:   { type: Array,   default: () => [] },
+  selectedStyle:  { type: String,  default: 'auto' },
+  showRebatch:    { type: Boolean, default: false },
+  rebatchLoading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['confirm', 'clear', 'change-mode'])
+const emit = defineEmits(['confirm', 'clear', 'filter-change', 'rebatch', 'recommend-similar'])
 
 const topCandidates = computed(() => {
   const list = Array.isArray(props.candidates) ? props.candidates : []
@@ -39,33 +42,30 @@ function normalizeImageUrl(rawUrl) {
 <template>
   <div class="suggestions">
     <div class="header">
-      <div class="header-top">
-        <h2>AI 推薦風格參考</h2>
-        <div class="mode-switch" role="group" aria-label="retrieval mode">
-          <button
-            type="button"
-            class="mode-btn"
-            :class="{ active: retrievalMode === 'text-to-image' }"
-            @click="emit('change-mode', 'text-to-image')"
-          >
-            圖像比對
-          </button>
-          <button
-            type="button"
-            class="mode-btn"
-            :class="{ active: retrievalMode === 'text-to-text' }"
-            @click="emit('change-mode', 'text-to-text')"
-          >
-            文字比對
-          </button>
-        </div>
+      <div class="header-title-row">
+        <h2>AI 推薦風格參考 <span class="sparkle">✦</span></h2>
+        <p class="subtitle">根據你的需求與偏好，挑選以下風格圖片，選一張套用其風格參數</p>
       </div>
-      <p class="subtitle">根據你的文字描述，找到以下相似風格圖片，選擇一張套用其風格參數</p>
-      <p class="mode-caption">
-        目前模式：
-        <strong>{{ retrievalMode === 'text-to-text' ? '文字比對（style_kb）' : '圖像比對（向量圖庫）' }}</strong>
-      </p>
-      <p v-if="!loading && topCandidates.length >= 6" class="swipe-hint">提示：目前顯示前 6 張相似風格參考</p>
+
+      <!-- Filter chips + rebatch action row -->
+      <div class="filter-action-row">
+        <div v-if="styleOptions.length > 1" class="filter-row">
+          <button
+            v-for="opt in styleOptions"
+            :key="opt.value"
+            type="button"
+            :class="['filter-chip', { active: selectedStyle === opt.value }]"
+            @click="emit('filter-change', opt.value)"
+          >{{ opt.value === 'auto' ? '全部風格' : opt.label }}</button>
+        </div>
+        <button
+          v-if="showRebatch && !loading"
+          type="button"
+          class="rebatch-btn"
+          :disabled="rebatchLoading"
+          @click="emit('rebatch')"
+        >↻ 換一批</button>
+      </div>
     </div>
 
     <!-- 骨架載入 -->
@@ -93,40 +93,36 @@ function normalizeImageUrl(rawUrl) {
         class="card"
         :class="{ selected: confirmed?.image_url === c.image_url }"
         role="listitem"
-        tabindex="0"
-        @keydown.enter.prevent="emit('confirm', c)"
-        @keydown.space.prevent="emit('confirm', c)"
-        @click="emit('confirm', c)"
       >
         <div class="card-img-wrap">
           <img :src="normalizeImageUrl(c.image_url)" :alt="c.style_name" loading="lazy" @error="$event.target.style.display='none'" />
-          <div class="similarity-badge">
-            {{ similarityLabel(c.similarity) }}
-            <span class="score">{{ (c.similarity * 100).toFixed(0) }}%</span>
-          </div>
-          <div v-if="confirmed?.image_url === c.image_url" class="selected-overlay">
-            <span class="check">✓</span>
-          </div>
+          <!-- Applied badge (top-right) -->
+          <div v-if="confirmed?.image_url === c.image_url" class="applied-badge">✓ 已套用</div>
         </div>
         <div class="card-body">
           <div class="style-name">{{ c.style_name }}</div>
-          <p v-if="c.description" class="description">{{ c.description }}</p>
-          <p v-else class="description muted">{{ c.style_id }} 風格</p>
-          <button
-            class="apply-btn"
-            :class="{ applied: confirmed?.image_url === c.image_url }"
-            @click.stop="confirmed?.image_url === c.image_url ? emit('clear') : emit('confirm', c)"
-          >
-            {{ confirmed?.image_url === c.image_url ? '✓ 已套用' : '套用此風格' }}
-          </button>
+          <p class="description">{{ c.description || (c.style_id + ' 風格') }}</p>
+          <div class="card-actions">
+            <button
+              type="button"
+              class="btn-similar"
+              @click="emit('recommend-similar', c)"
+            >推薦類似</button>
+            <button
+              type="button"
+              class="btn-apply"
+              :class="{ applied: confirmed?.image_url === c.image_url }"
+              @click="confirmed?.image_url === c.image_url ? emit('clear') : emit('confirm', c)"
+            >{{ confirmed?.image_url === c.image_url ? '✓ 已套用' : '套用風格' }}</button>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- 已選提示 + 清除 -->
+    <!-- Applied hint bar -->
     <div v-if="confirmed" class="confirmed-bar">
       <span>已選：<strong>{{ confirmed.style_name }}</strong></span>
-      <button class="clear-btn" @click="emit('clear')">取消套用</button>
+      <button class="clear-btn" @click="emit('clear')">取消</button>
     </div>
   </div>
 </template>
@@ -145,11 +141,21 @@ function normalizeImageUrl(rawUrl) {
   color: #a07850;
 }
 
+.header-title-row {
+  margin-bottom: 0.75rem;
+}
 .header h2 {
   font-size: 1.4rem;
   font-weight: 800;
   color: #5c3d24;
-  margin-bottom: 0.1rem;
+  margin-bottom: 0.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.sparkle {
+  font-size: 0.95rem;
+  color: #b07845;
 }
 .subtitle {
   font-size: 0.875rem;
@@ -157,62 +163,66 @@ function normalizeImageUrl(rawUrl) {
   margin-bottom: 0.2rem;
 }
 
-.mode-caption {
-  margin: 0;
-  font-size: 0.76rem;
-  color: #a07850;
-}
-
-.mode-caption strong {
-  color: #8B5E3C;
-  font-weight: 700;
-}
-
-.header-top {
+/* Filter + rebatch row */
+.filter-action-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 0.8rem;
-  margin-bottom: 0.3rem;
+  gap: 0.6rem;
+  padding-top: 0.6rem;
 }
-
-.mode-switch {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid #d4b89a;
-  border-radius: 999px;
-  background: rgba(255, 248, 240, 0.92);
-  padding: 0.2rem;
-  gap: 0.15rem;
-  box-shadow: inset 0 0 0 1px rgba(255, 248, 240, 0.65);
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  flex: 1;
 }
-
-.mode-btn {
-  border: 1px solid transparent;
-  background: transparent;
-  color: #8B5E3C;
-  font-size: 0.74rem;
-  font-weight: 700;
-  line-height: 1;
-  min-width: 72px;
-  height: 30px;
-  padding: 0 0.72rem;
-  border-radius: 999px;
+.rebatch-btn {
+  flex-shrink: 0;
+  padding: 0.35rem 0.85rem;
+  border-radius: 99px;
+  border: 1.5px solid #d4b89a;
+  background: rgba(255, 250, 243, 0.9);
+  color: #7a5530;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
   cursor: pointer;
-  transition: all 0.16s ease;
+  transition: all 0.16s;
+  white-space: nowrap;
+  align-self: center;
 }
-
-.mode-btn:hover {
-  color: #714c2e;
-  background: rgba(139, 94, 60, 0.1);
-}
-
-.mode-btn.active {
-  background: linear-gradient(135deg, #8B5E3C 0%, #b07845 100%);
+.rebatch-btn:hover:not(:disabled) {
+  background: var(--btn-gradient);
+  border-color: transparent;
   color: #fff;
-  border-color: rgba(139, 94, 60, 0.35);
-  box-shadow: 0 3px 10px rgba(139, 94, 60, 0.28);
 }
+.rebatch-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.filter-chip {
+  padding: 0.35rem 0.85rem;
+  border-radius: 99px;
+  border: 1.5px solid #d4b89a;
+  background: rgba(255, 250, 243, 0.9);
+  color: #7a5530;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.16s;
+  white-space: nowrap;
+}
+.filter-chip:hover {
+  border-color: #b07845;
+  background: rgba(255, 245, 230, 0.95);
+  color: #5c3d24;
+}
+.filter-chip.active {
+  background: var(--btn-gradient);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: var(--btn-shadow);
+}
+
 
 /* Grid */
 .rail {
@@ -224,30 +234,25 @@ function normalizeImageUrl(rawUrl) {
 
 /* Card */
 .card {
-  background: rgba(255, 250, 243, 0.85);
-  border: 1.5px solid #d4b89a;
-  border-radius: 14px;
+  background: #fff;
+  border: 1.5px solid #e8d8c4;
+  border-radius: 16px;
   overflow: hidden;
-  cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.22s;
   display: flex;
   flex-direction: column;
   width: 100%;
   min-width: 0;
+  box-shadow: 0 2px 8px rgba(160, 110, 60, 0.06);
 }
 .card:hover {
   border-color: #b07845;
-  box-shadow: 0 8px 24px rgba(139, 94, 60, 0.2);
-  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(139, 94, 60, 0.16);
+  transform: translateY(-3px);
 }
 .card.selected {
   border-color: #8B5E3C;
-  box-shadow: 0 0 0 3px rgba(139, 94, 60, 0.25);
-}
-.card:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(139, 94, 60, 0.25), 0 0 0 6px rgba(139, 94, 60, 0.14);
-  border-color: #8B5E3C;
+  box-shadow: 0 0 0 3px rgba(139, 94, 60, 0.18), 0 6px 20px rgba(139, 94, 60, 0.15);
 }
 
 /* Image */
@@ -256,77 +261,105 @@ function normalizeImageUrl(rawUrl) {
   width: 100%;
   aspect-ratio: 4 / 3;
   overflow: hidden;
-  background: #f5e8d8;
+  background: #f0e4d4;
 }
 .card-img-wrap img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform 0.3s;
+  transition: transform 0.32s ease;
 }
-.card:hover .card-img-wrap img { transform: scale(1.04); }
+.card:hover .card-img-wrap img { transform: scale(1.05); }
 
-.similarity-badge {
+/* Applied badge (top-right corner) */
+.applied-badge {
   position: absolute;
-  top: 0.5rem;
-  left: 0.5rem;
-  background: rgba(0, 0, 0, 0.55);
-  color: white;
+  top: 0.55rem;
+  right: 0.55rem;
+  background: var(--btn-gradient);
+  color: #fff;
   font-size: 0.7rem;
-  font-weight: 600;
-  padding: 0.2rem 0.55rem;
+  font-weight: 700;
+  padding: 0.2rem 0.6rem;
   border-radius: 99px;
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
   backdrop-filter: blur(4px);
-}
-.score {
-  background: rgba(255,255,255,0.2);
-  padding: 0.05rem 0.35rem;
-  border-radius: 99px;
-  font-size: 0.68rem;
-}
-
-.selected-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(139, 94, 60, 0.35);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.check {
-  font-size: 2.5rem;
-  color: white;
-  text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
 
 /* Body */
 .card-body {
-  padding: 0.9rem 1rem 1rem;
+  padding: 0.85rem 0.95rem 0.95rem;
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.38rem;
   flex: 1;
 }
 .style-name {
   font-size: 0.95rem;
   font-weight: 700;
-  color: #5c3d24;
+  color: #3a2010;
 }
 .description {
-  font-size: 0.78rem;
-  color: #7a5530;
+  font-size: 0.76rem;
+  color: #8a6040;
   line-height: 1.55;
   flex: 1;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.description.muted { color: #c8a882; }
+
+/* Card action buttons */
+.card-actions {
+  display: flex;
+  gap: 0.45rem;
+  margin-top: 0.3rem;
+}
+.btn-similar {
+  flex: 1;
+  padding: 0.45rem 0.5rem;
+  border: 1.5px solid var(--primary-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--primary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.16s;
+  white-space: nowrap;
+}
+.btn-similar:hover {
+  background: var(--primary-subtle);
+  border-color: var(--primary);
+}
+.btn-apply {
+  flex: 1;
+  padding: 0.45rem 0.5rem;
+  border: 1.5px solid var(--primary);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--primary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.16s;
+  white-space: nowrap;
+}
+.btn-apply:hover {
+  background: var(--btn-gradient);
+  border-color: transparent;
+  color: #fff;
+}
+.btn-apply.applied {
+  background: var(--btn-gradient);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: var(--btn-shadow);
+}
 
 .empty-state {
   padding: 2rem;
@@ -338,31 +371,15 @@ function normalizeImageUrl(rawUrl) {
   border-radius: 12px;
 }
 
-.apply-btn {
-  margin-top: auto;
-  padding: 0.5rem 0.75rem;
-  border: 1.5px solid #8B5E3C;
-  border-radius: 8px;
-  background: transparent;
-  color: #8B5E3C;
-  font-size: 0.82rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.18s;
-  text-align: center;
-}
-.apply-btn:hover { background: #8B5E3C; color: white; }
-.apply-btn.applied { background: #8B5E3C; color: white; border-color: #8B5E3C; }
-
 /* Confirmed bar */
 .confirmed-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(139, 94, 60, 0.08);
+  background: rgba(139, 94, 60, 0.07);
   border: 1px solid #d4b89a;
   border-radius: 10px;
-  padding: 0.65rem 1rem;
+  padding: 0.6rem 1rem;
   font-size: 0.875rem;
   color: #5c3d24;
 }
@@ -405,7 +422,6 @@ function normalizeImageUrl(rawUrl) {
 }
 
 @media (max-width: 520px) {
-  .header-top { flex-direction: column; align-items: flex-start; }
   .rail { grid-template-columns: 1fr; }
 }
 </style>

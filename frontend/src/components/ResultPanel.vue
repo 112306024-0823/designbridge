@@ -1,7 +1,11 @@
 <script setup>
 import { computed, ref } from 'vue'
+import { mediaUrl } from '@/config/api'
+import ImageSwipeViewer from '@/components/ImageSwipeViewer.vue'
 
 const refExpanded = ref(true)
+const viewerOpen = ref(false)
+const viewerStartIndex = ref(0)
 
 const props = defineProps({
   result:  { type: Object,  default: null },
@@ -33,11 +37,26 @@ const styleReferenceImageUrl = computed(() => {
   if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
     return normalized
   }
-  if (normalized.startsWith('artifacts/')) {
-    return `http://localhost:8000/${normalized}`
-  }
-  return ''
+  return mediaUrl(normalized)
 })
+
+const viewerSlides = computed(() => {
+  const slides = []
+  const result = props.result
+  if (result?.generated_image_url) {
+    slides.push({ url: result.generated_image_url, label: 'AI 生成設計圖' })
+  }
+  if (styleReferenceImageUrl.value) {
+    slides.push({ url: styleReferenceImageUrl.value, label: '風格參考圖' })
+  }
+  return slides
+})
+
+function openViewer(index = 0) {
+  if (!viewerSlides.value.length) return
+  viewerStartIndex.value = Math.min(index, viewerSlides.value.length - 1)
+  viewerOpen.value = true
+}
 </script>
 
 <template>
@@ -66,40 +85,33 @@ const styleReferenceImageUrl = computed(() => {
     <!-- 結果 -->
     <div v-if="result" class="result">
 
-      <!-- Header -->
-      <div class="result-header">
-        <div class="result-title-group">
-          <h2>生成結果</h2>
-          <div class="badges">
-            <span class="badge green">✓ 成功</span>
-            <span class="badge gray">{{ result.elapsed_time }}</span>
-            <span class="badge purple">{{ result.routing_decision }}</span>
-            <span
-              v-if="result.structured_requirement?.spatial_change_level"
-              :class="['badge', spatialLevelColor]"
-            >depth: {{ result.structured_requirement.spatial_change_level }}</span>
-          </div>
-        </div>
-      </div>
-
       <!-- 生成圖 + 風格參考圖 -->
       <div
         v-if="result.generated_image_path || styleReferenceImageUrl"
         :class="['image-row', { 'image-row--ref-collapsed': !refExpanded }]"
       >
-
         <!-- 生成圖 -->
-        <div v-if="result.generated_image_path" class="img-slot img-hero">
+        <button
+          v-if="result.generated_image_path && result.generated_image_url"
+          type="button"
+          class="img-slot img-hero img-clickable"
+          :aria-label="viewerSlides.length > 1 ? '點擊放大，左右拖曳切換圖片' : '點擊放大圖片'"
+          @click="openViewer(0)"
+        >
           <img
-            v-if="result.generated_image_url"
             :src="result.generated_image_url"
             alt="AI 生成設計圖"
             class="img-cover"
           />
-          <div class="img-label-bottom">
-            <span class="img-path">{{ result.generated_image_path }}</span>
-          </div>
-        </div>
+          <span class="img-zoom-hint" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+              <line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
+            </svg>
+            點擊放大
+            <span v-if="viewerSlides.length > 1"> · 左右拖曳</span>
+          </span>
+        </button>
 
         <!-- 風格參考圖 -->
         <div
@@ -107,11 +119,14 @@ const styleReferenceImageUrl = computed(() => {
           :class="['img-slot', 'img-ref', { 'img-ref--collapsed': !refExpanded }]"
         >
           <template v-if="refExpanded">
-            <img
-              :src="styleReferenceImageUrl"
-              alt="風格參考圖"
-              class="img-cover"
-            />
+            <button
+              type="button"
+              class="img-ref-btn"
+              aria-label="點擊放大風格參考圖"
+              @click="openViewer(viewerSlides.length > 1 ? 1 : 0)"
+            >
+              <img :src="styleReferenceImageUrl" alt="風格參考圖" class="img-cover" />
+            </button>
             <div class="img-label-top">
               <span class="img-label-text">風格參考圖</span>
               <button class="collapse-btn" @click="refExpanded = false" title="收合">
@@ -124,106 +139,21 @@ const styleReferenceImageUrl = computed(() => {
             <span class="strip-text">風格參考圖</span>
           </div>
         </div>
-
       </div>
 
-      <!-- 結構化需求 -->
-      <div v-if="result.structured_requirement" class="card">
-        <h3 class="card-title">結構化需求</h3>
-        <div class="req-grid">
-          <div class="req-item" v-if="result.structured_requirement.meta?.room_type">
-            <span class="req-label">房間類型</span>
-            <span class="req-value">{{ result.structured_requirement.meta.room_type }}</span>
-          </div>
-          <div class="req-item" v-if="result.structured_requirement.meta?.design_goal">
-            <span class="req-label">設計目標</span>
-            <span class="req-value">{{ result.structured_requirement.meta.design_goal }}</span>
-          </div>
-          <div class="req-item" v-if="result.structured_requirement.style_preferences?.primary_style">
-            <span class="req-label">主要風格</span>
-            <span class="req-value">{{ result.structured_requirement.style_preferences.primary_style }}</span>
-          </div>
-          <div class="req-item" v-if="result.structured_requirement.edit_scope?.scope_value !== undefined">
-            <span class="req-label">改動幅度</span>
-            <span class="req-value">{{ Number(result.structured_requirement.edit_scope.scope_value).toFixed(1) }}</span>
-          </div>
-        </div>
-        <details class="json-details">
-          <summary>完整 JSON</summary>
-          <pre>{{ JSON.stringify(result.structured_requirement, null, 2) }}</pre>
-        </details>
-      </div>
-
-      <!-- 風格參數 -->
-      <div v-if="result.style_params" class="card card-style">
-        <h3 class="card-title">套用風格參數</h3>
-        <div class="style-meta">
-          <span class="style-badge">{{ result.style_params.style_profile_id || result.style_params.style_id }}</span>
-          <span class="style-name">{{ result.style_params.style_profile_name || result.style_params.style_name }}</span>
-          <span v-if="result.style_params.style_strength !== undefined" class="style-strength">
-            強度 {{ result.style_params.style_strength }}
-          </span>
-        </div>
-        <div v-if="result.style_params.visual_elements?.colors" class="color-swatches">
-          <div v-for="(hex, role) in result.style_params.visual_elements.colors" :key="role" class="swatch-item">
-            <div class="swatch" :style="{ background: hex }"></div>
-            <span class="swatch-label">{{ role }}</span>
-            <span class="swatch-hex">{{ hex }}</span>
-          </div>
-        </div>
-        <div v-if="result.style_params.semantic_tags?.length" class="style-tags">
-          <span v-for="tag in result.style_params.semantic_tags" :key="tag" class="tag">{{ tag }}</span>
-        </div>
-        <details class="json-details">
-          <summary>完整 style_params JSON</summary>
-          <pre>{{ JSON.stringify(result.style_params, null, 2) }}</pre>
-        </details>
-      </div>
-      <div v-else-if="result.render_result?.generation_params?.gemini_style_description" class="card card-style">
-        <h3 class="card-title">套用風格參數</h3>
-        <div class="style-meta">
-          <span class="style-badge">使用者上傳</span>
-          <span class="style-name">Gemini 視覺分析</span>
-        </div>
-        <p class="gemini-desc">{{ result.render_result.generation_params.gemini_style_description }}</p>
-      </div>
-      <div v-else class="card card-muted">
-        <h3 class="card-title">套用風格參數</h3>
-        <p class="muted-text">未載入聚合風格檔，將依文字需求與預設 prompt 生成。</p>
-      </div>
-
-
-      <!-- Evaluation Result -->
-      <div v-if="result.evaluation_result" class="result-section">
-        <h3>Evaluation Result</h3>
-        <div class="req-grid">
-          <div class="req-item" v-if="result.evaluation_result.decision">
-            <span class="req-label">Decision</span>
-            <span class="req-value">{{ result.evaluation_result.decision }}</span>
-          </div>
-          <div class="req-item" v-if="result.evaluation_result.weighted_score !== undefined">
-            <span class="req-label">Weighted Score</span>
-            <span class="req-value">{{ result.evaluation_result.weighted_score }}</span>
-          </div>
-        </div>
-        <div v-if="result.evaluation_result.feedback" class="eval-feedback">
-          {{ result.evaluation_result.feedback }}
-        </div>
-        <div v-if="Object.keys(result.evaluation_result.scores || {}).length" class="eval-scores">
-          <div v-for="(val, key) in result.evaluation_result.scores" :key="key" class="score-row">
-            <span class="score-key">{{ key }}</span>
-            <span class="score-val">{{ val }}</span>
-          </div>
-        </div>
-        <div v-if="result.evaluation_result.suggestions?.length" class="eval-suggestions">
-          <p class="req-label">Suggestions</p>
-          <ul>
-            <li v-for="(s, i) in result.evaluation_result.suggestions" :key="i">{{ s }}</li>
-          </ul>
-        </div>
-      </div>
+      <!--
+      <div class="result-header"> ... badges ... </div>
+      <div v-if="result.style_params" class="card card-style"> ... 風格參數 ... </div>
+      <div v-if="result.evaluation_result" class="result-section"> ... Evaluation ... </div>
+      -->
 
     </div>
+
+    <ImageSwipeViewer
+      v-model:open="viewerOpen"
+      :slides="viewerSlides"
+      :initial-index="viewerStartIndex"
+    />
   </div>
 </template>
 
@@ -334,7 +264,49 @@ const styleReferenceImageUrl = computed(() => {
 .img-hero {
   flex: 1;
   min-width: 0;
-  overflow: auto;
+  overflow: hidden;
+}
+
+.img-clickable {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: zoom-in;
+  text-align: left;
+  position: relative;
+  font-family: inherit;
+}
+.img-clickable:hover .img-zoom-hint {
+  opacity: 1;
+}
+.img-zoom-hint {
+  position: absolute;
+  bottom: 0.65rem;
+  right: 0.65rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 99px;
+  background: rgba(20, 12, 8, 0.55);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.72rem;
+  font-weight: 600;
+  backdrop-filter: blur(6px);
+  opacity: 0.82;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.img-ref-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: zoom-in;
+  font-family: inherit;
 }
 
 /* Reference: fixed width, transitions on collapse */
