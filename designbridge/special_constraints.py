@@ -351,6 +351,68 @@ _ENFORCERS: dict[str, Callable] = {
 }
 
 
+# ── Verification functions (post-placement satisfaction check) ─────────────────
+
+def _verify_wheelchair_clearance(
+    items: list, doors: list, windows: list, params: dict
+) -> bool:
+    min_gap = float(params.get("min_gap", 0.15))
+    for i in range(len(items)):
+        for j in range(i + 1, len(items)):
+            a, b = items[i], items[j]
+            if _rect_overlap(a.x, a.y, a.w, a.h, b.x, b.y, b.w, b.h, min_gap):
+                return False
+    return True
+
+
+def _verify_bed_not_facing_door(
+    items: list, doors: list, windows: list, params: dict
+) -> bool:
+    if not doors:
+        return True
+    for item in items:
+        if item.type not in ("bed", "bunk_bed"):
+            continue
+        bed_cx = item.x + item.w / 2
+        bed_foot_y = item.y + item.h
+        for door in doors:
+            dx = float(door.get("x", 0.5))
+            dw = float(door.get("w", 0.10))
+            dy = float(door.get("y", 1.0))
+            door_cx = dx + dw / 2
+            if dy > bed_foot_y and abs(door_cx - bed_cx) < (item.w / 2 + dw / 2):
+                return False
+    return True
+
+
+def _verify_sofa_not_back_to_door(
+    items: list, doors: list, windows: list, params: dict
+) -> bool:
+    if not doors:
+        return True
+    door_hi = float(params.get("door_threshold_high", 0.7))
+    door_lo = float(params.get("door_threshold_low", 0.3))
+    sofa_hi = float(params.get("sofa_threshold_high", 0.65))
+    sofa_lo = float(params.get("sofa_threshold_low", 0.35))
+    for item in items:
+        if item.type not in ("sofa", "loveseat"):
+            continue
+        for door in doors:
+            dy = float(door.get("y", 0))
+            if dy > door_hi and item.y + item.h > sofa_hi:
+                return False
+            if dy < door_lo and item.y < sofa_lo:
+                return False
+    return True
+
+
+_VERIFIERS: dict[str, Callable] = {
+    "wheelchair_clearance":  _verify_wheelchair_clearance,
+    "bed_not_facing_door":   _verify_bed_not_facing_door,
+    "sofa_not_back_to_door": _verify_sofa_not_back_to_door,
+}
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def enrich_requirement(
@@ -410,3 +472,30 @@ def apply_special_layout_constraints(
                 items = fn(items, doors, windows, card.parameters)
 
     return items
+
+
+def verify_special_constraints(
+    items: list,
+    structured_requirement: dict[str, Any],
+) -> dict[str, bool]:
+    """Return {trigger: satisfied} for each enabled special constraint.
+
+    Only constraints with a registered verifier are included in the result.
+    An absent entry means the constraint has no geometric verifier defined.
+    """
+    special = structured_requirement.get("special_constraints") or {}
+    space_info = structured_requirement.get("space_info") or {}
+    doors = space_info.get("doors") or []
+    windows = space_info.get("windows") or []
+
+    cards = get_constraint_registry().load()
+    result: dict[str, bool] = {}
+    for card in sorted(cards.values(), key=lambda c: c.order):
+        if not special.get(card.trigger):
+            continue
+        for enforce_key in card.enforce:
+            verifier = _VERIFIERS.get(enforce_key)
+            if verifier:
+                ok = verifier(items, doors, windows, card.parameters)
+                result[card.trigger] = result.get(card.trigger, True) and ok
+    return result

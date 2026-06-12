@@ -152,17 +152,24 @@ def _score_soft_constraints(
     if n == 0:
         return {k: 0.5 for k in SOFT_WEIGHTS}
 
-    # Pairwise gaps for circulation & ergonomics
-    gaps: list[float] = []
+    size = space_info.get("estimated_size") or {}
+    room_w = float(size.get("width", 5.0))   # metres
+    room_d = float(size.get("depth", 4.0))
+
+    # Pairwise gaps in physical metres
+    gaps_m: list[float] = []
     for i in range(n):
         for j in range(i + 1, n):
             a, b = items[i], items[j]
-            gx = max(b.x - (a.x + a.w), a.x - (b.x + b.w), 0.0)
-            gy = max(b.y - (a.y + a.h), a.y - (b.y + b.h), 0.0)
-            gaps.append(gx + gy)
+            gx = max(b.x - (a.x + a.w), a.x - (b.x + b.w), 0.0) * room_w
+            gy = max(b.y - (a.y + a.h), a.y - (b.y + b.h), 0.0) * room_d
+            gaps_m.append(gx + gy)
 
-    # Circulation (35%): normalised to target gap of 0.12
-    circulation = min(1.0, (sum(gaps) / len(gaps)) / 0.12) if gaps else 0.5
+    # Circulation (35%): fraction of pairs with physical clearance ≥ 0.60 m
+    AISLE_MIN_M = 0.60
+    circulation = (
+        sum(1 for g in gaps_m if g >= AISLE_MIN_M) / len(gaps_m)
+    ) if gaps_m else 0.5
 
     # Balance (25%): area-weighted CoM distance from room centre (0.5, 0.5)
     areas = [item.w * item.h for item in items]
@@ -185,8 +192,11 @@ def _score_soft_constraints(
     else:
         natural_light = max(0.0, 0.75 - blocking * 0.15)
 
-    # Ergonomics (10%): fraction of pairs with gap ≥ 0.05 (≈40cm)
-    ergonomics = (sum(1 for g in gaps if g >= 0.05) / len(gaps)) if gaps else 1.0
+    # Ergonomics (10%): fraction of pairs with physical gap ≥ 0.40 m
+    ERGO_MIN_M = 0.40
+    ergonomics = (
+        sum(1 for g in gaps_m if g >= ERGO_MIN_M) / len(gaps_m)
+    ) if gaps_m else 1.0
 
     return {
         "circulation": round(circulation, 3),
@@ -717,6 +727,7 @@ def run_layout_agent(
     best_items: list[FurnitureItem] = []
     best_score = -1.0
     scores: dict[str, float] = {}
+    scores_history: list[float] = []
     SCORE_THRESHOLD = 0.65
 
     for iteration in range(max_iter):
@@ -737,6 +748,7 @@ def run_layout_agent(
 
         scores = _score_soft_constraints(items, space_info)
         total = _weighted_score(scores)
+        scores_history.append(total)
 
         if total > best_score:
             best_score = total
@@ -758,6 +770,24 @@ def run_layout_agent(
                 items = refined
         except Exception:
             break
+
+    acceptance_rate = (
+        sum(1 for s in scores_history if s >= SCORE_THRESHOLD) / len(scores_history)
+        if scores_history else 0.0
+    )
+    print(
+        f"[layout_agent] iterations={len(scores_history)} "
+        f"best={best_score:.3f} acceptance_rate={acceptance_rate:.2%}"
+    )
+
+    from designbridge.special_constraints import verify_special_constraints
+    special_satisfaction = verify_special_constraints(best_items, structured_requirement)
+    infeasible_constraints = [k for k, v in special_satisfaction.items() if not v]
+    feasible = not infeasible_constraints
+    if infeasible_constraints:
+        print(
+            f"[layout_agent] ⚠️  infeasible after convergence: {infeasible_constraints}"
+        )
 
     # Hard constraint satisfaction report
     must_keep_set = {s.lower().replace(" ", "_") for s in (constraints.get("must_keep") or [])}
@@ -802,18 +832,25 @@ def run_layout_agent(
         "soft_constraint_scores": scores,
         "weighted_score": best_score,
         "floor_plan_path": floor_plan_path,
+        "feasible": feasible,
+        "infeasible_constraints": infeasible_constraints,
     }
 
     return {
         "scene_graph": scene_graph,
         "intermediate_outputs": {
             "layout_agent": {
-                "status": "ok",
+                "status": "ok" if feasible else "infeasible",
                 "furniture_count": len(best_items),
                 "weighted_score": best_score,
                 "soft_scores": scores,
                 "constraint_check": constraint_check,
                 "floor_plan_path": floor_plan_path,
+                "scores_history": scores_history,
+                "acceptance_rate": round(acceptance_rate, 3),
+                "iterations_run": len(scores_history),
+                "feasible": feasible,
+                "infeasible_constraints": infeasible_constraints,
             }
         },
     }
