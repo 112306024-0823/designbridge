@@ -1,5 +1,5 @@
 # designbridge/render_backends.py
-"""Image generation backend implementations: HF Inference, Kontext, FLUX Redux, IP-Adapter, local SDXL/Flux."""
+"""Image generation backend implementations: HF Inference, Kontext, FLUX Redux, IP-Adapter, local Flux."""
 
 from __future__ import annotations
 
@@ -189,9 +189,14 @@ def _render_hf_kontext(
     prompt: str,
     depth_path: str,
     out_path: Path,
-    strength: float = 0.70,
+    strength: float = 0.85,
+    depth_conditioning_scale: float = 0.85,
 ) -> bool:
-    """Generate image via Kontext LoRA using depth map as spatial reference through Replicate."""
+    """Generate image via Kontext LoRA using depth map as spatial reference through Replicate.
+
+    strength is fixed high so the model runs enough denoising steps to produce a proper room image.
+    depth_conditioning_scale controls how strongly the prompt instructs the model to follow the depth structure.
+    """
     api_key = Config.HF_TOKEN
     if not api_key:
         return False
@@ -201,13 +206,20 @@ def _render_hf_kontext(
         with open(depth_path, "rb") as f:
             input_image = f.read()
 
+        if depth_conditioning_scale >= 0.75:
+            depth_instruction = "strictly preserve the spatial layout, depth structure, camera angle and perspective"
+        elif depth_conditioning_scale >= 0.45:
+            depth_instruction = "generally follow the spatial layout and camera perspective"
+        else:
+            depth_instruction = "use as loose spatial reference"
+
         client = InferenceClient(
             provider=Config.KONTEXT_PROVIDER,
             api_key=api_key,
         )
         image = client.image_to_image(
             input_image,
-            prompt=f"redepthkontext {prompt}, same camera angle and perspective as reference",
+            prompt=f"redepthkontext {prompt}, {depth_instruction}",
             model=Config.KONTEXT_LORA_MODEL,
             strength=strength,
         )
@@ -220,6 +232,95 @@ def _render_hf_kontext(
     except Exception as e:
         import traceback
         print(f"⚠️  Kontext render failed ({type(e).__name__}: {e})")
+        traceback.print_exc()
+        return False
+
+
+def _render_flux_kontext_fal(
+    prompt: str,
+    depth_path: str,
+    out_path: Path,
+    depth_conditioning_scale: float = 0.85,
+    num_steps: int = 28,
+    guidance_scale: float = 2.5,
+    output_size: tuple[int, int] = (1024, 1024),
+) -> bool:
+    """Generate image via fal.ai FLUX Kontext + depth LoRA.
+
+    depth_conditioning_scale controls both lora scale (structural weight)
+    and prompt phrasing (how strongly to follow the depth map).
+    """
+    fal_key = Config.FAL_KEY
+    if not fal_key:
+        return False
+    try:
+        import fal_client
+        import requests
+        import os
+
+        os.environ["FAL_KEY"] = fal_key
+
+        print("☁️  fal.ai FLUX Kontext + depth LoRA 推理中...")
+
+        with open(depth_path, "rb") as f:
+            depth_url = fal_client.upload(f.read(), content_type="image/png")
+
+        if depth_conditioning_scale >= 0.75:
+            depth_instruction = "strictly preserve the spatial layout, depth structure, camera angle and perspective"
+        elif depth_conditioning_scale >= 0.45:
+            depth_instruction = "generally follow the spatial layout and camera perspective"
+        else:
+            depth_instruction = "use as loose spatial reference"
+
+        width, height = output_size
+        size_map = {
+            (1024, 1024): "square_hd",
+            (512, 512): "square",
+            (1024, 768): "landscape_4_3",
+            (768, 1024): "portrait_4_3",
+            (1280, 720): "landscape_16_9",
+            (720, 1280): "portrait_16_9",
+        }
+        image_size = size_map.get((width, height), {"width": width, "height": height})
+
+        full_prompt = f"redepthkontext {prompt}, {depth_instruction}"
+        print(f"[kontext] prompt preview: {full_prompt[:120]}")
+        print(f"[kontext] lora scale: {depth_conditioning_scale}")
+
+        result = fal_client.subscribe(
+            "fal-ai/flux-kontext/dev",
+            arguments={
+                "prompt": full_prompt,
+                "image_url": depth_url,
+                "loras": [{
+                    "path": "https://huggingface.co/thedeoxen/FLUX.1-Kontext-dev-reference-depth-fusion-LORA/resolve/main/LORA_flux_kontext_depth_reference_cotrol.safetensors",
+                    "scale": depth_conditioning_scale,
+                }],
+                "num_inference_steps": num_steps,
+                "guidance_scale": guidance_scale,
+                "image_size": image_size,
+            },
+            with_logs=True,
+        )
+        logs = result.get("logs") or []
+        for log in logs:
+            print(f"[fal log] {log.get('message', '')}")
+
+        img_url = result["images"][0]["url"]
+        resp = requests.get(img_url, timeout=60)
+        resp.raise_for_status()
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(resp.content)
+        print(f"✅ fal.ai FLUX Kontext 完成：{out_path.name}")
+        return True
+
+    except ImportError:
+        print("⚠️  fal_client 未安裝，請執行：pip install fal-client")
+        return False
+    except Exception as e:
+        import traceback
+        print(f"⚠️  fal.ai FLUX Kontext 失敗：{e}")
         traceback.print_exc()
         return False
 
@@ -448,13 +549,7 @@ def _render_flux_redux_local(
         return False
 
 
-def _render_sdxl(
-    prompt: str,
-    out_path: Path,
-    control_image: str | Path | None = None,
-    negative_prompt: str | None = None,
-    output_size: tuple[int, int] = (1024, 1024),
-) -> bool:
+def _render_flux(prompt: str, out_path: Path) -> bool:
     """Generate image with local Flux pipeline. Returns True on success."""
     try:
         import torch
@@ -476,8 +571,3 @@ def _render_sdxl(
         print(f"⚠️ Render failed ({type(e).__name__}: {e})")
         traceback.print_exc()
         return False
-
-
-def _render_flux(prompt: str, out_path: Path) -> bool:
-    """Generate image with local Flux pipeline. Returns True on success."""
-    return _render_sdxl(prompt, out_path)

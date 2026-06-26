@@ -23,14 +23,14 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
 - 當不確定時，預設選 "design"
 - 例：「北歐風格客廳」、「整體改成深色系」、「餐桌換成木頭、椅子換成皮革」、「把書房改成開放式」
 
-## spatial_change_level 判斷（影響深度圖對生成的約束強度）
+## depth_conditioning_scale 判斷（0.0 ~ 1.0，影響深度圖對生成的約束強度）
 
-- "none"：需求不涉及空間配置改變，僅改風格、材質、顏色、氛圍
-  → 生成時高度遵守原始空間結構（深度圖影響力最大）
-- "minor"：需求涉及局部家具調整，但整體動線/分區不變
-  → 生成時中度參考原始空間結構（深度圖影響力中等）
-- "major"：需求涉及大幅空間重整、格局改變、打牆隔間、整體重新規劃
-  → 生成時不受原始空間結構約束（不使用深度圖）
+根據使用者需求語意，判斷應多大程度保留原始空間結構。預設應偏高，除非使用者明確要求改變格局：
+- 1.0：完全保留空間結構（純換風格、材質、色彩、氛圍，空間配置完全不動）
+- 0.8~0.95：大致保留結構，允許局部家具移位或新增單件家具
+- 0.5~0.75：中度變動，整體格局參考但不強制
+- 0.2~0.45：大幅重新規劃，僅作參考
+- 0.0：完全不受原空間結構約束（全新設計、打通隔間、格局重建）
 
 ## 輸出格式（嚴格輸出純 JSON，不加任何說明文字或 markdown）
 
@@ -39,7 +39,7 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
   "structured_requirement": {{
     "user_description_raw": "原始需求文字",
     "design_description": "完整英文圖像生成描述，涵蓋空間類型、風格、材質、色彩、氛圍、光線、家具配置等細節",
-    "spatial_change_level": "none | minor | major",
+    "depth_conditioning_scale": 0.85,
     "meta": {{
       "room_type": "living_room | bedroom | bathroom | kitchen | study 等",
       "design_goal": "new_design | renovation",

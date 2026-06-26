@@ -17,7 +17,7 @@ from designbridge.config import Config
 from designbridge.nodes import (
     _build_imagen_prompt_from_requirement,
     _render_hf_inference,
-    _render_sdxl,
+    _render_flux,
     _renderer_placeholder_image,
 )
 
@@ -33,22 +33,14 @@ def main():
     task_id = data.get("task_id") or str(uuid.uuid4())
     req = data.get("structured_requirement") or {}
     style_params = data.get("style_params") or {}
-    vision = data.get("vision_features") or {}
 
     out_path = Path(Config.ARTIFACTS_DIR) / "render" / f"{task_id}.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     prompt = _build_imagen_prompt_from_requirement(req, style_params=style_params)
     negative_prompt = style_params.get("negative_prompt") or None
-    depth_path = vision.get("depth")
 
-    model_type = Config.get_local_model_type()
-    if model_type == "flux":
-        hf_model_id = Config.FLUX_MODEL
-    elif model_type == "sd":
-        hf_model_id = Config.SD_MODEL
-    else:
-        hf_model_id = Config.SDXL_MODEL
+    hf_model_id = Config.FLUX_MODEL
 
     backend = "placeholder"
     generation_params = {
@@ -66,14 +58,10 @@ def main():
             generation_params["model"] = hf_model_id
             generation_params["provider"] = Config.HF_INFERENCE_PROVIDER
 
-    if backend == "placeholder" and Config.ENABLE_SDXL_FALLBACK:
-        control_img = depth_path if depth_path and Path(depth_path).exists() else None
-        if _render_sdxl(prompt, out_path, control_image=control_img):
-            backend = model_type
+    if backend == "placeholder" and Config.ENABLE_FLUX_FALLBACK:
+        if _render_flux(prompt, out_path):
+            backend = "flux"
             generation_params["model"] = hf_model_id
-            if control_img and model_type == "sdxl":
-                generation_params["controlnet"] = "depth"
-                generation_params["controlnet_scale"] = Config.CONTROLNET_CONDITIONING_SCALE
 
     if backend == "placeholder":
         _renderer_placeholder_image(out_path, task_id, prompt)
