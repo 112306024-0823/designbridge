@@ -32,6 +32,7 @@ from designbridge.render_prompt import (
 from designbridge.render_backends import (
     _render_hf_inference,
     _render_hf_kontext,
+    _render_flux_kontext_fal,
     _render_flux_redux_fal,
     _render_flux_redux_local,
     _render_flux_ipadapter_fal,
@@ -213,6 +214,12 @@ def visual_preprocessing_local(state: DesignBridgeState) -> dict[str, Any]:
                 vision_features["segmentation_meta"] = artifacts.segmentation_meta_path
         except Exception as e:
             print(f"⚠️  Visual preprocessing failed ({e}), falling back to empty vision_features")
+            return {"vision_features": vision_features}
+
+        result: dict[str, Any] = {"vision_features": vision_features}
+        if artifacts.layout_json:
+            result["layout_from_depth"] = artifacts.layout_json
+        return result
 
     return {"vision_features": vision_features}
 
@@ -543,17 +550,32 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
 
 
 def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
-    """Quick layout+style agent: keep layout stub, but still attach style params."""
+    """Layout + style agent.
+
+    Layout planning is only executed when the user explicitly requests spatial reorganization
+    (hint_layout=True from LLM semantic analysis). Otherwise only style params are built,
+    and spatial structure is left to the depth map (if available).
+    """
     req = state.get("structured_requirement") or {}
     user_input = state.get("user_input") or {}
+    hint_layout = bool(req.get("hint_layout", False))
+
     style_params = build_style_params(req, user_input)
+
+    if hint_layout:
+        layout_status = "stub_output"
+        print("[layout_and_style] hint_layout=True → layout planning enabled (stub)")
+    else:
+        layout_status = "skipped: no layout replanning requested"
+        print("[layout_and_style] hint_layout=False → skipping layout, spatial structure from depth map")
 
     return {
         **({"style_params": style_params} if style_params else {}),
         "intermediate_outputs": {
             **(state.get("intermediate_outputs") or {}),
             "layout_and_style_agent": {
-                "layout": "stub_output",
+                "layout": layout_status,
+                "hint_layout": hint_layout,
                 "style_profile_id": style_params.get("style_profile_id") if style_params else None,
             },
         }
@@ -582,6 +604,22 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     out_path = render_dir / f"{task_id}_{render_suffix}.png"
 
     prompt = _build_imagen_prompt_from_requirement(req, style_params=style_params)
+
+    # 只有使用者明確要求重新規劃佈局時，才把 layout 結果注入 prompt
+    if req.get("hint_layout"):
+        scene_graph = state.get("scene_graph") or {}
+        layout_prompt = (scene_graph.get("layout_prompt") or "").strip()
+
+        if not layout_prompt:
+            layout_from_depth = state.get("layout_from_depth") or {}
+            if layout_from_depth:
+                from designbridge.render_prompt import _layout_json_to_prompt_text
+                layout_prompt = _layout_json_to_prompt_text(layout_from_depth)
+
+        if layout_prompt:
+            prompt = f"{prompt} {layout_prompt}"
+            print(f"[renderer] layout_prompt injected: {layout_prompt[:80]}")
+
     _style_neg = (style_params.get("negative_prompt") or "").strip(", ")
     negative_prompt = f"{_BASE_NEGATIVE_PROMPT}, {_style_neg}" if _style_neg else _BASE_NEGATIVE_PROMPT
     _special = req.get("special_constraints") or {}
@@ -699,22 +737,21 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
             generation_params["model"] = "black-forest-labs/FLUX.1-Redux-dev (local)"
             generation_params["style_reference"] = user_style_reference_local
 
-    # Kontext LoRA via Replicate：有 depth map 時優先，保留空間結構
+    # Kontext LoRA：有 depth map 時優先，保留空間結構
     # depth_conditioning_scale: 1.0=完全保留結構, 0.0=忽略深度圖
-    # img2img strength 是反向：strength = 1.0 - depth_conditioning_scale
-    depth_conditioning_scale = float(req.get("depth_conditioning_scale") or 0.50)
+    # lora scale 直接對應 depth_conditioning_scale，不需轉換
+    depth_conditioning_scale = float(req.get("depth_conditioning_scale") or 0.85)
     depth_conditioning_scale = max(0.0, min(1.0, depth_conditioning_scale))
-    kontext_strength = round(1.0 - depth_conditioning_scale, 2)
-    effective_depth_path = depth_path if depth_conditioning_scale >= 0.15 else None
+    effective_depth_path = depth_path if depth_conditioning_scale >= 0.20 else None
 
-    if backend == "placeholder" and Config.HF_TOKEN:
-        if effective_depth_path and Path(str(effective_depth_path)).is_file():
-            if _render_hf_kontext(prompt, str(effective_depth_path), out_path, strength=kontext_strength):
+    if backend == "placeholder" and effective_depth_path and Path(str(effective_depth_path)).is_file():
+        if Config.HF_TOKEN:
+            if _render_hf_kontext(prompt, str(effective_depth_path), out_path,
+                                  depth_conditioning_scale=depth_conditioning_scale):
                 backend = "hf_kontext"
                 generation_params["model"] = Config.KONTEXT_LORA_MODEL
                 generation_params["provider"] = Config.KONTEXT_PROVIDER
                 generation_params["depth_conditioning_scale"] = depth_conditioning_scale
-                generation_params["kontext_strength"] = kontext_strength
 
     # AI 分析模式 fallback：HF Inference API
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
