@@ -14,8 +14,6 @@ load_dotenv()
 # 想要測試的模型清單
 MODELS = {
     "Flux-1-Schnell": "black-forest-labs/FLUX.1-schnell",
-    #"SD-1.5": "runwayml/stable-diffusion-v1-5", #sd 1.5 和 3.5 生不了，要錢
-    "SDXL-1.0": "stabilityai/stable-diffusion-xl-base-1.0"
 }
 
 # 室內設計的 Prompt (建議用英文，效果最好)

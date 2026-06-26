@@ -36,7 +36,6 @@ from designbridge.render_backends import (
     _render_flux_redux_fal,
     _render_flux_redux_local,
     _render_flux_ipadapter_fal,
-    _render_sdxl,
     _render_flux,
 )
 

@@ -45,13 +45,11 @@ edit_scope = st.sidebar.slider(
 st.sidebar.markdown("**生成模型**")
 model_type = st.sidebar.radio(
     "選擇生成模型",
-    options=["sdxl", "sd", "flux"],
+    options=["flux"],
     format_func=lambda x: {
-        "sdxl": "SDXL (穩定，1024px)",
-        "sd": "SD 3.5 Medium (高品質，1024px)",
         "flux": "Flux.1 Schnell (快速，高品質)",
     }[x],
-    help="SDXL 品質最穩定；SD 1.5 較輕量快速；Flux 生成速度快且品質高但需較多 VRAM",
+    help="Flux 生成速度快且品質高；之後接上微調模型可再加回選項",
     label_visibility="collapsed",
 )
 import os as _os
@@ -239,11 +237,7 @@ if run_button:
                     st.caption(f"路徑：`{gen_path}`")
                     gp = render_result.get("generation_params") or {}
                     backend = gp.get("backend", "")
-                    if backend == "sdxl":
-                        st.success(f"SDXL　`{gp.get('model','')}`")
-                    elif backend == "sd":
-                        st.success(f"SD 3.5　`{gp.get('model','')}`")
-                    elif backend == "flux":
+                    if backend == "flux":
                         st.success(f"Flux　`{gp.get('model','')}`")
                     elif backend == "hf_inference":
                         st.success(f"HF Inference API　`{gp.get('model','')}`")

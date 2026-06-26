@@ -1,5 +1,5 @@
 # designbridge/render_backends.py
-"""Image generation backend implementations: HF Inference, Kontext, FLUX Redux, IP-Adapter, local SDXL/Flux."""
+"""Image generation backend implementations: HF Inference, Kontext, FLUX Redux, IP-Adapter, local Flux."""
 
 from __future__ import annotations
 
@@ -549,13 +549,7 @@ def _render_flux_redux_local(
         return False
 
 
-def _render_sdxl(
-    prompt: str,
-    out_path: Path,
-    control_image: str | Path | None = None,
-    negative_prompt: str | None = None,
-    output_size: tuple[int, int] = (1024, 1024),
-) -> bool:
+def _render_flux(prompt: str, out_path: Path) -> bool:
     """Generate image with local Flux pipeline. Returns True on success."""
     try:
         import torch
@@ -577,8 +571,3 @@ def _render_sdxl(
         print(f"⚠️ Render failed ({type(e).__name__}: {e})")
         traceback.print_exc()
         return False
-
-
-def _render_flux(prompt: str, out_path: Path) -> bool:
-    """Generate image with local Flux pipeline. Returns True on success."""
-    return _render_sdxl(prompt, out_path)
