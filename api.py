@@ -87,7 +87,7 @@ class DesignRequest(BaseModel):
     text_prompt: str = ""
     edit_scope: float = 0.6
     style_profile_id: Optional[str] = None
-    style_retrieval_mode: Optional[str] = None 
+    style_retrieval_mode: Optional[str] = None
     initial_image_path: Optional[str] = None
     style_reference_image_path: Optional[str] = None
     no_style_reference: bool = False
@@ -97,6 +97,17 @@ class DesignRequest(BaseModel):
     family_needs: List[str] = []
     fengshui_rules: List[str] = []
     style_method: str = "ai_analysis"
+    floor_plan_path: Optional[str] = None   # 由 Step 1 產生的 2D 平面圖路徑
+    scene_graph: Optional[dict] = None     # 由 Step 1 產生的完整 scene_graph（含家具座標）
+
+
+class LayoutRequest(BaseModel):
+    room_type: str = "living_room"   # living_room | bedroom | kitchen | study
+    space_size_ping: float = 15.0    # 坪數
+    furniture_list: List[str] = []   # 預計擺放的家具
+    text_prompt: str = ""
+    family_needs: List[str] = []
+    fengshui_rules: List[str] = []
 
 # 2. 延遲編譯 Graph（避免 uvicorn 啟動前長時間阻塞，導致前端連不上）
 _compiled_graph = None
@@ -343,6 +354,84 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/generate-layout")
+async def generate_layout(request: LayoutRequest):
+    """Step 1: 根據坪數、家具清單生成 2D 平面配置圖。"""
+    import math
+    import uuid as _uuid
+
+    try:
+        from designbridge.layout_agent import run_layout_agent
+        from designbridge.special_constraints import enrich_requirement
+
+        total_m2 = request.space_size_ping * 3.306
+        width = round(math.sqrt(total_m2 * 5 / 4), 1)
+        depth = round(math.sqrt(total_m2 * 4 / 5), 1)
+
+        furniture_list = [f.lower().replace(" ", "_") for f in request.furniture_list]
+
+        structured_requirement: dict = {
+            "user_description_raw": request.text_prompt,
+            "design_description": request.text_prompt,
+            "meta": {
+                "room_type": request.room_type,
+                "design_goal": "new_layout",
+                "user_experience_level": "general",
+            },
+            "space_info": {
+                "estimated_size": {"width": width, "height": 2.8, "depth": depth},
+                "windows": [{"x": 0.5, "y": 0.0, "w": 0.2, "h": 0.02}],
+                "doors": [{"x": 0.5, "y": 1.0, "w": 0.1, "h": 0.02}],
+            },
+            "style_preferences": {
+                "primary_style": "", "secondary_style": None,
+                "color_palette": [], "material_preferences": [],
+                "style_strength": 0.7, "reference_images": [],
+            },
+            "layout_constraints": {
+                "must_keep": [],
+                "must_add": furniture_list,
+                "must_remove": [],
+                "immutable_regions": [],
+                "functional_zones": [],
+            },
+            "edit_scope": {"scope_value": 1.0, "allowed_operations": ["layout"]},
+            "priority_weights": {
+                "layout_rationality": 0.6,
+                "style_consistency": 0.2,
+                "user_preference": 0.2,
+            },
+        }
+
+        if request.family_needs or request.fengshui_rules:
+            structured_requirement = enrich_requirement(
+                structured_requirement, request.family_needs, request.fengshui_rules
+            )
+
+        task_id = str(_uuid.uuid4())
+        result = run_layout_agent(structured_requirement, task_id)
+
+        floor_plan_path = (result.get("scene_graph") or {}).get("floor_plan_path")
+        floor_plan_url = None
+        if floor_plan_path:
+            normalized = str(floor_plan_path).replace("\\", "/")
+            if normalized.startswith("artifacts/"):
+                floor_plan_url = f"http://localhost:8000/{normalized}"
+
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "floor_plan_path": floor_plan_path,
+            "floor_plan_url": floor_plan_url,
+            "scene_graph": result.get("scene_graph"),
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # 3. 建立 POST 路由
 @app.post("/api/generate")
 async def generate_design(request: DesignRequest):
@@ -374,7 +463,12 @@ async def generate_design(request: DesignRequest):
         if request.style_method:
             user_input["style_method"] = request.style_method
 
-        initial_state = {"user_input": user_input}
+        initial_state: dict = {"user_input": user_input}
+        # 若 Step 1 已產生平面圖，預填入完整 scene_graph（含家具座標）讓 layout agent 跳過重複生成
+        if request.scene_graph:
+            initial_state["scene_graph"] = request.scene_graph
+        elif request.floor_plan_path and Path(request.floor_plan_path).is_file():
+            initial_state["scene_graph"] = {"floor_plan_path": request.floor_plan_path}
 
         # 執行工作流
         t0 = time.perf_counter()
@@ -387,6 +481,13 @@ async def generate_design(request: DesignRequest):
             if normalized.startswith("artifacts/"):
                 generated_image_url = f"http://localhost:8000/{normalized}"
 
+        scene_graph = result.get("scene_graph") or {}
+        floor_plan_path = scene_graph.get("floor_plan_path")
+        floor_plan_url = None
+        if floor_plan_path:
+            normalized_fp = str(floor_plan_path).replace("\\", "/")
+            if normalized_fp.startswith("artifacts/"):
+                floor_plan_url = f"http://localhost:8000/{normalized_fp}"
 
         response = {
             "status": "success",
@@ -394,6 +495,8 @@ async def generate_design(request: DesignRequest):
             "routing_decision": result.get("routing_decision"),
             "generated_image_path": generated_image_path,
             "generated_image_url": generated_image_url,
+            "floor_plan_path": floor_plan_path,
+            "floor_plan_url": floor_plan_url,
             "structured_requirement": result.get("structured_requirement"),
             "task_id": result.get("task_id"),
             "iteration": result.get("iteration"),

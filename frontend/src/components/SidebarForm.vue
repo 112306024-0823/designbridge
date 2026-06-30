@@ -1,22 +1,96 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import ImageUpload from './ImageUpload.vue'
-import MaskEditor from './MaskEditor.vue'
 
-const textPrompt      = defineModel('textPrompt',      { default: '' })
-const editScope       = defineModel('editScope',       { default: 0.6 })
-const selectedStyle   = defineModel('selectedStyle',   { default: 'auto' })
+// ── Step control ──────────────────────────────────────────────
+const props = defineProps({
+  designStep:          { type: Number,  default: 1 },   // 1 = layout input, 2 = style + 3D
+  floorPlanUrl:        { type: String,  default: '' },
+  styleOptions:        { type: Array,   default: () => [] },
+  styleLoading:        { type: Boolean, default: false },
+  styleError:          { type: String,  default: '' },
+  matchedStylePreview: { type: Object,  default: null },
+  loading:             { type: Boolean, default: false },
+  error:               { type: String,  default: '' },
+  styleRefImage:       { type: Object,  required: true },
+})
+
+const emit = defineEmits(['submit-layout', 'submit-3d', 'retry-style-options'])
+
+// ── Step 1 models ─────────────────────────────────────────────
+const roomType       = defineModel('roomType',       { default: 'living_room' })
+const spaceSizePing  = defineModel('spaceSizePing',  { default: 4 })
+const furnitureItems = defineModel('furnitureItems', { default: () => [] })
+const extraPrompt    = defineModel('extraPrompt',    { default: '' })
+const familyNeeds    = defineModel('familyNeeds',    { default: () => [] })
+const fengshuiRules  = defineModel('fengshuiRules',  { default: () => [] })
+
+// ── Step 2 models ─────────────────────────────────────────────
+const selectedStyle    = defineModel('selectedStyle',    { default: 'auto' })
 const noStyleReference = defineModel('noStyleReference', { default: false })
-const mode             = defineModel('mode',             { default: 'design' })
-const outputAspect     = defineModel('outputAspect',     { default: 'auto' })
-const brushSize        = defineModel('brushSize',        { default: 32 })
-const drawMode         = defineModel('drawMode',         { default: 'draw' })
-const familyNeeds      = defineModel('familyNeeds',      { default: () => [] })
-const fengshuiRules    = defineModel('fengshuiRules',    { default: () => [] })
 const styleMethod      = defineModel('styleMethod',      { default: 'ai_analysis' })
 
-const showMaskEditor = ref(false)
-const showAdvanced   = ref(false)
+// ── Furniture options per room type ───────────────────────────
+const ROOM_OPTIONS = [
+  { value: 'living_room', label: '客廳' },
+  { value: 'bedroom',     label: '臥室' },
+  { value: 'kitchen',     label: '廚房 / 餐廳' },
+  { value: 'study',       label: '書房' },
+]
+
+const FURNITURE_BY_ROOM = {
+  living_room: [
+    { value: 'sofa',          label: '沙發' },
+    { value: 'coffee_table',  label: '茶几' },
+    { value: 'tv_unit',       label: '電視櫃' },
+    { value: 'armchair',      label: '扶手椅' },
+    { value: 'rug',           label: '地毯' },
+    { value: 'plant',         label: '植物' },
+    { value: 'bookshelf',     label: '書架' },
+    { value: 'side_table',    label: '邊桌' },
+  ],
+  bedroom: [
+    { value: 'bed',           label: '床' },
+    { value: 'wardrobe',      label: '衣櫃' },
+    { value: 'nightstand',    label: '床頭柜' },
+    { value: 'desk',          label: '書桌' },
+    { value: 'dresser',       label: '梳妝台' },
+    { value: 'armchair',      label: '扶手椅' },
+    { value: 'lamp',          label: '燈' },
+  ],
+  kitchen: [
+    { value: 'dining_table',  label: '餐桌' },
+    { value: 'chair',         label: '餐椅' },
+    { value: 'cabinet',       label: '櫥櫃' },
+    { value: 'shelf',         label: '層架' },
+  ],
+  study: [
+    { value: 'desk',          label: '書桌' },
+    { value: 'chair',         label: '椅子' },
+    { value: 'bookshelf',     label: '書架' },
+    { value: 'armchair',      label: '扶手椅' },
+    { value: 'side_table',    label: '邊桌' },
+    { value: 'lamp',          label: '燈' },
+  ],
+}
+
+const availableFurniture = computed(() => FURNITURE_BY_ROOM[roomType.value] || [])
+
+function toggleFurniture(value) {
+  furnitureItems.value = furnitureItems.value.includes(value)
+    ? furnitureItems.value.filter(v => v !== value)
+    : [...furnitureItems.value, value]
+}
+
+// custom furniture text input
+const customFurnitureInput = ref('')
+function addCustomFurniture() {
+  const val = customFurnitureInput.value.trim().toLowerCase().replace(/\s+/g, '_')
+  if (val && !furnitureItems.value.includes(val)) {
+    furnitureItems.value = [...furnitureItems.value, val]
+  }
+  customFurnitureInput.value = ''
+}
 
 const FAMILY_OPTIONS = [
   { value: 'children',   label: '有小孩' },
@@ -29,81 +103,153 @@ const FENGSHUI_OPTIONS = [
   { value: 'desk_not_facing_window', label: '書桌不背窗' },
 ]
 
-function toggleFamilyNeed(value) {
+function toggleFamily(value) {
   familyNeeds.value = familyNeeds.value.includes(value)
     ? familyNeeds.value.filter(v => v !== value)
     : [...familyNeeds.value, value]
 }
-
-function toggleFengshuiRule(value) {
+function toggleFengshui(value) {
   fengshuiRules.value = fengshuiRules.value.includes(value)
     ? fengshuiRules.value.filter(v => v !== value)
     : [...fengshuiRules.value, value]
 }
 
-defineProps({
-  spaceImage:          { type: Object,  required: true },
-  styleRefImage:       { type: Object,  required: true },
-  styleOptions:        { type: Array,   default: () => [] },
-  styleLoading:        { type: Boolean, default: false },
-  styleError:          { type: String,  default: '' },
-  matchedStylePreview: { type: Object,  default: null },
-  baseImagePreview:    { type: String,  default: null },
-  baseImageLabel:      { type: String,  default: '' },
-  loading:             { type: Boolean, default: false },
-  error:               { type: String,  default: '' },
-})
-
-const emit = defineEmits(['submit', 'mask-ready', 'retry-style-options'])
+const showAdvanced = ref(false)
 </script>
 
 <template>
   <div class="form">
 
-    <!-- 1. 文字需求 -->
-    <div class="field">
-      <label class="field-label">
-        {{ mode === 'refine' ? '微調需求' : '描述你的空間需求' }}
-      </label>
-      <textarea
-        v-model="textPrompt"
-        rows="4"
-        :placeholder="mode === 'refine'
-          ? '例如：把沙發換成藍色布藝款式、窗簾改為白色薄紗'
-          : '例如：開門回家的瞬間就能感到放鬆的客廳，喜歡北歐風、木質感...'"
-      />
-    </div>
-
-    <!-- 2. 空間圖片 -->
-    <div class="field">
-      <label class="field-label">
-        {{ mode === 'refine' ? '空間圖片' : '空間照片' }}
-        <span v-if="mode === 'design'" class="optional">選填</span>
-      </label>
-      <ImageUpload
-        label="點擊或拖曳上傳"
-        icon="📷"
-        :preview="spaceImage.preview"
-        @change="spaceImage.onChange"
-        @remove="spaceImage.remove"
-      />
-      <div v-if="mode === 'refine'" class="brush-toolbar">
-        <span class="brush-title">塗抹想修改的區域</span>
-        <div class="brush-btns">
-          <button :class="['brush-tool', { active: drawMode === 'draw' }]"  type="button" @click="drawMode = 'draw'">畫筆</button>
-          <button :class="['brush-tool', { active: drawMode === 'erase' }]" type="button" @click="drawMode = 'erase'">橡皮擦</button>
-        </div>
-        <label class="brush-size-label">
-          筆刷 {{ brushSize }}px
-          <input type="range" v-model.number="brushSize" min="5" max="120" step="5" class="brush-range" />
-        </label>
+    <!-- ─── Step indicator ───────────────────────────────── -->
+    <div class="step-indicator">
+      <div :class="['step-dot', { active: designStep === 1, done: designStep > 1 }]">
+        <span v-if="designStep > 1">✓</span><span v-else>1</span>
+      </div>
+      <div class="step-line" :class="{ done: designStep > 1 }"></div>
+      <div :class="['step-dot', { active: designStep === 2 }]">2</div>
+      <div class="step-labels">
+        <span>2D 平面圖</span>
+        <span>3D 渲染圖</span>
       </div>
     </div>
 
-    <!-- design mode -->
-    <template v-if="mode === 'design'">
+    <!-- ══════════ STEP 1: Layout inputs ══════════ -->
+    <template v-if="designStep === 1">
 
-      <!-- 3. 裝潢風格 -->
+      <!-- 房間類型 -->
+      <div class="field">
+        <label class="field-label">房間類型</label>
+        <div class="chip-group">
+          <button
+            v-for="opt in ROOM_OPTIONS" :key="opt.value"
+            type="button"
+            :class="['chip', { active: roomType === opt.value }]"
+            @click="roomType = opt.value; furnitureItems = []"
+          >{{ opt.label }}</button>
+        </div>
+      </div>
+
+      <!-- 空間坪數 -->
+      <div class="field">
+        <label class="field-label">
+          空間坪數
+          <span class="value-badge">{{ spaceSizePing }} 坪</span>
+        </label>
+        <input type="range" v-model.number="spaceSizePing" min="1" max="7" step="1" />
+        <div class="range-hint"><span>1 坪</span><span>7 坪</span></div>
+        <div class="ping-hint">≈ {{ Math.round(spaceSizePing * 3.3) }} m²</div>
+      </div>
+
+      <!-- 預計擺放的東西 -->
+      <div class="field">
+        <label class="field-label">預計擺放的家具</label>
+        <div class="chip-group">
+          <button
+            v-for="opt in availableFurniture" :key="opt.value"
+            type="button"
+            :class="['chip', { active: furnitureItems.includes(opt.value) }]"
+            @click="toggleFurniture(opt.value)"
+          >{{ opt.label }}</button>
+        </div>
+        <!-- Custom input -->
+        <div class="custom-input-row">
+          <input
+            v-model="customFurnitureInput"
+            placeholder="自訂家具名稱（英文）"
+            @keydown.enter.prevent="addCustomFurniture"
+          />
+          <button type="button" class="add-btn" @click="addCustomFurniture">+</button>
+        </div>
+        <div v-if="furnitureItems.length" class="selected-tags">
+          <span
+            v-for="item in furnitureItems" :key="item"
+            class="tag"
+          >
+            {{ item.replace(/_/g, ' ') }}
+            <button type="button" class="tag-remove" @click="furnitureItems = furnitureItems.filter(v => v !== item)">×</button>
+          </span>
+        </div>
+      </div>
+
+      <!-- Submit -->
+      <div class="submit-wrap">
+        <button class="submit-btn" @click="$emit('submit-layout')" :disabled="loading">
+          <span v-if="loading" class="spinner"></span>
+          <span>{{ loading ? '生成中...' : '生成 2D 平面圖' }}</span>
+        </button>
+        <p v-if="error" class="error-msg">{{ error }}</p>
+      </div>
+
+    </template>
+
+    <!-- ══════════ STEP 2: Style + 3D ══════════ -->
+    <template v-else-if="designStep === 2">
+
+      <!-- Floor plan preview -->
+      <div v-if="floorPlanUrl" class="floor-plan-preview">
+        <div class="fp-label">Step 1 生成的 2D 平面圖</div>
+        <img :src="floorPlanUrl" alt="2D 平面圖" class="fp-img" />
+      </div>
+
+      <!-- 其他描述 -->
+      <div class="field">
+        <label class="field-label">描述你想要的氛圍 <span class="optional">選填</span></label>
+        <textarea
+          v-model="extraPrompt"
+          rows="3"
+          placeholder="例如：喜歡木質感、希望有採光充足的明亮感..."
+        />
+      </div>
+
+      <!-- 進階設定 -->
+      <div class="advanced-wrapper">
+        <button type="button" class="advanced-toggle" @click="showAdvanced = !showAdvanced">
+          <span>進階設定（家庭結構 / 風水）</span>
+          <svg class="advanced-arrow" :class="{ open: showAdvanced }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+        <div v-show="showAdvanced" class="advanced-section">
+          <div class="field">
+            <label class="field-label">家庭結構</label>
+            <div class="chip-group">
+              <button v-for="opt in FAMILY_OPTIONS" :key="opt.value" type="button"
+                :class="['chip', { active: familyNeeds.includes(opt.value) }]"
+                @click="toggleFamily(opt.value)">{{ opt.label }}</button>
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label">風水需求</label>
+            <div class="chip-group">
+              <button v-for="opt in FENGSHUI_OPTIONS" :key="opt.value" type="button"
+                :class="['chip', { active: fengshuiRules.includes(opt.value) }]"
+                @click="toggleFengshui(opt.value)">{{ opt.label }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 裝潢風格 -->
       <div class="field">
         <label class="field-label">裝潢風格</label>
         <select v-model="selectedStyle" :disabled="styleLoading">
@@ -112,18 +258,11 @@ const emit = defineEmits(['submit', 'mask-ready', 'retry-style-options'])
         <div v-if="styleLoading" class="status-hint">載入中...</div>
         <div v-if="styleError" class="status-error-row">
           <span class="status-error">{{ styleError }}</span>
-          <button
-            type="button"
-            class="retry-btn"
-            :disabled="styleLoading"
-            @click="emit('retry-style-options')"
-          >
-            重試
-          </button>
+          <button type="button" class="retry-btn" @click="emit('retry-style-options')">重試</button>
         </div>
       </div>
 
-      <!-- 4. 風格參考圖 -->
+      <!-- 風格參考圖 -->
       <div class="field">
         <div class="field-label-row">
           <label class="field-label">風格參考圖</label>
@@ -146,21 +285,21 @@ const emit = defineEmits(['submit', 'mask-ready', 'retry-style-options'])
               <input type="radio" v-model="styleMethod" value="ai_analysis" />
               <div class="radio-content">
                 <strong>AI 分析風格</strong>
-                <small>Gemini 解析圖片色調，注入 prompt</small>
+                <small>Gemini 解析色調，注入 prompt</small>
               </div>
             </label>
             <label :class="{ active: styleMethod === 'redux' }">
               <input type="radio" v-model="styleMethod" value="redux" />
               <div class="radio-content">
                 <strong>FLUX.1-Redux</strong>
-                <small>以圖為主直接做風格遷移</small>
+                <small>以圖為主做風格遷移</small>
               </div>
             </label>
             <label :class="{ active: styleMethod === 'ipadapter' }">
               <input type="radio" v-model="styleMethod" value="ipadapter" />
               <div class="radio-content">
                 <strong>IP-Adapter</strong>
-                <small>文字定空間類型，圖像注入風格</small>
+                <small>圖像注入風格</small>
               </div>
             </label>
           </div>
@@ -169,418 +308,269 @@ const emit = defineEmits(['submit', 'mask-ready', 'retry-style-options'])
               AI 依描述自動選取：<strong>{{ matchedStylePreview.style_name }}</strong>
               <span class="score">{{ (matchedStylePreview.similarity * 100).toFixed(0) }}%</span>
             </div>
-            <img
-              :src="`http://localhost:8000${matchedStylePreview.image_url}`"
-              alt="風格參考圖"
-              @error="$event.target.style.display='none'"
-            />
+            <img :src="`http://localhost:8000${matchedStylePreview.image_url}`" alt="風格參考圖"
+              @error="$event.target.style.display='none'" />
           </div>
         </template>
         <div v-else class="no-style-hint">純文字 prompt 生圖，不套用風格參考圖</div>
       </div>
 
-      <!-- 5. 進階設定（折疊） -->
-      <div class="advanced-wrapper">
-        <button type="button" class="advanced-toggle" @click="showAdvanced = !showAdvanced">
-          <span>進階設定</span>
-          <svg class="advanced-arrow" :class="{ open: showAdvanced }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="6 9 12 15 18 9"/>
-          </svg>
+      <!-- Submit -->
+      <div class="submit-wrap">
+        <button class="submit-btn step2-btn" @click="$emit('submit-3d')" :disabled="loading">
+          <span v-if="loading" class="spinner"></span>
+          <span>{{ loading ? '生成中...' : '生成 3D 渲染圖' }}</span>
         </button>
-
-        <div v-show="showAdvanced" class="advanced-section">
-
-          <!-- 家庭結構 -->
-          <div class="field">
-            <label class="field-label">家庭結構 <span class="optional">選填</span></label>
-            <div class="chip-group">
-              <button
-                v-for="opt in FAMILY_OPTIONS" :key="opt.value"
-                type="button"
-                :class="['chip', { active: familyNeeds.includes(opt.value) }]"
-                @click="toggleFamilyNeed(opt.value)"
-              >{{ opt.label }}</button>
-            </div>
-          </div>
-
-          <!-- 風水需求 -->
-          <div class="field">
-            <label class="field-label">風水需求 <span class="optional">選填</span></label>
-            <div class="chip-group">
-              <button
-                v-for="opt in FENGSHUI_OPTIONS" :key="opt.value"
-                type="button"
-                :class="['chip', { active: fengshuiRules.includes(opt.value) }]"
-                @click="toggleFengshuiRule(opt.value)"
-              >{{ opt.label }}</button>
-            </div>
-          </div>
-
-          <!-- 改動幅度 -->
-          <div class="field">
-            <label class="field-label">
-              改動幅度
-              <span class="value-badge">{{ editScope.toFixed(1) }}</span>
-            </label>
-            <input type="range" v-model.number="editScope" min="0" max="1" step="0.1" />
-            <div class="range-hint"><span>局部微調</span><span>大幅改動</span></div>
-          </div>
-
-          <!-- 輸出比例 -->
-          <div class="field">
-            <label class="field-label">輸出比例</label>
-            <select v-model="outputAspect">
-              <option value="auto">自動（依原圖比例）</option>
-              <option value="1:1">1:1</option>
-              <option value="4:3">4:3</option>
-              <option value="3:4">3:4</option>
-              <option value="16:9">16:9</option>
-              <option value="9:16">9:16</option>
-            </select>
-          </div>
-
-        </div>
+        <p v-if="error" class="error-msg">{{ error }}</p>
       </div>
 
-    </template><!-- /mode === 'design' -->
-
-    <!-- CTA — sticky -->
-    <div class="submit-wrap">
-      <button class="submit-btn" @click="$emit('submit')" :disabled="loading">
-        <span v-if="loading" class="spinner"></span>
-        <span>{{ loading ? 'AI 生成中...' : '生成設計圖' }}</span>
-      </button>
-      <p v-if="error" class="error-msg">{{ error }}</p>
-    </div>
+    </template>
 
   </div>
-
-  <!-- 遮罩編輯器 Modal -->
-  <MaskEditor
-    v-if="showMaskEditor"
-    :imageUrl="baseImagePreview"
-    @confirm="blob => { $emit('mask-ready', blob); showMaskEditor = false }"
-    @cancel="showMaskEditor = false"
-  />
 </template>
 
 <style scoped>
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  min-height: 100%;
-}
+.form { display: flex; flex-direction: column; gap: 1.25rem; min-height: 100%; }
 
-.divider {
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(180,140,100,0.2), transparent);
-  margin: 0.1rem 0;
-}
-
-/* Field */
-.field { display: flex; flex-direction: column; gap: 0.45rem; }
-
-.field-label {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-2);
-  letter-spacing: 0.01em;
-  display: flex;
+/* ── Step indicator ── */
+.step-indicator {
+  display: grid;
+  grid-template-columns: 28px 1fr 28px;
+  grid-template-rows: 28px auto;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0 0;
+  margin-bottom: 0.25rem;
 }
-
-.optional {
+.step-dot {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.8rem; font-weight: 700;
+  background: #e5e5e5; color: #888;
+  transition: all 0.2s;
+}
+.step-dot.active { background: #1c1c1e; color: #fff; }
+.step-dot.done   { background: var(--primary); color: #fff; }
+.step-line {
+  height: 2px;
+  background: #e0e0e0;
+  transition: background 0.2s;
+}
+.step-line.done { background: var(--primary); }
+.step-labels {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
   font-size: 0.7rem;
-  font-weight: 500;
   color: var(--text-4);
-  background: var(--primary-subtle);
-  padding: 0.1rem 0.45rem;
-  border-radius: 99px;
+  margin-top: 0.3rem;
 }
 
+/* ── Field ── */
+.field { display: flex; flex-direction: column; gap: 0.45rem; }
+.field-label {
+  font-size: 0.8rem; font-weight: 600; color: var(--text-2);
+  display: flex; align-items: center; gap: 0.4rem;
+}
+.optional {
+  font-size: 0.7rem; font-weight: 500; color: var(--text-4);
+  background: var(--primary-subtle); padding: 0.1rem 0.45rem; border-radius: 99px;
+}
 .value-badge {
-  background: var(--primary-light);
-  color: var(--primary);
-  padding: 0.1rem 0.5rem;
-  border-radius: 99px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  margin-left: auto;
+  background: var(--primary-light); color: var(--primary);
+  padding: 0.1rem 0.5rem; border-radius: 99px;
+  font-size: 0.75rem; font-weight: 700; margin-left: auto;
 }
 
-/* Textarea */
-textarea {
-  padding: 0.85rem 1rem;
-  border: 1.5px solid #ddd0c0;
-  border-radius: var(--radius-md);
-  resize: vertical;
-  font-size: 0.875rem;
-  font-family: inherit;
-  color: var(--text-1);
-  line-height: 1.65;
-  transition: border-color 0.18s, box-shadow 0.18s;
+/* ── Range ── */
+input[type='range'] { width: 100%; accent-color: var(--primary); cursor: pointer; }
+.range-hint { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-4); }
+.ping-hint  { font-size: 0.72rem; color: var(--text-3); text-align: right; }
+
+/* ── Chips ── */
+.chip-group { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.chip {
+  padding: 0.35rem 0.75rem;
+  border: 1.5px solid #d0d0d0; border-radius: 99px;
+  font-size: 0.8rem; font-family: inherit; font-weight: 500;
+  color: #555; background: #fff; cursor: pointer;
+  transition: all 0.15s;
+}
+.chip:hover { border-color: #999; color: #222; }
+.chip.active {
+  border-color: #1c1c1e; background: #1c1c1e; color: #fff;
+  font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+}
+
+/* ── Custom furniture input ── */
+.custom-input-row {
+  display: flex; gap: 0.4rem; margin-top: 0.25rem;
+}
+.custom-input-row input {
+  flex: 1; padding: 0.45rem 0.75rem;
+  border: 1.5px solid #ddd0c0; border-radius: var(--radius-md);
+  font-size: 0.82rem; font-family: inherit; color: var(--text-1);
   background: rgba(255,250,243,0.75);
 }
+.custom-input-row input:focus { outline: none; border-color: var(--primary); }
+.add-btn {
+  padding: 0.45rem 0.85rem;
+  border: 1.5px solid #ddd0c0; border-radius: var(--radius-md);
+  background: var(--primary-light); color: var(--primary);
+  font-size: 1rem; font-weight: 700; cursor: pointer;
+  transition: background 0.15s;
+}
+.add-btn:hover { background: var(--primary); color: #fff; }
+
+/* ── Selected tags ── */
+.selected-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.2rem; }
+.tag {
+  display: flex; align-items: center; gap: 0.3rem;
+  background: var(--primary-light); color: var(--primary);
+  border: 1px solid var(--primary-border);
+  padding: 0.18rem 0.55rem; border-radius: 99px;
+  font-size: 0.75rem; font-weight: 500;
+}
+.tag-remove {
+  background: none; border: none; cursor: pointer;
+  color: var(--primary); font-size: 0.85rem; padding: 0;
+  line-height: 1; display: flex; align-items: center;
+}
+.tag-remove:hover { color: #c0392b; }
+
+/* ── Textarea ── */
+textarea {
+  padding: 0.85rem 1rem; border: 1.5px solid #ddd0c0;
+  border-radius: var(--radius-md); resize: vertical;
+  font-size: 0.875rem; font-family: inherit; color: var(--text-1);
+  line-height: 1.65; background: rgba(255,250,243,0.75);
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
 textarea:focus {
-  outline: none;
-  border-color: var(--primary);
-  background: #fffaf5;
-  box-shadow: 0 0 0 3px rgba(139,94,60,0.1);
+  outline: none; border-color: var(--primary);
+  background: #fffaf5; box-shadow: 0 0 0 3px rgba(139,94,60,0.1);
 }
 textarea::placeholder { color: var(--text-4); }
 
-/* Range */
-input[type='range'] { width: 100%; accent-color: var(--primary); cursor: pointer; }
-.range-hint { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-4); }
-
-/* Radio group */
-.radio-group { display: flex; flex-direction: column; gap: 0.4rem; }
-.radio-group label {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.6rem 0.85rem;
-  border: 1.5px solid #ddd0c0;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: all 0.18s;
-  background: rgba(255,250,243,0.65);
+/* ── Advanced ── */
+.advanced-wrapper { display: flex; flex-direction: column; }
+.advanced-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; padding: 0.6rem 0.9rem;
+  background: rgba(0,0,0,0.03); border: 1.5px solid #ddd;
+  border-radius: var(--radius-md); color: #555;
+  font-size: 0.82rem; font-weight: 600; font-family: inherit;
+  cursor: pointer; transition: background 0.18s;
 }
-.radio-group label:hover { border-color: var(--primary-border); background: rgba(255,250,243,0.9); }
-.radio-group label.active { border-color: var(--primary); background: var(--primary-light); }
-.radio-group input[type='radio'] { accent-color: var(--primary); flex-shrink: 0; }
-.radio-content { display: flex; flex-direction: column; gap: 0.05rem; }
-.radio-content strong { font-size: 0.83rem; font-weight: 600; color: var(--text-1); }
-.radio-content small  { font-size: 0.72rem; color: var(--text-3); }
+.advanced-toggle:hover { background: rgba(0,0,0,0.06); }
+.advanced-arrow { transition: transform 0.25s ease; flex-shrink: 0; }
+.advanced-arrow.open { transform: rotate(180deg); }
+.advanced-section { display: flex; flex-direction: column; gap: 1rem; padding: 1rem 0.25rem 0.25rem; }
 
-/* Select */
+/* ── Floor plan preview (step 2) ── */
+.floor-plan-preview {
+  border: 1.5px solid #c5d8c0; border-radius: var(--radius-md);
+  background: rgba(240,250,240,0.7); overflow: hidden;
+}
+.fp-label {
+  font-size: 0.72rem; font-weight: 600; color: #4a7c59;
+  padding: 0.45rem 0.75rem; background: rgba(200,240,210,0.5);
+  border-bottom: 1px solid #c5d8c0;
+}
+.fp-img { width: 100%; display: block; max-height: 220px; object-fit: contain; }
+
+/* ── Select ── */
 select {
-  padding: 0.65rem 0.85rem;
-  border: 1.5px solid #ddd0c0;
-  border-radius: var(--radius-md);
-  font-size: 0.875rem;
-  font-family: inherit;
-  background: rgba(255,250,243,0.75);
-  color: var(--text-1);
-  cursor: pointer;
-  transition: border-color 0.18s;
-  appearance: auto;
+  padding: 0.65rem 0.85rem; border: 1.5px solid #ddd0c0;
+  border-radius: var(--radius-md); font-size: 0.875rem;
+  font-family: inherit; background: rgba(255,250,243,0.75);
+  color: var(--text-1); cursor: pointer; appearance: auto;
 }
-select:focus { outline: none; border-color: var(--primary); background: #fffaf5; }
+select:focus { outline: none; border-color: var(--primary); }
 
+/* ── Status hints ── */
 .status-hint  { font-size: 0.8rem; color: var(--text-3); }
-.status-error-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-.status-error { font-size: 0.8rem; color: #c0392b; flex: 1; min-width: 0; }
+.status-error-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.status-error { font-size: 0.8rem; color: #c0392b; flex: 1; }
 .retry-btn {
-  flex-shrink: 0;
-  padding: 0.25rem 0.65rem;
-  border: 1px solid #e0b4b4;
-  border-radius: var(--radius-sm);
-  background: #fff5f5;
-  color: #c0392b;
-  font-size: 0.75rem;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-.retry-btn:hover:not(:disabled) {
-  background: #ffe8e8;
-  border-color: #c0392b;
-}
-.retry-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+  padding: 0.25rem 0.65rem; border: 1px solid #e0b4b4;
+  border-radius: var(--radius-sm); background: #fff5f5; color: #c0392b;
+  font-size: 0.75rem; font-weight: 600; font-family: inherit; cursor: pointer;
 }
 
-/* Brush toolbar */
-.brush-title { font-size: 0.8rem; font-weight: 700; color: #444; }
-.brush-toolbar {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.65rem 0.75rem;
-  background: rgba(0,0,0,0.03);
-  border: 1.5px solid #ddd;
-  border-radius: var(--radius-md);
-}
-.brush-btns { display: flex; gap: 0.4rem; }
-.brush-tool {
-  flex: 1;
-  padding: 0.35rem 0;
-  border: 1.5px solid #ccc;
-  border-radius: 8px;
-  background: #fff;
-  color: #555;
-  font-size: 0.8rem;
-  font-family: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.brush-tool.active { background: #1c1c1e; color: #fff; border-color: #1c1c1e; }
-.brush-size-label {
-  font-size: 0.75rem;
-  color: #555;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.brush-range { width: 120px; accent-color: #1c1c1e; cursor: pointer; }
-
-/* Style toggle */
+/* ── Style toggle ── */
 .field-label-row { display: flex; align-items: center; justify-content: space-between; }
 .toggle-label {
   display: flex; align-items: center; gap: 0.35rem;
   font-size: 0.75rem; color: #505050; cursor: pointer; font-weight: 600;
 }
 .toggle-label input[type='checkbox'] { accent-color: var(--primary); cursor: pointer; }
-
 .no-style-hint {
   font-size: 0.78rem; color: var(--text-3);
-  padding: 0.55rem 0.75rem;
-  background: var(--primary-subtle);
-  border-radius: var(--radius-md);
-  border: 1px dashed var(--primary-border);
+  padding: 0.55rem 0.75rem; background: var(--primary-subtle);
+  border-radius: var(--radius-md); border: 1px dashed var(--primary-border);
 }
 
-/* Style method toggle (compact) */
+/* ── Radio group ── */
+.radio-group { display: flex; flex-direction: column; gap: 0.4rem; }
+.radio-group label {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.6rem 0.85rem; border: 1.5px solid #ddd0c0;
+  border-radius: var(--radius-md); cursor: pointer;
+  background: rgba(255,250,243,0.65); transition: all 0.18s;
+}
+.radio-group label:hover { border-color: var(--primary-border); }
+.radio-group label.active { border-color: var(--primary); background: var(--primary-light); }
+.radio-group input[type='radio'] { accent-color: var(--primary); flex-shrink: 0; }
+.radio-content { display: flex; flex-direction: column; gap: 0.05rem; }
+.radio-content strong { font-size: 0.83rem; font-weight: 600; color: var(--text-1); }
+.radio-content small  { font-size: 0.72rem; color: var(--text-3); }
 .style-method-group { margin-top: 0.25rem; }
 .style-method-group label { padding: 0.45rem 0.75rem; }
-.style-method-group .radio-content strong { font-size: 0.8rem; }
-.style-method-group .radio-content small  { font-size: 0.68rem; }
 
-/* Matched preview */
+/* ── Matched preview ── */
 .matched-preview { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.15rem; }
-.matched-preview img {
-  width: 100%; max-height: 160px; object-fit: cover;
-  border-radius: var(--radius-md); border: 1.5px solid var(--primary-border);
-  display: block; cursor: zoom-in;
-}
-.matched-label {
-  font-size: 0.75rem; color: var(--primary);
-  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
-}
-.score {
-  background: var(--primary-light); color: var(--primary);
-  padding: 0.05rem 0.4rem; border-radius: 99px; font-size: 0.7rem; font-weight: 600;
-}
+.matched-preview img { width: 100%; max-height: 160px; object-fit: cover;
+  border-radius: var(--radius-md); border: 1.5px solid var(--primary-border); }
+.matched-label { font-size: 0.75rem; color: var(--primary); display: flex; align-items: center; gap: 0.4rem; }
+.score { background: var(--primary-light); color: var(--primary);
+  padding: 0.05rem 0.4rem; border-radius: 99px; font-size: 0.7rem; font-weight: 600; }
 
-/* Chips */
-.chip-group { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-.chip {
-  padding: 0.35rem 0.75rem;
-  border: 1.5px solid #d0d0d0;
-  border-radius: 99px;
-  font-size: 0.8rem;
-  font-family: inherit;
-  font-weight: 500;
-  color: #555;
-  background: #fff;
-  cursor: pointer;
-  transition: all 0.15s;
-  line-height: 1.4;
-}
-.chip:hover { border-color: #999; color: #222; }
-.chip.active {
-  border-color: #1c1c1e;
-  background: #1c1c1e;
-  color: #fff;
-  font-weight: 600;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
-}
-
-/* Advanced section */
-.advanced-wrapper { display: flex; flex-direction: column; }
-
-.advanced-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 0.6rem 0.9rem;
-  background: rgba(0,0,0,0.03);
-  border: 1.5px solid #ddd;
-  border-radius: var(--radius-md);
-  color: #555;
-  font-size: 0.82rem;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.18s, border-color 0.18s;
-}
-.advanced-toggle:hover { background: rgba(0,0,0,0.06); border-color: #bbb; }
-
-.advanced-arrow { transition: transform 0.25s ease; flex-shrink: 0; }
-.advanced-arrow.open { transform: rotate(180deg); }
-
-.advanced-section {
-  display: flex;
-  flex-direction: column;
-  gap: 1.1rem;
-  padding: 1rem 0.25rem 0.25rem;
-}
-
-/* Sticky submit */
+/* ── Submit ── */
 .submit-wrap {
-  position: sticky;
-  bottom: 0;
-  margin-top: auto;
-  padding-top: 1.25rem;
-  padding-bottom: 0.25rem;
+  position: sticky; bottom: 0; margin-top: auto;
+  padding-top: 1.25rem; padding-bottom: 0.25rem;
   background: linear-gradient(to top, rgba(255,248,240,1) 65%, rgba(255,248,240,0));
 }
-
 .submit-btn {
-  width: 100%;
-  padding: 0.9rem 1rem;
-  background: #1c1c1e;
-  color: white;
-  border: none;
-  border-radius: var(--radius-lg);
-  font-size: 0.95rem;
-  font-weight: 700;
-  font-family: inherit;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  transition: all 0.2s;
-  letter-spacing: 0.02em;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
+  width: 100%; padding: 0.9rem 1rem;
+  background: #1c1c1e; color: white;
+  border: none; border-radius: var(--radius-lg);
+  font-size: 0.95rem; font-weight: 700; font-family: inherit;
+  cursor: pointer; display: flex; align-items: center;
+  justify-content: center; gap: 0.5rem;
+  transition: all 0.2s; letter-spacing: 0.02em;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.22);
 }
 .submit-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  background: #333;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px); background: #333;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
 }
-.submit-btn:active:not(:disabled) { transform: translateY(0); }
 .submit-btn:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; transform: none; }
+.step2-btn { background: linear-gradient(135deg, #8B5E3C 0%, #b07845 100%); }
+.step2-btn:hover:not(:disabled) { background: linear-gradient(135deg, #7a5233 0%, #9c6a3a 100%); }
 
 .spinner {
   width: 15px; height: 15px;
   border: 2px solid rgba(255,255,255,0.35);
-  border-top-color: white;
-  border-radius: 50%;
-  animation: spin 0.75s linear infinite;
-  flex-shrink: 0;
+  border-top-color: white; border-radius: 50%;
+  animation: spin 0.75s linear infinite; flex-shrink: 0;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .error-msg {
   font-size: 0.82rem; color: #c0392b;
   background: #fff5f5; padding: 0.55rem 0.8rem;
-  margin-top: 0.5rem;
-  border-radius: var(--radius-sm); border: 1px solid #f5c6c6;
+  margin-top: 0.5rem; border-radius: var(--radius-sm); border: 1px solid #f5c6c6;
 }
 </style>

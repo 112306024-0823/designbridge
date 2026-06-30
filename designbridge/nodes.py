@@ -549,37 +549,87 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
 
 
 def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
-    """Layout + style agent.
-
-    Layout planning is only executed when the user explicitly requests spatial reorganization
-    (hint_layout=True from LLM semantic analysis). Otherwise only style params are built,
-    and spatial structure is left to the depth map (if available).
+    """Layout + style agent: generate 2D floor plan first, then build style params for 3D render.
+    If scene_graph already has a floor_plan_path (from Step 1), skip layout generation.
     """
     req = state.get("structured_requirement") or {}
     user_input = state.get("user_input") or {}
-    hint_layout = bool(req.get("hint_layout", False))
-
+    task_id = state.get("task_id") or str(uuid.uuid4())
     style_params = build_style_params(req, user_input)
 
-    if hint_layout:
-        layout_status = "stub_output"
-        print("[layout_and_style] hint_layout=True → layout planning enabled (stub)")
-    else:
-        layout_status = "skipped: no layout replanning requested"
-        print("[layout_and_style] hint_layout=False → skipping layout, spatial structure from depth map")
+    # Step 1 already produced a floor plan — reuse it, skip redundant layout run
+    existing_scene_graph = state.get("scene_graph") or {}
+    if existing_scene_graph.get("floor_plan_path"):
+        print(f"[layout_and_style_agent] Reusing Step-1 floor plan: {existing_scene_graph['floor_plan_path']}")
+        return {
+            **({"style_params": style_params} if style_params else {}),
+            "intermediate_outputs": {
+                **(state.get("intermediate_outputs") or {}),
+                "layout_and_style_agent": {
+                    "layout": "reused_from_step1",
+                    "style_profile_id": style_params.get("style_profile_id") if style_params else None,
+                },
+            }
+        }
+
+    layout_result: dict[str, Any] = {}
+    try:
+        from designbridge.layout_agent import run_layout_agent
+        layout_result = run_layout_agent(req, task_id)
+        floor_plan = (layout_result.get("scene_graph") or {}).get("floor_plan_path")
+        if floor_plan:
+            print(f"[layout_and_style_agent] 2D floor plan generated: {floor_plan}")
+    except Exception as e:
+        print(f"⚠️ Layout agent failed ({e}), skipping 2D floor plan")
 
     return {
         **({"style_params": style_params} if style_params else {}),
+        **({"scene_graph": layout_result["scene_graph"]} if layout_result.get("scene_graph") else {}),
         "intermediate_outputs": {
             **(state.get("intermediate_outputs") or {}),
             "layout_and_style_agent": {
-                "layout": layout_status,
-                "hint_layout": hint_layout,
+                "layout": (layout_result.get("intermediate_outputs") or {}).get("layout_agent", "skipped"),
                 "style_profile_id": style_params.get("style_profile_id") if style_params else None,
             },
         }
     }
 
+
+
+def _furniture_to_spatial_text(placements: list[dict]) -> str:
+    """Convert normalized furniture positions to precise spatial description for prompt injection.
+
+    Coordinate system: x=0 left wall, x=1 right wall, y=0 back/far wall, y=1 front/entrance wall.
+    Items within 0.12 of a wall edge are described as 'against [wall] wall'.
+    """
+    PAD = 0.12
+    parts: list[str] = []
+    for item in placements[:12]:
+        ftype = item.get("type", "").replace("_", " ")
+        x, y = item.get("x", 0.5), item.get("y", 0.5)
+        w, h = item.get("w", 0.1), item.get("h", 0.1)
+        cx, cy = x + w / 2, y + h / 2
+
+        # Wall adjacency takes priority over zone description
+        wall_tags: list[str] = []
+        if x <= PAD:
+            wall_tags.append("left wall")
+        if x + w >= 1.0 - PAD:
+            wall_tags.append("right wall")
+        if y <= PAD:
+            wall_tags.append("back wall")
+        if y + h >= 1.0 - PAD:
+            wall_tags.append("front wall")
+
+        if wall_tags:
+            pos = "against " + " and ".join(wall_tags)
+        else:
+            h_zone = "left side" if cx < 0.38 else ("right side" if cx > 0.62 else "center")
+            v_zone = "back area" if cy < 0.38 else ("front area" if cy > 0.62 else "middle")
+            pos = f"in the {h_zone} {v_zone}"
+
+        parts.append(f"{ftype} {pos}")
+    return "; ".join(parts)
 
 
 def renderer(state: DesignBridgeState) -> dict[str, Any]:
@@ -655,6 +705,26 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         controlnet_inputs["depth"] = str(depth_path)
     if seg_path:
         controlnet_inputs["segmentation"] = str(seg_path)
+
+    # Use 2D floor plan as structural guide when available
+    scene_graph_data = state.get("scene_graph") or {}
+    floor_plan_path = scene_graph_data.get("floor_plan_path")
+    if floor_plan_path and Path(str(floor_plan_path)).is_file():
+        controlnet_inputs["floor_plan"] = str(floor_plan_path)
+        print(f"[renderer] 2D floor plan → 3D render guide: {Path(floor_plan_path).name}")
+
+    # Inject furniture positions from scene_graph into prompt
+    furniture_placements = scene_graph_data.get("furniture_placements") or []
+    if furniture_placements:
+        spatial_desc = _furniture_to_spatial_text(furniture_placements)
+        if spatial_desc:
+            layout_prefix = (
+                f"Strictly follow this furniture arrangement: {spatial_desc}. "
+                f"Exact positions must match the floor plan layout. "
+            )
+            prompt = layout_prefix + prompt
+            generation_params["furniture_layout_injected"] = spatial_desc
+            print(f"[renderer] Furniture layout injected: {spatial_desc[:120]}")
 
     # 1. Hugging Face Inference API (cloud Flux; no local download)
     hf_model_id = Config.FLUX_MODEL
@@ -736,21 +806,25 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
             generation_params["model"] = "black-forest-labs/FLUX.1-Redux-dev (local)"
             generation_params["style_reference"] = user_style_reference_local
 
-    # Kontext LoRA：有 depth map 時優先，保留空間結構
-    # depth_conditioning_scale: 1.0=完全保留結構, 0.0=忽略深度圖
-    # lora scale 直接對應 depth_conditioning_scale，不需轉換
-    depth_conditioning_scale = float(req.get("depth_conditioning_scale") or 0.85)
-    depth_conditioning_scale = max(0.0, min(1.0, depth_conditioning_scale))
-    effective_depth_path = depth_path if depth_conditioning_scale >= 0.20 else None
+    # Kontext LoRA via Replicate：depth map 優先，fallback 到 2D floor plan 作為空間結構引導
+    _SPATIAL_STRENGTH = {"none": 0.55, "minor": 0.60, "major": 0.75}
+    spatial_level = (req.get("spatial_change_level") or "minor").lower()
+    kontext_strength = _SPATIAL_STRENGTH.get(spatial_level, 0.70)
 
-    if backend == "placeholder" and effective_depth_path and Path(str(effective_depth_path)).is_file():
-        if Config.HF_TOKEN:
-            if _render_hf_kontext(prompt, str(effective_depth_path), out_path,
-                                  depth_conditioning_scale=depth_conditioning_scale):
-                backend = "hf_kontext"
-                generation_params["model"] = Config.KONTEXT_LORA_MODEL
-                generation_params["provider"] = Config.KONTEXT_PROVIDER
-                generation_params["depth_conditioning_scale"] = depth_conditioning_scale
+    kontext_control: str | None = None
+    if depth_path and Path(str(depth_path)).is_file():
+        kontext_control = str(depth_path)
+    elif floor_plan_path and Path(str(floor_plan_path)).is_file():
+        kontext_control = str(floor_plan_path)
+        print("[renderer] No depth map — using 2D floor plan as Kontext structural guide")
+
+    if backend == "placeholder" and Config.HF_TOKEN and kontext_control:
+        if _render_hf_kontext(prompt, kontext_control, out_path, strength=kontext_strength):
+            backend = "hf_kontext"
+            generation_params["model"] = Config.KONTEXT_LORA_MODEL
+            generation_params["provider"] = Config.KONTEXT_PROVIDER
+            generation_params["kontext_strength"] = kontext_strength
+            generation_params["kontext_control_source"] = "depth" if kontext_control == str(depth_path) else "floor_plan"
 
     # AI 分析模式 fallback：HF Inference API
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
