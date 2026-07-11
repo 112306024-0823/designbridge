@@ -32,6 +32,18 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
 - 0.2~0.45：大幅重新規劃，僅作參考
 - 0.0：完全不受原空間結構約束（全新設計、打通隔間、格局重建）
 
+## hint_layout / hint_style 判斷（布林值，決定要不要啟動佈局規劃）
+
+依語意理解，不是關鍵字比對：
+- `hint_layout` 設 **true**：需求描述了**家具的位置、朝向、相對關係或空間配置**，或明確要求擺放/移動/重排家具。
+  例：「床放右邊、書桌在床的左邊」、「沙發面對電視牆」、「把書房改成開放式」、「重新安排客廳動線」。
+  → 只要句子裡出現「A 在 B 的左/右/旁邊/對面」「放/擺/移到…」這類**空間指定**，就設 true。
+- `hint_layout` 設 **false**：需求只涉及風格、材質、色彩、氛圍、光線，完全沒指定家具位置。
+  例：「改成北歐風」、「換成深色木質調」、「氣氛溫馨一點」。
+- `hint_style` 設 **true**：需求涉及風格 / 材質 / 色彩 / 氛圍（絕大多數情況為 true）；純粹只移動家具而不動風格時才設 false。
+
+不確定 `hint_layout` 時，若句中有任何具體家具位置描述，一律設 true。
+
 ## 輸出格式（嚴格輸出純 JSON，不加任何說明文字或 markdown）
 
 {{
@@ -66,7 +78,10 @@ REQUIREMENT_ANALYZER_PROMPT = """你是一位專業的室內設計需求分析�
       "layout_rationality": 0.4,
       "style_consistency": 0.4,
       "novelty": 0.2
-    }}
+    }},
+    "hint_layout": false,
+    "hint_style": true,
+    "hint_adjuster": false
   }}
 }}
 """
