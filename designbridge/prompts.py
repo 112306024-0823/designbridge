@@ -94,3 +94,64 @@ DESIGN_DIRECTOR_ROUTER_PROMPT = """你是 DesignBridge 的路由決策器（Desi
 僅輸出單行 JSON，且不得有任何額外文字：
 {{"routing_decision":"design_adjuster|design"}}
 """
+
+
+LAYOUT_AGENT_PROMPT = """你是一位專業的室內空間佈局規劃師。請根據以下條件，規劃房間內每件家具的擺放位置。
+
+## 房間資訊
+房型: {room_type}
+寬度 (width): {width} 公尺
+深度 (depth): {depth} 公尺
+窗戶: {windows}
+門: {doors}
+
+## 使用者需求
+{user_description}
+
+## 硬性限制（必須滿足）
+必須保留 (must_keep): {must_keep}
+必須新增 (must_add): {must_add}
+必須移除 (must_remove): {must_remove}
+不可佔用區域 (immutable_regions): {immutable_regions}
+
+## 現有空間佈局（從上傳照片萃取，作為調整基準）
+{existing_layout}
+
+## 座標系統（務必嚴格遵守）
+- 採用正規化座標，範圍 [0, 1]。
+- x：水平方向，0 = 最左、1 = 最右。
+- y：縱深方向，0 = 上方（遠牆，通常為窗戶側）、1 = 下方（靠近觀看者）。
+- (x, y) 代表家具「左上角」的位置；w 為寬度、h 為深度（皆為正規化比例）。
+- 家具不可超出房間邊界（x + w ≤ 1，y + h ≤ 1），彼此不得重疊。
+- 靠牆家具（如衣櫃、電視櫃、書架、床）應貼近牆面。
+- 主要焦點家具（沙發、床）建議擺在視覺重心，留出足夠動線。
+
+## 規劃原則
+1. 滿足所有硬性限制（must_keep / must_add / must_remove / immutable_regions）。
+2. **以現有佈局為基準**：若上方提供了現有佈局，只移動使用者需求明確要求變更的家具，
+   其餘家具盡量維持原本的相對位置（例如原本在右側就留在右側、原本在中央就留在中央）。
+   沒有現有佈局資料時，才自由規劃。
+3. 保持合理動線，主要通道寬度足夠（換算實際約 ≥ 0.6 公尺）。
+4. 視覺平衡，避免家具全部擠在同一側。
+5. 不要遮擋窗戶與門。
+
+## 輸出格式（嚴格輸出純 JSON，不得有任何說明文字或 markdown）
+{{
+  "furniture": [
+    {{"id": "sofa_1", "type": "sofa", "x": 0.10, "y": 0.58, "w": 0.30, "h": 0.13, "rotation": 0}},
+    {{"id": "tv_unit_1", "type": "tv_unit", "x": 0.30, "y": 0.06, "w": 0.22, "h": 0.07, "rotation": 0}}
+  ]
+}}
+"""
+
+
+LAYOUT_REFINEMENT_PROMPT = """目前佈局的軟性評分如下（0 = 差，1 = 佳）：
+- 動線 (circulation): {circulation}
+- 平衡 (balance): {balance}
+- 焦點 (focal_point): {focal_point}
+- 自然採光 (natural_light): {natural_light}
+- 人因 (ergonomics): {ergonomics}
+
+請針對分數較低的面向調整家具位置，重新輸出完整的佈局 JSON（格式與先前相同，僅輸出純 JSON）。
+維持所有硬性限制不變，並避免家具重疊或超出房間邊界。
+"""

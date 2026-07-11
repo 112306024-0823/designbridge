@@ -33,6 +33,7 @@ from designbridge.render_backends import (
     _render_hf_inference,
     _render_hf_kontext,
     _render_flux_kontext_fal,
+    _render_flux_controlnet_depth_fal,
     _render_flux_redux_fal,
     _render_flux_redux_local,
     _render_flux_ipadapter_fal,
@@ -561,17 +562,37 @@ def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
 
     style_params = build_style_params(req, user_input)
 
+    scene_graph: dict[str, Any] | None = None
+    layout_intermediate: dict[str, Any] = {}
     if hint_layout:
-        layout_status = "stub_output"
-        print("[layout_and_style] hint_layout=True → layout planning enabled (stub)")
+        from designbridge.layout_agent import run_layout_agent
+
+        task_id = state.get("task_id") or str(uuid.uuid4())
+        existing_layout = state.get("layout_from_depth")  # 照片萃取的現有家具位置（若有上傳圖）
+        try:
+            result = run_layout_agent(req, task_id, existing_layout=existing_layout)
+            scene_graph = result.get("scene_graph")
+            layout_intermediate = result.get("intermediate_outputs") or {}
+            layout_status = "ok"
+            _proj = (scene_graph or {}).get("projected_depth_path")
+            print(
+                f"[layout_and_style] hint_layout=True → layout planned "
+                f"({len((scene_graph or {}).get('furniture_placements') or [])} items, "
+                f"projected_depth={'yes' if _proj else 'no'})"
+            )
+        except Exception as e:
+            layout_status = f"failed: {e}"
+            print(f"⚠️ [layout_and_style] layout agent failed ({e}), continuing with style only")
     else:
         layout_status = "skipped: no layout replanning requested"
         print("[layout_and_style] hint_layout=False → skipping layout, spatial structure from depth map")
 
     return {
         **({"style_params": style_params} if style_params else {}),
+        **({"scene_graph": scene_graph} if scene_graph else {}),
         "intermediate_outputs": {
             **(state.get("intermediate_outputs") or {}),
+            **layout_intermediate,
             "layout_and_style_agent": {
                 "layout": layout_status,
                 "hint_layout": hint_layout,
@@ -650,6 +671,20 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     # Get vision features for ControlNet (if available)
     depth_path = vision.get("depth")
     seg_path = vision.get("segmentation")
+
+    # When the user re-plans layout, the input-photo depth no longer matches the new
+    # furniture arrangement. Override it with the depth projected from the scene-graph
+    # coordinates so the Layout Agent's precise placements actually control the render.
+    if req.get("hint_layout") and Config.ENABLE_LAYOUT_DEPTH_PROJECTION:
+        _sg = state.get("scene_graph") or {}
+        _proj_depth = _sg.get("projected_depth_path")
+        if _proj_depth and Path(_proj_depth).exists():
+            depth_path = _proj_depth
+            _proj_seg = _sg.get("projected_seg_path")
+            if _proj_seg and Path(_proj_seg).exists():
+                seg_path = _proj_seg
+            print(f"[renderer] using scene-graph projected depth as ControlNet condition: {Path(_proj_depth).name}")
+
     controlnet_inputs: dict[str, str] = {}
     if depth_path:
         controlnet_inputs["depth"] = str(depth_path)
@@ -742,6 +777,23 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     depth_conditioning_scale = float(req.get("depth_conditioning_scale") or 0.85)
     depth_conditioning_scale = max(0.0, min(1.0, depth_conditioning_scale))
     effective_depth_path = depth_path if depth_conditioning_scale >= 0.20 else None
+
+    # 真正的 FLUX depth ControlNet（opt-in，需 FAL_KEY）：對深度幾何的約束遠強於 Kontext LoRA，
+    # 讓 scene-graph 投影深度真正控制家具擺位。設 LAYOUT_DEPTH_CONTROL_BACKEND=controlnet 啟用。
+    if (
+        backend == "placeholder"
+        and Config.LAYOUT_DEPTH_CONTROL_BACKEND == "controlnet"
+        and Config.FAL_KEY
+        and effective_depth_path and Path(str(effective_depth_path)).is_file()
+    ):
+        if _render_flux_controlnet_depth_fal(
+            prompt, str(effective_depth_path), out_path,
+            conditioning_scale=depth_conditioning_scale,
+            output_size=output_size,
+        ):
+            backend = "flux_controlnet_depth_fal"
+            generation_params["model"] = f"fal-ai/flux-general + {Config.DEPTH_CONTROLNET_MODEL}"
+            generation_params["depth_conditioning_scale"] = depth_conditioning_scale
 
     if backend == "placeholder" and effective_depth_path and Path(str(effective_depth_path)).is_file():
         if Config.HF_TOKEN:

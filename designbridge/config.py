@@ -75,6 +75,14 @@ class Config:
     KONTEXT_LORA_MODEL: str = "thedeoxen/FLUX.1-Kontext-dev-reference-depth-fusion-LORA"
     KONTEXT_PROVIDER: str = os.getenv("DESIGNBRIDGE_KONTEXT_PROVIDER", "fal-ai")
 
+    # Depth conditioning backend for re-planned layouts (uses the scene-graph projected depth):
+    #   "kontext"    → Kontext depth-fusion LoRA (loose reference depth, current default)
+    #   "controlnet" → true FLUX depth ControlNet via fal.ai (stronger geometric control; needs FAL_KEY)
+    LAYOUT_DEPTH_CONTROL_BACKEND: str = os.getenv("DESIGNBRIDGE_LAYOUT_DEPTH_CONTROL_BACKEND", "kontext")
+    DEPTH_CONTROLNET_MODEL: str = os.getenv(
+        "DESIGNBRIDGE_DEPTH_CONTROLNET_MODEL", "Shakker-Labs/FLUX.1-dev-ControlNet-Depth"
+    )
+
     # Local vision preprocessing (Depth + UPerNet segmentation)
     # NOTE: These models will be downloaded on first run (requires internet).
     ENABLE_DEPTH: bool = True
@@ -91,6 +99,17 @@ class Config:
 
     # Layout agent
     LAYOUT_MAX_ITER: int = int(os.getenv("DESIGNBRIDGE_LAYOUT_MAX_ITER", "3"))
+    # Project scene-graph furniture boxes into a perspective depth map for ControlNet.
+    # When true and the user re-plans layout, this projected depth overrides the
+    # input-photo depth so the precise coordinates actually control the render.
+    ENABLE_LAYOUT_DEPTH_PROJECTION: bool = os.getenv(
+        "DESIGNBRIDGE_ENABLE_LAYOUT_DEPTH_PROJECTION", "true"
+    ).lower() in ("1", "true", "yes")
+    # Calibrated against FLUX Kontext renders: pitch=-16 framed the room far better
+    # than -6/-8 (more floor visible, furniture distribution matched the depth boxes).
+    LAYOUT_PROJECTION_HFOV: float = float(os.getenv("DESIGNBRIDGE_LAYOUT_PROJECTION_HFOV", "65.0"))
+    LAYOUT_PROJECTION_PITCH: float = float(os.getenv("DESIGNBRIDGE_LAYOUT_PROJECTION_PITCH", "-16.0"))
+    LAYOUT_PROJECTION_SETBACK: float = float(os.getenv("DESIGNBRIDGE_LAYOUT_PROJECTION_SETBACK", "0.8"))
 
     @classmethod
     def get_gemini_api_key(cls) -> str:

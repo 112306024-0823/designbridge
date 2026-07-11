@@ -392,6 +392,93 @@ def _render_flux_redux_fal(
         return False
 
 
+def _render_flux_controlnet_depth_fal(
+    prompt: str,
+    depth_path: str,
+    out_path: Path,
+    conditioning_scale: float = 0.7,
+    num_steps: int = 28,
+    guidance_scale: float = 3.5,
+    output_size: tuple[int, int] = (1024, 1024),
+) -> bool:
+    """Generate image via fal.ai FLUX-general + a true depth ControlNet.
+
+    Unlike the Kontext depth-fusion LoRA (loose "reference depth"), a real depth
+    ControlNet enforces the depth map's geometry much more strictly — so the
+    scene-graph projected depth actually constrains furniture placement in the render.
+
+    conditioning_scale: 0.0 = ignore depth, ~1.0 = strongly follow depth geometry.
+    """
+    fal_key = Config.FAL_KEY
+    if not fal_key:
+        return False
+    if not prompt.strip():
+        print("⚠️  fal.ai depth ControlNet 需要文字 prompt 描述目標空間")
+        return False
+    try:
+        import fal_client
+        import requests
+        import os
+
+        os.environ["FAL_KEY"] = fal_key
+
+        print("☁️  fal.ai FLUX-general + Depth ControlNet 推理中...")
+
+        with open(depth_path, "rb") as f:
+            depth_url = fal_client.upload(f.read(), content_type="image/png")
+
+        width, height = output_size
+        size_map = {
+            (1024, 1024): "square_hd",
+            (512, 512): "square",
+            (1024, 768): "landscape_4_3",
+            (768, 1024): "portrait_4_3",
+            (1280, 720): "landscape_16_9",
+            (720, 1280): "portrait_16_9",
+        }
+        image_size = size_map.get((width, height), {"width": width, "height": height})
+
+        print(f"[controlnet] model: {Config.DEPTH_CONTROLNET_MODEL}  scale: {conditioning_scale}")
+
+        arguments: dict = {
+            "prompt": prompt.strip(),
+            "num_inference_steps": num_steps,
+            "guidance_scale": guidance_scale,
+            "image_size": image_size,
+            "controlnets": [
+                {
+                    "path": Config.DEPTH_CONTROLNET_MODEL,
+                    "control_image_url": depth_url,
+                    "conditioning_scale": conditioning_scale,
+                }
+            ],
+        }
+
+        result = fal_client.subscribe(
+            "fal-ai/flux-general",
+            arguments=arguments,
+            with_logs=False,
+        )
+
+        img_url = result["images"][0]["url"]
+        resp = requests.get(img_url, timeout=60)
+        resp.raise_for_status()
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(resp.content)
+        print(f"✅ fal.ai FLUX Depth ControlNet 完成：{out_path.name}")
+        return True
+
+    except ImportError:
+        print("⚠️  fal_client 未安裝，請執行：pip install fal-client")
+        return False
+    except Exception as e:
+        import traceback
+        print(f"⚠️  fal.ai FLUX Depth ControlNet 失敗：{e}")
+        traceback.print_exc()
+        return False
+
+
 def _render_flux_ipadapter_fal(
     style_image_path: str,
     out_path: Path,

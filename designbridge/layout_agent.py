@@ -673,17 +673,73 @@ def _generate_floor_plan(items: list[FurnitureItem], task_id: str) -> str | None
         return None
 
 
+def _generate_projected_depth(
+    items: list[FurnitureItem], space_info: dict, task_id: str
+) -> tuple[str | None, str | None]:
+    """Project furniture boxes into a perspective depth map (+ segmentation) for ControlNet.
+
+    Returns (depth_path, seg_path). Pure NumPy — no Blender/3D dependencies.
+    """
+    if not Config.ENABLE_LAYOUT_DEPTH_PROJECTION:
+        return None, None
+    try:
+        from designbridge.scene_graph_to_depth import project_scene_graph_to_depth
+
+        out_dir = Path(Config.ARTIFACTS_DIR) / "layout"
+        depth_out = out_dir / f"{task_id}_projected_depth.png"
+        seg_out = out_dir / f"{task_id}_projected_seg.png"
+        res = project_scene_graph_to_depth(
+            [item.to_dict() for item in items],
+            space_info,
+            depth_out,
+            seg_out_path=seg_out,
+            camera_overrides={
+                "hfov_deg": Config.LAYOUT_PROJECTION_HFOV,
+                "pitch_deg": Config.LAYOUT_PROJECTION_PITCH,
+                "setback": Config.LAYOUT_PROJECTION_SETBACK,
+            },
+        )
+        return res.get("depth_path"), res.get("seg_path")
+    except Exception as e:
+        print(f"⚠️ Projected depth generation failed: {e}")
+        return None, None
+
+
 # ─────────────────────────── Main Entry Point ───────────────────────────
+
+def _format_existing_layout(existing_layout: dict | None) -> str:
+    """Turn photo-extracted layout (depth_to_layout output) into readable current-arrangement text.
+
+    Gives the LLM the current furniture positions so it can adjust from the real layout
+    (e.g. "sofa is on the right") instead of re-planning from scratch.
+    """
+    if not existing_layout:
+        return "（無現有佈局資料，請依需求自由規劃家具位置）"
+    candidates = existing_layout.get("furniture_candidates") or []
+    if not candidates:
+        return "（無法從照片辨識既有家具，請依需求自由規劃）"
+    lines = []
+    for c in candidates:
+        t = c.get("type", "unknown")
+        pos = c.get("position", "unknown")
+        size = c.get("size_ratio", 0.0)
+        conf = c.get("confidence", "")
+        lines.append(f"- {t} 目前位於 {pos}（畫面佔比 {size:.0%}，可信度 {conf}）")
+    return "\n".join(lines)
+
 
 def run_layout_agent(
     structured_requirement: dict[str, Any],
     task_id: str,
+    existing_layout: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Run layout planning. Returns a partial state dict (scene_graph, intermediate_outputs).
     NOTE: intermediate_outputs is NOT pre-merged — callers must merge with existing state.
     NOTE: layout_prompt is intentionally empty — spatial text degrades diffusion quality.
           Floor plan PNG is used for ControlNet only when ENABLE_LAYOUT_CONTROLNET=true.
+    existing_layout: photo-extracted current arrangement (state["layout_from_depth"]); when
+          present, the planner adjusts from it rather than re-planning from scratch.
     """
     from designbridge.prompts import LAYOUT_AGENT_PROMPT, LAYOUT_REFINEMENT_PROMPT
 
@@ -698,6 +754,7 @@ def run_layout_agent(
     )
     room_type = meta.get("room_type", "living_room")
     max_iter = Config.LAYOUT_MAX_ITER
+    existing_layout_text = _format_existing_layout(existing_layout)
 
     def _build_prompt(extra: str = "") -> str:
         return LAYOUT_AGENT_PROMPT.format(
@@ -712,6 +769,7 @@ def run_layout_agent(
             immutable_regions=json.dumps(
                 constraints.get("immutable_regions") or [], ensure_ascii=False
             ),
+            existing_layout=existing_layout_text,
             user_description=user_description + ("\n" + extra if extra else ""),
         )
 
@@ -824,6 +882,9 @@ def run_layout_agent(
     }
 
     floor_plan_path = _generate_floor_plan(best_items, task_id)
+    projected_depth_path, projected_seg_path = _generate_projected_depth(
+        best_items, space_info, task_id
+    )
 
     scene_graph: dict[str, Any] = {
         "furniture_placements": [item.to_dict() for item in best_items],
@@ -832,6 +893,8 @@ def run_layout_agent(
         "soft_constraint_scores": scores,
         "weighted_score": best_score,
         "floor_plan_path": floor_plan_path,
+        "projected_depth_path": projected_depth_path,
+        "projected_seg_path": projected_seg_path,
         "feasible": feasible,
         "infeasible_constraints": infeasible_constraints,
     }
