@@ -4,6 +4,11 @@ import HistoryView from '../views/HistoryView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) return savedPosition
+    if (to.hash) return { el: to.hash }
+    return { top: 0 }
+  },
   routes: [
     {
       path: '/',
@@ -14,6 +19,11 @@ const router = createRouter({
       path: '/history',
       name: 'history',
       component: HistoryView,
+    },
+    {
+      path: '/landing',
+      name: 'landing',
+      component: () => import('../views/LandingView.vue'),
     },
   ],
 })
