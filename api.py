@@ -402,6 +402,7 @@ async def generate_design(request: DesignRequest):
             "intermediate_outputs": result.get("intermediate_outputs"),
             "style_params": result.get("style_params"),
             "evaluation_result": result.get("evaluation_result"),
+            "quotation_result": result.get("quotation_result"),
         }
 
         # 儲存生成紀錄
@@ -447,6 +448,25 @@ async def generate_design(request: DesignRequest):
 
         return response
 
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Quotation ─────────────────────────────────────────────────────────────────
+
+class QuotationRequest(BaseModel):
+    image_path: str
+    structured_requirement: Optional[dict] = None
+
+
+@app.post("/api/quotation")
+async def get_quotation(req: QuotationRequest):
+    """手動觸發估價（使用者點「重新估價」按鈕）。"""
+    from designbridge.quotation import build_quotation
+    try:
+        return build_quotation(req.image_path, req.structured_requirement or {})
     except Exception as e:
         import traceback
         traceback.print_exc()

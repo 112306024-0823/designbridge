@@ -6,6 +6,7 @@ from typing_extensions import NotRequired, TypedDict
 
 from designbridge.schemas import (
     EvalFeedbackJSON,
+    QuotationResultJSON,
     RequirementJSON,
     RenderResultJSON,
     SceneGraphJSON,
@@ -55,5 +56,7 @@ class DesignBridgeState(TypedDict):
     layout_from_depth: NotRequired[dict[str, Any]]
     # Evaluator output
     evaluation_result: NotRequired[EvalFeedbackJSON]
+    # Quotation Agent output
+    quotation_result: NotRequired[QuotationResultJSON]
     # Legacy / intermediate outputs (can be refactored later)
     intermediate_outputs: NotRequired[dict[str, Any]]

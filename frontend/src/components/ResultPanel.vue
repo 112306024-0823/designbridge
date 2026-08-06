@@ -1,11 +1,37 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, reactive, watch } from 'vue'
 
 const refExpanded = ref(true)
 
 const props = defineProps({
   result:  { type: Object,  default: null },
   loading: { type: Boolean, default: false },
+})
+
+// 估價候選選擇狀態（每件家具當前選中的候選 index）
+const selectedCandidates = reactive({})
+
+watch(
+  () => props.result?.quotation_result?.furniture_list,
+  (list) => {
+    if (list) {
+      list.forEach((_, idx) => {
+        selectedCandidates[idx] = 0
+      })
+    }
+  },
+  { immediate: true },
+)
+
+// 動態計算總預算（依各品項已選候選）
+const computedTotal = computed(() => {
+  const list = props.result?.quotation_result?.furniture_list
+  if (!list) return 0
+  return list.reduce((sum, item, idx) => {
+    const ci = selectedCandidates[idx] ?? 0
+    const c = item.candidates?.[ci]
+    return sum + (c?.price ?? 0)
+  }, 0)
 })
 
 const spatialLevelColor = computed(() => {
@@ -221,6 +247,69 @@ const styleReferenceImageUrl = computed(() => {
             <li v-for="(s, i) in result.evaluation_result.suggestions" :key="i">{{ s }}</li>
           </ul>
         </div>
+      </div>
+
+      <!-- 家具估價 -->
+      <div v-if="result.quotation_result" class="result-section quotation-section">
+        <h3 class="quotation-title">
+          家具估價
+          <span class="ikea-badge">IKEA 台灣</span>
+        </h3>
+
+        <!-- 每件偵測到的家具 -->
+        <div
+          v-for="(item, idx) in result.quotation_result.furniture_list"
+          :key="idx"
+          class="furniture-row"
+        >
+          <div class="furniture-label">{{ item.detected_name }}</div>
+          <div class="candidates-row">
+            <div
+              v-for="(c, ci) in item.candidates"
+              :key="ci"
+              :class="['candidate-card', (selectedCandidates[idx] ?? 0) === ci ? 'selected' : '']"
+              @click="selectedCandidates[idx] = ci"
+            >
+              <div class="candidate-img-wrap">
+                <img v-if="c.product_image_url" :src="c.product_image_url" class="candidate-img" />
+                <div v-else class="candidate-img-placeholder">無圖</div>
+              </div>
+              <div class="candidate-name">{{ c.name }}</div>
+              <div class="candidate-price">NT$ {{ c.price.toLocaleString() }}</div>
+              <div v-if="c.similarity > 0" class="candidate-sim">
+                相似度 {{ (c.similarity * 100).toFixed(0) }}%
+              </div>
+              <a
+                v-if="c.purchase_url"
+                :href="c.purchase_url"
+                target="_blank"
+                rel="noopener"
+                class="candidate-buy"
+                @click.stop
+              >購買</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- 動態預算 -->
+        <div class="budget-row">
+          <div class="budget-card mid selected-budget">
+            <span class="budget-label">目前選擇預算</span>
+            <span class="budget-val">NT$ {{ computedTotal.toLocaleString() }}</span>
+          </div>
+          <div class="budget-card low">
+            <span class="budget-label">低預算參考</span>
+            <span class="budget-val">NT$ {{ result.quotation_result.total_low.toLocaleString() }}</span>
+          </div>
+          <div class="budget-card high">
+            <span class="budget-label">高規格參考</span>
+            <span class="budget-val">NT$ {{ result.quotation_result.total_high.toLocaleString() }}</span>
+          </div>
+        </div>
+
+        <p class="quotation-note">
+          * 點選卡片可切換商品，總預算自動更新。{{ result.quotation_result.kb_match_count }}/{{ result.quotation_result.furniture_list.length }} 件成功向量比對 IKEA，其餘為 AI 估算。
+        </p>
       </div>
 
     </div>
@@ -537,4 +626,81 @@ pre {
   color: var(--text-2);
   margin-top: 0.5rem;
 }
+
+/* ── Quotation ── */
+.quotation-section { display: flex; flex-direction: column; gap: 1.1rem; }
+.quotation-title {
+  font-size: 0.85rem; font-weight: 700; color: var(--text-2);
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  margin-bottom: 0.1rem;
+}
+.ikea-badge {
+  background: #0058a3; color: #fff;
+  padding: 0.15rem 0.6rem; border-radius: 99px; font-size: 0.7rem; font-weight: 700;
+}
+
+/* Furniture row */
+.furniture-row { display: flex; flex-direction: column; gap: 0.5rem; }
+.furniture-label {
+  font-size: 0.78rem; font-weight: 700; color: var(--text-2);
+  padding: 0 0.1rem;
+}
+
+/* Candidates */
+.candidates-row {
+  display: flex; gap: 0.6rem; overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+.candidate-card {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  min-width: 120px; max-width: 150px; flex-shrink: 0;
+  border: 1.5px solid #e0d8cc;
+  border-radius: var(--radius-md);
+  padding: 0.6rem;
+  cursor: pointer;
+  background: rgba(255,255,255,0.7);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.candidate-card:hover {
+  border-color: var(--primary-border);
+  box-shadow: 0 2px 8px rgba(180,140,100,0.15);
+}
+.candidate-card.selected {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  box-shadow: 0 0 0 2px var(--primary-border);
+}
+.candidate-img-wrap {
+  width: 100%; aspect-ratio: 1;
+  background: #f5f0ea;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.candidate-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.candidate-img-placeholder { font-size: 0.65rem; color: var(--text-4); }
+.candidate-name { font-size: 0.72rem; color: var(--text-2); line-height: 1.3; }
+.candidate-price { font-size: 0.82rem; font-weight: 800; color: var(--text-1); }
+.candidate-sim { font-size: 0.65rem; color: var(--text-3); }
+.candidate-buy {
+  font-size: 0.72rem; font-weight: 700; color: #0058a3;
+  text-decoration: none; margin-top: auto;
+}
+.candidate-buy:hover { text-decoration: underline; }
+
+/* Budget */
+.budget-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.budget-card {
+  flex: 1; min-width: 120px; border-radius: var(--radius-md); padding: 0.75rem 1rem;
+  display: flex; flex-direction: column; gap: 0.25rem; text-align: center;
+}
+.budget-card.low  { background: #f5f5f5; border: 1px solid #e0e0e0; }
+.budget-card.mid  { background: var(--primary-light); border: 2px solid var(--primary-border); }
+.budget-card.high { background: #fff8e8; border: 1px solid #f0d890; }
+.selected-budget  { order: -1; }
+.budget-label { font-size: 0.7rem; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; }
+.budget-val   { font-size: 1rem; font-weight: 800; color: var(--text-1); white-space: nowrap; }
+.budget-card.mid .budget-val { color: var(--primary); }
+
+.quotation-note { font-size: 0.75rem; color: var(--text-4); line-height: 1.5; margin: 0; }
 </style>

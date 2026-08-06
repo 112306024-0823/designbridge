@@ -157,3 +157,36 @@ class EvalFeedbackJSON(TypedDict):
     feedback: str
     issues_found: NotRequired[list[str]]
     suggestions: NotRequired[list[str]]
+
+
+# ========== Quotation JSON ==========
+class FurnitureCandidate(TypedDict):
+    """A single IKEA candidate match for a detected furniture item."""
+
+    id: str                     # IKEA 商品 ID
+    name: str                   # IKEA 商品名稱
+    price: int                  # 售價（TWD）
+    purchase_url: str           # IKEA 商品頁連結
+    product_image_url: str      # IKEA 商品圖片 URL
+    similarity: float           # cosine similarity 0~1（向量比對得分）
+
+
+class FurnitureItem(TypedDict):
+    """A furniture item detected in the generated image, with top-3 IKEA candidates."""
+
+    detected_name: str                      # Gemini 偵測到的名稱（中文）
+    category: str                           # sofa / table / chair / lamp / rug / storage / bed / other
+    candidates: list[FurnitureCandidate]    # top-3 IKEA 候選（向量搜尋結果）
+    selected_index: int                     # 預設選中第 0 筆
+
+
+class QuotationResultJSON(TypedDict):
+    """Output of Quotation Agent: furniture list + budget breakdown."""
+
+    furniture_list: list[FurnitureItem]
+    total_low: int          # 以每件第 0 候選 × 0.8 計算
+    total_mid: int          # 以每件第 0 候選計算
+    total_high: int         # 以每件第 0 候選 × 1.3 計算
+    currency: str           # "TWD"
+    kb_match_count: int     # 有幾件成功從 IKEA KB 向量比對到
+    notes: NotRequired[str]
