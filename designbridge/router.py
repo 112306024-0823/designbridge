@@ -1,5 +1,5 @@
 # designbridge/router.py
-"""LLM-based Router: uses call_llm (LiteLLM / xAI / Gemini) + SkillRegistry for routing."""
+"""LLM-based Router: uses call_llm (Gemini) + SkillRegistry for routing."""
 
 from __future__ import annotations
 
@@ -89,13 +89,13 @@ def call_llm_router(
     vision_features: dict,
     temperature: float = 0.0,
     registry: Optional["SkillRegistry"] = None,
-    # Deprecated: kept for backward compat, ignored (LiteLLM handles auth)
+    # Deprecated: kept for backward compat, ignored (llm.py handles auth)
     api_key: str = "",
     gemini_model: str = "",
     gemini_temperature: float | None = None,
 ) -> RoutingDecision:
     """
-    Call LLM (via LiteLLM) to decide routing based on structured_requirement and skill descriptions.
+    Call LLM (Gemini) to decide routing based on structured_requirement and skill descriptions.
 
     Raises RouterLLMError if the LLM output cannot be parsed into a RoutingDecision.
     """

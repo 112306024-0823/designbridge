@@ -311,7 +311,7 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    """通用 LLM chat endpoint，透過 designbridge.llm 呼叫 Gemini（失敗時 fallback 至 Grok）。
+    """通用 LLM chat endpoint，透過 designbridge.llm 呼叫 Gemini。
 
     - stream=false（預設）：回傳 { "content": "..." }
     - stream=true：Server-Sent Events，每個 chunk 為 data: <text>\\n\\n
