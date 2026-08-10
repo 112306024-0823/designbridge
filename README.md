@@ -72,7 +72,7 @@ Requirement Analyzer 會優先用 **Google Gemini API** 解析需求；若未設
 
 ```bash
 pip install -r requirements.txt
-pip install supabase litellm
+pip install supabase
 cd frontend && npm install && cd ..
 ```
 
@@ -83,7 +83,7 @@ cd frontend && npm install && cd ..
 ```env
 PYTHONUTF8=1
 
-# LLM（可同時設定；call_llm 會依序嘗試：LITELLM → Gemini → xAI/Grok，全失敗才報錯）
+# LLM（可同時設定；call_llm 會依序嘗試：Gemini → xAI/Grok，全失敗才報錯）
 # GEMINI_API_KEY=你的_gemini_api_key
 # XAI_API_KEY=你的_xai_grok_key
 # 可選：GROK_API_KEY 與 XAI_API_KEY 等價
@@ -132,8 +132,7 @@ cd frontend && npm run dev
 | Key | 申請位置 | 用途 |
 |---|---|---|
 | `GEMINI_API_KEY` | [Google AI Studio](https://makersuite.google.com/app/apikey) | LLM 需求分析 + 動態 routing（直連 Gemini） |
-| `GROK_API_KEY`（或 `XAI_API_KEY`） | [xAI Console](https://console.x.ai/) | Grok（OpenAI-compatible client）；前兩步失敗時作為後備 |
-| `LITELLM_API_KEY` | 視 LiteLLM 設定 | 任意 LiteLLM 支援模型（含 `xai/grok-...`） |
+| `GROK_API_KEY`（或 `XAI_API_KEY`） | [xAI Console](https://console.x.ai/) | Grok（OpenAI-compatible client）；Gemini 失敗時作為後備 |
 | `HF_TOKEN` | [Hugging Face Settings](https://huggingface.co/settings/tokens)（Read 權限）| 雲端圖片生成（Flux/SDXL），免本地 GPU |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Supabase 專案設定 | 風格向量庫搜尋 |
 
@@ -181,7 +180,7 @@ designbridge/
 │   ├── graph.py                # LangGraph 工作流定義
 │   ├── nodes.py                # 所有 Agent 節點實作
 │   ├── config.py               # 設定與 feature flags
-│   ├── llm.py                  # LiteLLM 統一 LLM 介面
+│   ├── llm.py                  # 統一 LLM 介面（Gemini → Grok fallback）
 │   ├── router.py               # LLM-based 動態 routing
 │   ├── skill_registry.py       # 讀取 SKILL.md 供 Router 使用
 │   ├── prompts.py              # Prompt 模板

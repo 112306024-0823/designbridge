@@ -295,7 +295,7 @@ def get_style_profiles():
     # fallback：回傳 STYLES 定義的完整清單
     return [{"style_id": sid, "style_name": sname} for sid, sname in STYLES]
 
-# ── Chat (LiteLLM) ───────────────────────────────────────────────────────────
+# ── Chat (Gemini) ────────────────────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
     role: str          # "user" | "assistant" | "system"
@@ -303,7 +303,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
-    model: Optional[str] = None        # 留空則用 Config.LITELLM_MODEL
+    model: Optional[str] = None
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     stream: bool = False
@@ -311,7 +311,7 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    """通用 LLM chat endpoint，透過 LiteLLM 支援任意模型。
+    """通用 LLM chat endpoint，透過 designbridge.llm 呼叫 Gemini（失敗時 fallback 至 Grok）。
 
     - stream=false（預設）：回傳 { "content": "..." }
     - stream=true：Server-Sent Events，每個 chunk 為 data: <text>\\n\\n
@@ -323,7 +323,7 @@ async def chat(request: ChatRequest):
     last = request.messages[-1]
 
     kwargs = dict(
-        model=request.model or Config.LITELLM_MODEL,
+        model=request.model,
         history=history or None,
         temperature=request.temperature,
         max_tokens=request.max_tokens,
@@ -338,7 +338,7 @@ async def chat(request: ChatRequest):
 
     try:
         content = call_llm(last.content, **kwargs)
-        return {"content": content, "model": request.model or Config.LITELLM_MODEL}
+        return {"content": content, "model": request.model or Config.GEMINI_MODEL}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -402,6 +402,7 @@ async def generate_design(request: DesignRequest):
             "intermediate_outputs": result.get("intermediate_outputs"),
             "style_params": result.get("style_params"),
             "evaluation_result": result.get("evaluation_result"),
+            "quotation_result": result.get("quotation_result"),
         }
 
         # 儲存生成紀錄
@@ -447,6 +448,25 @@ async def generate_design(request: DesignRequest):
 
         return response
 
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Quotation ─────────────────────────────────────────────────────────────────
+
+class QuotationRequest(BaseModel):
+    image_path: str
+    structured_requirement: Optional[dict] = None
+
+
+@app.post("/api/quotation")
+async def get_quotation(req: QuotationRequest):
+    """手動觸發估價（使用者點「重新估價」按鈕）。"""
+    from designbridge.quotation import build_quotation
+    try:
+        return build_quotation(req.image_path, req.structured_requirement or {})
     except Exception as e:
         import traceback
         traceback.print_exc()

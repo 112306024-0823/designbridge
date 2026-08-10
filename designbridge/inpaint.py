@@ -22,6 +22,39 @@ from designbridge.config import Config
 
 _inpaint_pipeline: Any = None
 
+# ---------------------------------------------------------------------------
+# SAM 2 cache
+# ---------------------------------------------------------------------------
+
+_sam2_predictor: Any = None
+
+# checkpoint 與 config 路徑（相對於本專案 model/ 資料夾）
+_SAM2_CHECKPOINT = Path(__file__).parent.parent / "model" / "sam2" / "checkpoints" / "sam2.1_hiera_tiny.pt"
+_SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_t.yaml"
+
+
+def _get_sam2_predictor():
+    """Load SAM 2 predictor once and cache it."""
+    global _sam2_predictor
+    if _sam2_predictor is not None:
+        return _sam2_predictor
+    if not _SAM2_CHECKPOINT.is_file():
+        print(f"[SAM2] checkpoint not found: {_SAM2_CHECKPOINT}")
+        return None
+    try:
+        import torch
+        from sam2.build_sam import build_sam2
+        from sam2.sam2_image_predictor import SAM2ImagePredictor
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = build_sam2(_SAM2_CONFIG, str(_SAM2_CHECKPOINT), device=device)
+        _sam2_predictor = SAM2ImagePredictor(model)
+        print(f"[SAM2] predictor loaded on {device}")
+        return _sam2_predictor
+    except Exception as e:
+        print(f"[SAM2] failed to load: {e}")
+        return None
+
 
 def _resolve_inpaint_size(
     image_size: tuple[int, int],
@@ -122,7 +155,7 @@ def mask_from_segmentation(
 
     mask = Image.fromarray(mask_array).resize(image_size)
     # 膨脹邊緣讓 inpainting 邊界更自然
-    mask = mask.filter(ImageFilter.MaxFilter(15))
+    mask = mask.filter(ImageFilter.MaxFilter(7))
     return mask
 
 
@@ -146,9 +179,13 @@ def expand_mask_by_segmentation(
     seg_meta_path: str,
     image_size: tuple[int, int],
     top_k: int = 2,
-) -> Any:
+) -> tuple[Any, list[str]]:
     """
     方式二：手繪遮罩 → 自動偵測被觸碰的物件 → 展開成完整物件遮罩。
+
+    回傳 (mask, selected_labels)：
+    - mask: 展開後的遮罩圖
+    - selected_labels: 選中的 class 名稱列表（供 prompt 補全使用）
 
     步驟：
     1. 把手繪遮罩縮放到 segmentation 尺寸
@@ -168,7 +205,7 @@ def expand_mask_by_segmentation(
     drawn_array = np.array(drawn) > 128
 
     if not drawn_array.any():
-        return fallback_center_mask(image_size)
+        return fallback_center_mask(image_size), []
 
     with open(seg_meta_path) as f:
         meta = json.load(f)
@@ -188,13 +225,15 @@ def expand_mask_by_segmentation(
         candidates.append((ratio, cid, label))
 
     if not candidates:
-        return fallback_center_mask(image_size)
+        return fallback_center_mask(image_size), []
 
     # 只取重疊比例最高的 top_k 個
     candidates.sort(reverse=True)
     selected = candidates[:top_k]
     for ratio, cid, label in selected:
         print(f"[adjuster] expand: class {cid} ({label})  overlap={ratio:.1%}")
+
+    selected_labels = [label for _, _, label in selected]
 
     # 把選中 class 的完整像素塗白
     valid_ids = [cid for _, cid, _ in selected]
@@ -203,17 +242,144 @@ def expand_mask_by_segmentation(
         mask_array[seg_array == cid] = 255
 
     mask = Image.fromarray(mask_array).resize(image_size, Image.NEAREST)
-    mask = mask.filter(ImageFilter.MaxFilter(15))
-    return mask
+    mask = mask.filter(ImageFilter.MaxFilter(7))
+    return mask, selected_labels
 
-    # 把這些 class 的完整像素塗白
-    mask_array = np.zeros(seg_array.shape, dtype=np.uint8)
-    for cid in valid_ids:
-        mask_array[seg_array == cid] = 255
 
-    mask = Image.fromarray(mask_array).resize(image_size, Image.NEAREST)
-    mask = mask.filter(ImageFilter.MaxFilter(15))
-    return mask
+def generate_mask_with_sam2(
+    image_path: str,
+    drawn_mask: Any,
+    image_size: tuple[int, int],
+) -> tuple[Any, bool]:
+    """
+    使用 SAM 2 從手繪框生成精確的實例層級遮罩。
+
+    步驟：
+    1. 從手繪遮罩計算 bounding box
+    2. 以 box 作為 SAM 2 的 prompt
+    3. 回傳精確物件輪廓遮罩
+
+    Args:
+        image_path: 原始圖片路徑
+        drawn_mask: 手繪遮罩 (PIL.Image)
+        image_size: 原始圖片尺寸 (width, height)
+
+    Returns:
+        (mask, success): mask = PIL.Image L mode；success = 是否成功
+    """
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    predictor = _get_sam2_predictor()
+    if predictor is None:
+        return drawn_mask, False
+
+    try:
+        import torch
+
+        # 從手繪遮罩計算 bounding box（xyxy 格式）
+        drawn_arr = np.array(drawn_mask.convert("L")) > 128
+        if not drawn_arr.any():
+            return drawn_mask, False
+
+        rows = np.any(drawn_arr, axis=1)
+        cols = np.any(drawn_arr, axis=0)
+        y_min, y_max = int(np.where(rows)[0][0]), int(np.where(rows)[0][-1])
+        x_min, x_max = int(np.where(cols)[0][0]), int(np.where(cols)[0][-1])
+
+        # 縮放 bounding box 到原圖座標（手繪遮罩可能是縮小版）
+        dw, dh = drawn_mask.size
+        w, h = image_size
+        sx, sy = w / dw, h / dh
+        pad = 8
+        x_min = max(0, int(x_min * sx) - pad)
+        y_min = max(0, int(y_min * sy) - pad)
+        x_max = min(w - 1, int(x_max * sx) + pad)
+        y_max = min(h - 1, int(y_max * sy) + pad)
+
+        print(f"[SAM2] box prompt: ({x_min},{y_min}) -> ({x_max},{y_max})")
+
+        img_rgb = np.array(Image.open(image_path).convert("RGB"))
+
+        with torch.inference_mode():
+            predictor.set_image(img_rgb)
+            box = np.array([x_min, y_min, x_max, y_max])
+            masks, scores, _ = predictor.predict(
+                box=box,
+                multimask_output=False,
+            )
+
+        best_idx = int(scores.argmax())
+        sam_mask = masks[best_idx]  # bool H×W
+
+        mask_img = Image.fromarray((sam_mask * 255).astype(np.uint8), mode="L")
+        mask_img = mask_img.resize(image_size, Image.NEAREST)
+        mask_img = mask_img.filter(ImageFilter.MaxFilter(7))
+
+        print(f"[SAM2] instance mask generated, score={scores[best_idx]:.3f}")
+        return mask_img, True
+
+    except Exception as e:
+        import traceback
+        print(f"[SAM2] inference failed: {e}")
+        traceback.print_exc()
+        return drawn_mask, False
+
+
+def run_lama_inpainting(
+    image_path: str,
+    mask: Any,
+    out_path: Path,
+) -> bool:
+    """
+    使用 LaMa 執行背景重建（純移除任務專用）。
+
+    LaMa 專門針對大面積遮罩的背景重建最佳化，
+    比 FLUX.1-Fill 更穩定於「移除後填空」場景。
+
+    Args:
+        image_path: 原始圖片路徑
+        mask: PIL.Image L mode 遮罩（白=移除區域）
+        out_path: 輸出圖片路徑
+
+    Returns:
+        True = 成功，False = 失敗
+    """
+    try:
+        from simple_lama_inpainting import SimpleLama
+        from PIL import Image
+
+        lama = SimpleLama()
+        original = Image.open(image_path).convert("RGB")
+        orig_size = original.size
+
+        mask_l = mask.convert("L")
+        if mask_l.size != orig_size:
+            mask_l = mask_l.resize(orig_size, Image.NEAREST)
+
+        result = lama(original, mask_l)
+
+        # 強制合成：mask 以外的像素還原為原圖，防止 LaMa 模糊化周圍區域
+        # result 尺寸可能與 orig_size 不同（LaMa 內部縮放），先對齊
+        import numpy as np
+        if result.size != orig_size:
+            result = result.resize(orig_size, Image.LANCZOS)
+        orig_arr   = np.array(original)
+        result_arr = np.array(result.convert("RGB"))
+        mask_arr   = np.array(mask_l.resize(orig_size, Image.NEAREST))
+        composite  = np.where(mask_arr[:, :, np.newaxis] > 128, result_arr, orig_arr)
+        result = Image.fromarray(composite.astype(np.uint8))
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        result.save(str(out_path))
+        print(f"[LaMa] inpainting success -> {out_path.name}")
+        return True
+
+    except Exception as e:
+        import traceback
+        print(f"[LaMa] inpainting failed: {e}")
+        traceback.print_exc()
+        return False
 
 
 def fallback_center_mask(image_size: tuple[int, int]) -> Any:
@@ -380,6 +546,8 @@ def run_fal_inpainting(
     prompt: str,
     out_path: Path,
     mask_path: str | None = None,
+    num_steps: int = 28,
+    guidance_scale: float = 3.5,
 ) -> bool:
     """
     使用 fal.ai FLUX.1-Fill 執行 inpainting（雲端，免下載模型）。
@@ -390,6 +558,8 @@ def run_fal_inpainting(
         prompt: inpainting prompt
         out_path: 輸出路徑
         mask_path: 若有手繪遮罩路徑，優先使用
+        num_steps: 推理步數，移除任務建議 50，修改任務建議 28
+        guidance_scale: prompt 跟隨強度，顏色修改建議調高至 5.0
 
     Returns:
         True = 成功，False = 失敗
@@ -438,6 +608,7 @@ def run_fal_inpainting(
             b64 = base64.b64encode(buf.getvalue()).decode()
             return f"data:image/png;base64,{b64}"
 
+        print(f"[fal] num_steps={num_steps}  guidance_scale={guidance_scale}")
         result = fal_client.subscribe(
             Config.FAL_INPAINT_MODEL,
             arguments={
@@ -445,6 +616,8 @@ def run_fal_inpainting(
                 "image_url": _to_data_url(original),
                 "mask_url": _to_data_url(mask_img),
                 "num_images": 1,
+                "num_inference_steps": num_steps,
+                "guidance_scale": guidance_scale,
                 "output_format": "png",
                 "safety_tolerance": "2",
             },

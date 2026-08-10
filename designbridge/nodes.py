@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,8 @@ from designbridge.inpaint import (
     mask_from_segmentation,
     expand_mask_by_segmentation,
     fallback_center_mask,
+    generate_mask_with_sam2,
+    run_lama_inpainting,
     build_inpaint_prompt,
     run_inpainting,
     run_hf_inpainting,
@@ -339,40 +342,118 @@ _ZH_TO_SEG_LABELS: dict[str, list[str]] = {
 }
 
 
-def _labels_from_prompt(text: str) -> list[str]:
+def _bbox_mask_from_vision(image_path: str, target_object: str, img_size: tuple) -> Any:
     """
-    從 prompt 提取語義分割標籤。
-    優先用關鍵字字典（0ms），miss 時才呼叫 Gemini（靈活但慢）。
+    當 segmentation 找不到目標物件（mask 過小）時，
+    請 Gemini Vision 直接給出物件的 bounding box，用來生成 mask。
     """
-    if not text:
-        return []
+    from PIL import Image, ImageDraw, ImageFilter
 
-    # 1. 關鍵字字典（本地，0ms）
-    labels = []
-    for zh, segs in _ZH_TO_SEG_LABELS.items():
-        if zh in text:
-            labels.extend(segs)
-    if labels:
-        print(f"[adjuster] keyword extracted labels: {labels}")
-        return labels
+    prompt = f"""Look at this interior design image.
+Find the "{target_object}" in the image.
+Return ONLY valid JSON with the bounding box as fractions of image dimensions (0.0 to 1.0):
+{{"x1": 0.3, "y1": 0.2, "x2": 0.6, "y2": 0.5}}
+Where x1,y1 is top-left corner and x2,y2 is bottom-right corner.
+If the object is not visible in the image, return: {{"not_found": true}}"""
 
-    # 2. Gemini（關鍵字 miss 時才呼叫）
     try:
         from designbridge.llm import call_llm
-        result = call_llm(
-            f"From this interior design modification request, extract the names of objects/furniture "
-            f"that need to be modified. Return ONLY a comma-separated list of English nouns "
-            f"(e.g. sofa, curtain, chair). If unclear, return: furniture\n\nRequest: {text}",
-            max_tokens=40,
-        )
-        labels = [l.strip().lower() for l in result.split(",") if l.strip()]
-        if labels:
-            print(f"[adjuster] Gemini extracted labels: {labels}")
-            return labels
-    except Exception:
-        pass
+        raw = call_llm(prompt, images=[image_path], max_tokens=60, temperature=0.0)
+        raw = raw.strip()
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        bbox = json.loads(raw.strip())
+        if bbox.get("not_found"):
+            print(f"[adjuster] vision bbox: '{target_object}' not found in image")
+            return None
+        w, h = img_size
+        x1 = int(bbox["x1"] * w)
+        y1 = int(bbox["y1"] * h)
+        x2 = int(bbox["x2"] * w)
+        y2 = int(bbox["y2"] * h)
+        mask = Image.new("L", img_size, 0)
+        draw = ImageDraw.Draw(mask)
+        draw.rectangle([x1, y1, x2, y2], fill=255)
+        mask = mask.filter(ImageFilter.MaxFilter(21))
+        print(f"[adjuster] vision bbox: '{target_object}' at ({x1},{y1})-({x2},{y2})")
+        return mask
+    except Exception as e:
+        print(f"[adjuster] _bbox_mask_from_vision failed ({e})")
+        return None
 
-    return []
+
+def analyze_edit_intent(
+    text: str,
+    image_path: str,
+    seg_meta_path: str | None,
+) -> dict:
+    """
+    用 Gemini Vision 同時判斷：
+    - action: remove / replace / modify_style / add
+    - seg_labels: 要操作的物件（從圖中已偵測到的 present_labels 中選）
+    - replace_with: 若 action=replace，描述替換目標
+
+    比起純字典比對，能正確處理位置語境（「床上電腦」→ target=laptop, not bed）
+    和任意自然語言 prompt。
+    """
+    # 讀取圖中實際偵測到的物件清單，讓 LLM 從真實存在的 label 中選
+    available_labels: list[str] = []
+    if seg_meta_path and Path(seg_meta_path).is_file():
+        with open(seg_meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        labels_dict = meta.get("present_labels") or meta.get("labels") or {}
+        available_labels = list(labels_dict.values())
+
+    labels_hint = f"Objects detected in the image: {available_labels}" if available_labels else ""
+
+    prompt = f"""You are an interior design AI assistant.
+Analyze this modification request and return JSON only (no markdown, no explanation).
+
+User request: "{text}"
+{labels_hint}
+
+Return this exact JSON:
+{{
+  "action": "remove",
+  "seg_labels": ["<label>"],
+  "replace_with": null
+}}
+
+Where action must be one of: remove | replace | modify_style | add
+- remove: 移除/刪除/去除/拿掉/清除/刪掉
+- replace: 換掉/換成/改成/替換/換一個
+- modify_style: 改顏色/改風格/換材質/換色
+- add: 加入/添加/放一個/增加
+
+seg_labels rules:
+- Pick the TARGET OBJECT being modified, NOT its location.
+  Example: "移除床上電腦" → ["laptop"] not ["bed"]
+- If the object appears in the detected list, use that exact label name.
+- If not in the list, use the best English noun (e.g. "laptop", "computer").
+
+replace_with: describe the new object only if action=replace, else null."""
+
+    try:
+        from designbridge.llm import call_llm
+        images = [image_path] if image_path and Path(image_path).is_file() else None
+        raw = call_llm(prompt, images=images, max_tokens=150, temperature=0.0)
+        raw = raw.strip()
+        # 去掉 LLM 可能包的 markdown fence
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        result = json.loads(raw.strip())
+        action      = result.get("action", "modify_style")
+        seg_labels  = [l.lower() for l in (result.get("seg_labels") or []) if l]
+        replace_with = result.get("replace_with")
+        print(f"[adjuster] vision intent → action={action}  seg_labels={seg_labels}")
+        return {"action": action, "seg_labels": seg_labels, "replace_with": replace_with}
+    except Exception as e:
+        print(f"[adjuster] analyze_edit_intent failed ({e}), fallback to modify_style")
+        return {"action": "modify_style", "seg_labels": [], "replace_with": None}
 
 
 def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
@@ -423,21 +504,38 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
                     and Path(str(seg_meta)).is_file())
     print(f"[adjuster] seg_path: {seg_path}  exists={has_seg}")
 
+    edit_action      = None   # 由 analyze_edit_intent 填入（無手繪遮罩時）
+    replace_with     = None
+    effective_labels: list[str] = []
+
     if manual_mask_path and Path(str(manual_mask_path)).is_file():
         drawn_mask = load_mask_from_path(str(manual_mask_path), img_size)
-        if has_seg:
-            # 方式二：手繪 → 自動展開成完整物件遮罩
-            mask = expand_mask_by_segmentation(
+
+        # 優先用 SAM 2 取得實例層級精確遮罩
+        sam2_mask, sam2_ok = generate_mask_with_sam2(image_path, drawn_mask, img_size)
+        if sam2_ok:
+            mask = sam2_mask
+            mask_source = "sam2_instance"
+            seg_labels = []
+            print("[adjuster] mask source: SAM 2 instance segmentation")
+        elif has_seg:
+            # SAM 2 失敗 → fallback：手繪 + UPerNet 展開
+            mask, seg_labels = expand_mask_by_segmentation(
                 drawn_mask, str(seg_path), str(seg_meta), img_size
             )
             mask_source = "manual_expanded_by_seg"
         else:
             mask = drawn_mask
             mask_source = "manual_drawing"
+            seg_labels = []
     else:
-        # 從 text_prompt 解析目標物件
-        text_labels = _labels_from_prompt(user_input.get("text_prompt") or "")
-        effective_labels = text_labels or target_labels
+        # Gemini Vision 判斷意圖：物件目標 + 動作類型
+        text_prompt = user_input.get("text_prompt") or ""
+        intent       = analyze_edit_intent(text_prompt, image_path, str(seg_meta) if seg_meta else None)
+        edit_action  = intent["action"]
+        seg_labels   = intent["seg_labels"]
+        replace_with = intent["replace_with"]
+        effective_labels = seg_labels or target_labels
         print(f"[adjuster] effective_labels: {effective_labels}")
         if has_seg:
             mask = mask_from_segmentation(str(seg_path), str(seg_meta), effective_labels, img_size)
@@ -449,21 +547,104 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     # Prompt 組裝：使用者輸入 text_prompt 為主，風格資訊為輔
     user_text = (user_input.get("text_prompt") or "").strip()
     auto_prompt, negative_prompt = build_inpaint_prompt(req, style_params, target_objects)
+
+    # 純移除動作詞集合
+    _REMOVAL_ACTIONS = {"刪除", "移除", "去除", "清除", "刪掉", "拿掉"}
+
+    # 動作詞對照表：中文 → 英文 inpainting 指令模板
+    _ACTION_TEMPLATES = {
+        "刪除":  "Remove the {obj} completely. {fill}",
+        "移除":  "Remove the {obj} completely. {fill}",
+        "去除":  "Remove the {obj} completely. {fill}",
+        "清除":  "Remove the {obj} completely. {fill}",
+        "刪掉":  "Remove the {obj} completely. {fill}",
+        "拿掉":  "Remove the {obj} completely. {fill}",
+        "換掉":  "Replace the {obj} with a suitable alternative that matches the room style",
+        "換一個": "Replace the {obj} with a suitable alternative that matches the room style",
+    }
+
+    # 物件移除後的背景填補描述（依物件類型決定填什麼）
+    _OBJ_FILL_CONTEXT: dict[str, str] = {
+        "lamp":                "Fill with clean ceiling surface matching the surrounding texture and color",
+        "light":               "Fill with clean ceiling surface matching the surrounding texture and color",
+        "chandelier":          "Fill with clean ceiling surface matching the surrounding texture and color",
+        "pendant":             "Fill with clean ceiling surface matching the surrounding texture and color",
+        "sconce":              "Fill with clean wall surface matching the surrounding",
+        "sofa":                "Fill with clean floor surface matching the surrounding floor material",
+        "couch":               "Fill with clean floor surface matching the surrounding floor material",
+        "chair":               "Fill with clean floor surface matching the surrounding floor material",
+        "table":               "Fill with clean floor surface matching the surrounding floor material",
+        "desk":                "Fill with clean floor surface matching the surrounding floor material",
+        "coffee table":        "Fill with clean floor surface matching the surrounding floor material",
+        "television receiver": "Fill with clean wall surface matching the surrounding wall color",
+        "tv":                  "Fill with clean wall surface matching the surrounding wall color",
+        "monitor":             "Fill with clean wall surface matching the surrounding wall color",
+        "plant":               "Fill with clean floor area matching the surrounding",
+        "potted plant":        "Fill with clean floor area matching the surrounding",
+        "curtain":             "Fill with a clear window showing natural light",
+        "rug":                 "Fill with clean floor surface matching the surrounding floor material",
+        "carpet":              "Fill with clean floor surface matching the surrounding floor material",
+        "shelf":               "Fill with clean wall surface matching the surrounding wall color",
+        "bookcase":            "Fill with clean wall surface matching the surrounding wall color",
+    }
+
+    # 根據 seg_labels 取得最相關的填補描述
+    def _get_fill_context(labels: list[str]) -> str:
+        for lbl in labels:
+            for key, ctx in _OBJ_FILL_CONTEXT.items():
+                if key in lbl.lower() or lbl.lower() in key:
+                    return ctx
+        return "Fill with background that seamlessly blends with the surrounding environment"
+
+    # 判斷是否為純移除任務
+    # 無手繪遮罩：用 Vision 意圖分析結果；有手繪遮罩：fallback 到動作詞比對
+    if edit_action is not None:
+        is_removal = (edit_action == "remove")
+    else:
+        is_removal = any(a in user_text for a in _REMOVAL_ACTIONS)
+
+    # 設定 fal.ai 推理參數
+    # 移除任務：更多步數（細節更好）+ 較低 guidance（讓背景填補更自然）
+    # 顏色/風格修改：標準步數 + 較高 guidance（prompt 跟隨更準）
+    fal_num_steps     = 50  if is_removal else 28
+    fal_guidance      = 3.0 if is_removal else 5.0
+
     if user_text:
-        # 嘗試用 Gemini 翻譯成英文（FLUX 效果更好），失敗就直接用原文
-        en_text = user_text
-        try:
-            from designbridge.llm import call_llm
-            translated = call_llm(
-                f"Translate this interior design modification request to English in one sentence. "
-                f"Return ONLY the translation, no extra words.\n\n{user_text}",
-                max_tokens=60,
-            )
-            if translated.strip():
-                en_text = translated.strip()
-                print(f"[adjuster] translated prompt: {en_text}")
-        except Exception:
-            pass
+        # 若 user_text 是純動作詞，補上 segmentation 偵測到的物件名稱 + 背景填補描述
+        action_en = None
+        for zh_action, template in _ACTION_TEMPLATES.items():
+            if user_text.strip() == zh_action:
+                obj_name = seg_labels[0] if seg_labels else "object"
+                fill_ctx = _get_fill_context(seg_labels) if is_removal else ""
+                action_en = template.format(obj=obj_name, fill=fill_ctx).strip()
+                print(f"[adjuster] vague prompt '{user_text}' → auto-completed: {action_en}")
+                break
+
+        if action_en:
+            en_text = action_en
+        else:
+            # 嘗試用 Gemini 翻譯成英文（FLUX 效果更好），失敗就直接用原文
+            en_text = user_text
+            try:
+                from designbridge.llm import call_llm
+                obj_hint = f" The selected object is: {seg_labels[0]}." if seg_labels else ""
+                translated = call_llm(
+                    f"Translate this interior design modification request to English in one sentence.{obj_hint} "
+                    f"Return ONLY the translation, no extra words.\n\n{user_text}",
+                    max_tokens=120,
+                )
+                t = translated.strip()
+                # 至少 2 個英文字，且不以虛詞結尾（避免截斷的不完整翻譯）
+                _incomplete_endings = {"a", "an", "the", "to", "of", "with", "and", "from", "in", "on", "at", "by", "for", "into", "onto"}
+                last_word = t.rstrip(".").split()[-1].lower() if t else ""
+                if t and len(t.split()) >= 2 and last_word not in _incomplete_endings:
+                    en_text = t
+                    print(f"[adjuster] translated prompt: {en_text}")
+                else:
+                    print(f"[adjuster] translation rejected ('{t}'), using original: {user_text}")
+            except Exception:
+                pass
+
         prompt = f"{en_text}. Photorealistic, high quality, seamless integration, well-lit interior."
     else:
         prompt = auto_prompt
@@ -474,6 +655,18 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     print(f"[adjuster] prompt: {prompt[:120]}")
     print(f"[adjuster] mask: {mask_white}/{mask_total} white px ({mask_white/mask_total:.1%} edit area)" if mask_total > 0 else "[adjuster] mask: unknown")
     print(f"[adjuster] mask_source: {mask_source}")
+
+    # mask 覆蓋率過低（< 2%）且無手繪遮罩：改用 Vision bbox 定位
+    if (edit_action is not None and mask_total > 0
+            and mask_white / mask_total < 0.02):
+        target_name = (effective_labels or seg_labels or ["object"])[0]
+        print(f"[adjuster] mask too small ({mask_white/mask_total:.1%}), trying vision bbox for '{target_name}'")
+        bbox_mask = _bbox_mask_from_vision(image_path, target_name, img_size)
+        if bbox_mask is not None:
+            mask = bbox_mask
+            mask_source = f"vision_bbox({target_name})"
+            mask_white = sum(1 for p in mask.getdata() if p > 128)
+            print(f"[adjuster] bbox mask: {mask_white}/{mask_total} white px ({mask_white/mask_total:.1%})")
 
     # DRY_RUN 模式：只存遮罩，不呼叫任何 inpainting API（測試用）
     import os
@@ -497,23 +690,30 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     out_path = Path(Config.ARTIFACTS_DIR) / "render" / f"{task_id}_{render_suffix}.png"
     backend = "placeholder"
 
-    # 1. fal.ai FLUX.1-Fill（最優先，品質最好）
-    if Config.FAL_KEY:
-        if run_fal_inpainting(image_path, mask, prompt, out_path):
+    # 1. LaMa（純移除任務：背景重建最穩定）
+    if is_removal:
+        if run_lama_inpainting(image_path, mask, out_path):
+            backend = "lama_inpainting"
+
+    # 2. fal.ai FLUX.1-Fill（修改任務，或 LaMa 失敗時的 fallback）
+    if backend == "placeholder" and Config.FAL_KEY:
+        print(f"[adjuster] task={'removal' if is_removal else 'modification'}  steps={fal_num_steps}  guidance={fal_guidance}")
+        if run_fal_inpainting(image_path, mask, prompt, out_path,
+                              num_steps=fal_num_steps, guidance_scale=fal_guidance):
             backend = "fal_inpainting"
 
-    # 2. HF Inference API
+    # 4. HF Inference API
     if backend == "placeholder" and Config.HF_TOKEN:
         if run_hf_inpainting(image_path, mask, prompt, out_path):
             backend = "hf_inpainting"
 
-    # 3. 本地 SD Inpainting
+    # 5. 本地 SD Inpainting
     if backend == "placeholder":
         if run_inpainting(image_path, mask, prompt, negative_prompt, strength, out_path,
                           mask_path=manual_mask_path):
             backend = "sd_inpainting"
 
-    # 4. Fallback：複製原圖
+    # 6. Fallback：複製原圖
     if backend == "placeholder":
         out_path.parent.mkdir(parents=True, exist_ok=True)
         original_img.save(str(out_path))
@@ -865,3 +1065,23 @@ def clip_evaluator_node(state: DesignBridgeState) -> dict[str, Any]:
         result = {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": f"CLIP evaluation failed: {e}", "issues_found": [], "suggestions": []}
 
     return {"evaluation_result": result}
+
+
+def quotation_agent(state: DesignBridgeState) -> dict[str, Any]:
+    """分析生成圖中的家具並對應 IKEA 商品給出報價。"""
+    image_path = state.get("generated_image")
+    req = state.get("structured_requirement") or {}
+
+    if not image_path or not Path(image_path).is_file():
+        return {"quotation_result": None}
+
+    try:
+        from designbridge.quotation import build_quotation
+        result = build_quotation(image_path, req)
+        total = len(result["furniture_list"])
+        matched = result["kb_match_count"]
+        print(f"[quotation] KB match: {matched}/{total} items")
+        return {"quotation_result": result}
+    except Exception as e:
+        print(f"[quotation] failed: {e}")
+        return {"quotation_result": None}

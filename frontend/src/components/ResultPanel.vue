@@ -1,11 +1,37 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, reactive, watch } from 'vue'
 
 const refExpanded = ref(true)
 
 const props = defineProps({
   result:  { type: Object,  default: null },
   loading: { type: Boolean, default: false },
+})
+
+// 估價候選選擇狀態（每件家具當前選中的候選 index）
+const selectedCandidates = reactive({})
+
+watch(
+  () => props.result?.quotation_result?.furniture_list,
+  (list) => {
+    if (list) {
+      list.forEach((_, idx) => {
+        selectedCandidates[idx] = 0
+      })
+    }
+  },
+  { immediate: true },
+)
+
+// 動態計算總預算（依各品項已選候選）
+const computedTotal = computed(() => {
+  const list = props.result?.quotation_result?.furniture_list
+  if (!list) return 0
+  return list.reduce((sum, item, idx) => {
+    const ci = selectedCandidates[idx] ?? 0
+    const c = item.candidates?.[ci]
+    return sum + (c?.price ?? 0)
+  }, 0)
 })
 
 const spatialLevelColor = computed(() => {
@@ -148,10 +174,6 @@ const styleReferenceImageUrl = computed(() => {
             <span class="req-value">{{ Number(result.structured_requirement.edit_scope.scope_value).toFixed(1) }}</span>
           </div>
         </div>
-        <details class="json-details">
-          <summary>完整 JSON</summary>
-          <pre>{{ JSON.stringify(result.structured_requirement, null, 2) }}</pre>
-        </details>
       </div>
 
       <!-- 風格參數 -->
@@ -174,10 +196,6 @@ const styleReferenceImageUrl = computed(() => {
         <div v-if="result.style_params.semantic_tags?.length" class="style-tags">
           <span v-for="tag in result.style_params.semantic_tags" :key="tag" class="tag">{{ tag }}</span>
         </div>
-        <details class="json-details">
-          <summary>完整 style_params JSON</summary>
-          <pre>{{ JSON.stringify(result.style_params, null, 2) }}</pre>
-        </details>
       </div>
       <div v-else-if="result.render_result?.generation_params?.gemini_style_description" class="card card-style">
         <h3 class="card-title">套用風格參數</h3>
@@ -193,34 +211,67 @@ const styleReferenceImageUrl = computed(() => {
       </div>
 
 
-      <!-- Evaluation Result -->
-      <div v-if="result.evaluation_result" class="result-section">
-        <h3>Evaluation Result</h3>
-        <div class="req-grid">
-          <div class="req-item" v-if="result.evaluation_result.decision">
-            <span class="req-label">Decision</span>
-            <span class="req-value">{{ result.evaluation_result.decision }}</span>
+      <!-- 家具估價 -->
+      <div v-if="result.quotation_result" class="result-section quotation-section">
+        <h3 class="quotation-title">
+          家具估價
+          <span class="ikea-badge">IKEA 台灣</span>
+        </h3>
+
+        <!-- 每件偵測到的家具 -->
+        <div
+          v-for="(item, idx) in result.quotation_result.furniture_list"
+          :key="idx"
+          class="furniture-row"
+        >
+          <div class="furniture-label">{{ item.detected_name }}</div>
+          <div class="candidates-row">
+            <div
+              v-for="(c, ci) in item.candidates"
+              :key="ci"
+              :class="['candidate-card', (selectedCandidates[idx] ?? 0) === ci ? 'selected' : '']"
+              @click="selectedCandidates[idx] = ci"
+            >
+              <div class="candidate-img-wrap">
+                <img v-if="c.product_image_url" :src="c.product_image_url" class="candidate-img" />
+                <div v-else class="candidate-img-placeholder">無圖</div>
+              </div>
+              <div class="candidate-name">{{ c.name }}</div>
+              <div class="candidate-price">NT$ {{ c.price.toLocaleString() }}</div>
+              <div v-if="c.similarity > 0" class="candidate-sim">
+                相似度 {{ (c.similarity * 100).toFixed(0) }}%
+              </div>
+              <a
+                v-if="c.purchase_url"
+                :href="c.purchase_url"
+                target="_blank"
+                rel="noopener"
+                class="candidate-buy"
+                @click.stop
+              >購買</a>
+            </div>
           </div>
-          <div class="req-item" v-if="result.evaluation_result.weighted_score !== undefined">
-            <span class="req-label">Weighted Score</span>
-            <span class="req-value">{{ result.evaluation_result.weighted_score }}</span>
+        </div>
+
+        <!-- 動態預算 -->
+        <div class="budget-row">
+          <div class="budget-card mid selected-budget">
+            <span class="budget-label">目前選擇預算</span>
+            <span class="budget-val">NT$ {{ computedTotal.toLocaleString() }}</span>
+          </div>
+          <div class="budget-card low">
+            <span class="budget-label">低預算參考</span>
+            <span class="budget-val">NT$ {{ result.quotation_result.total_low.toLocaleString() }}</span>
+          </div>
+          <div class="budget-card high">
+            <span class="budget-label">高規格參考</span>
+            <span class="budget-val">NT$ {{ result.quotation_result.total_high.toLocaleString() }}</span>
           </div>
         </div>
-        <div v-if="result.evaluation_result.feedback" class="eval-feedback">
-          {{ result.evaluation_result.feedback }}
-        </div>
-        <div v-if="Object.keys(result.evaluation_result.scores || {}).length" class="eval-scores">
-          <div v-for="(val, key) in result.evaluation_result.scores" :key="key" class="score-row">
-            <span class="score-key">{{ key }}</span>
-            <span class="score-val">{{ val }}</span>
-          </div>
-        </div>
-        <div v-if="result.evaluation_result.suggestions?.length" class="eval-suggestions">
-          <p class="req-label">Suggestions</p>
-          <ul>
-            <li v-for="(s, i) in result.evaluation_result.suggestions" :key="i">{{ s }}</li>
-          </ul>
-        </div>
+
+        <p class="quotation-note">
+          * 點選卡片可切換商品，總預算自動更新。{{ result.quotation_result.kb_match_count }}/{{ result.quotation_result.furniture_list.length }} 件成功向量比對 IKEA，其餘為 AI 估算。
+        </p>
       </div>
 
     </div>
@@ -507,12 +558,6 @@ const styleReferenceImageUrl = computed(() => {
 
 .muted-text { font-size: 0.875rem; color: var(--text-3); }
 
-.eval-feedback { font-size: 0.875rem; color: #b05520; background: #fff5ee; border: 1px solid #f0c8a0; border-radius: 8px; padding: 0.6rem 0.9rem; margin: 0.5rem 0; line-height: 1.5; }
-.eval-scores   { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.5rem 0; }
-.score-row     { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 0.25rem 0.5rem; background: var(--primary-light); border-radius: 6px; }
-.score-key     { color: #8B5E3C; font-weight: 600; }
-.score-val     { color: #5c3d24; font-weight: 700; }
-.eval-suggestions ul { margin: 0.3rem 0 0 1.2rem; padding: 0; font-size: 0.85rem; color: #6b4a28; line-height: 1.7; }
 .result-section { background: rgba(255,250,243,0.82); border: 1px solid #ddd0c0; border-radius: var(--radius-lg); padding: 1.25rem 1.5rem; }
 
 .gemini-desc {
@@ -522,19 +567,80 @@ const styleReferenceImageUrl = computed(() => {
   margin: 0;
 }
 
-
-.json-details { margin-top: 0.5rem; }
-.json-details summary { cursor: pointer; font-size: 0.78rem; color: var(--primary); font-weight: 600; user-select: none; padding: 0.25rem 0; }
-.json-details summary:hover { color: var(--primary-hover); }
-
-pre {
-  background: var(--primary-subtle);
-  padding: 0.9rem 1rem;
-  border-radius: var(--radius-md);
-  overflow-x: auto;
-  font-size: 0.78rem;
-  line-height: 1.6;
-  color: var(--text-2);
-  margin-top: 0.5rem;
+/* ── Quotation ── */
+.quotation-section { display: flex; flex-direction: column; gap: 1.1rem; }
+.quotation-title {
+  font-size: 0.85rem; font-weight: 700; color: var(--text-2);
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  margin-bottom: 0.1rem;
 }
+.ikea-badge {
+  background: #0058a3; color: #fff;
+  padding: 0.15rem 0.6rem; border-radius: 99px; font-size: 0.7rem; font-weight: 700;
+}
+
+/* Furniture row */
+.furniture-row { display: flex; flex-direction: column; gap: 0.5rem; }
+.furniture-label {
+  font-size: 0.78rem; font-weight: 700; color: var(--text-2);
+  padding: 0 0.1rem;
+}
+
+/* Candidates */
+.candidates-row {
+  display: flex; gap: 0.6rem; overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+.candidate-card {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  min-width: 120px; max-width: 150px; flex-shrink: 0;
+  border: 1.5px solid #e0d8cc;
+  border-radius: var(--radius-md);
+  padding: 0.6rem;
+  cursor: pointer;
+  background: rgba(255,255,255,0.7);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.candidate-card:hover {
+  border-color: var(--primary-border);
+  box-shadow: 0 2px 8px rgba(180,140,100,0.15);
+}
+.candidate-card.selected {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  box-shadow: 0 0 0 2px var(--primary-border);
+}
+.candidate-img-wrap {
+  width: 100%; aspect-ratio: 1;
+  background: #f5f0ea;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.candidate-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.candidate-img-placeholder { font-size: 0.65rem; color: var(--text-4); }
+.candidate-name { font-size: 0.72rem; color: var(--text-2); line-height: 1.3; }
+.candidate-price { font-size: 0.82rem; font-weight: 800; color: var(--text-1); }
+.candidate-sim { font-size: 0.65rem; color: var(--text-3); }
+.candidate-buy {
+  font-size: 0.72rem; font-weight: 700; color: #0058a3;
+  text-decoration: none; margin-top: auto;
+}
+.candidate-buy:hover { text-decoration: underline; }
+
+/* Budget */
+.budget-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.budget-card {
+  flex: 1; min-width: 120px; border-radius: var(--radius-md); padding: 0.75rem 1rem;
+  display: flex; flex-direction: column; gap: 0.25rem; text-align: center;
+}
+.budget-card.low  { background: #f5f5f5; border: 1px solid #e0e0e0; }
+.budget-card.mid  { background: var(--primary-light); border: 2px solid var(--primary-border); }
+.budget-card.high { background: #fff8e8; border: 1px solid #f0d890; }
+.selected-budget  { order: -1; }
+.budget-label { font-size: 0.7rem; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; }
+.budget-val   { font-size: 1rem; font-weight: 800; color: var(--text-1); white-space: nowrap; }
+.budget-card.mid .budget-val { color: var(--primary); }
+
+.quotation-note { font-size: 0.75rem; color: var(--text-4); line-height: 1.5; margin: 0; }
 </style>

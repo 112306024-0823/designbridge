@@ -170,7 +170,7 @@ const emit = defineEmits(['submit', 'mask-ready', 'retry-style-options'])
               <span class="score">{{ (matchedStylePreview.similarity * 100).toFixed(0) }}%</span>
             </div>
             <img
-              :src="`http://localhost:8000${matchedStylePreview.image_url}`"
+              :src="matchedStylePreview.image_url?.startsWith('http') ? matchedStylePreview.image_url : `http://localhost:8000${matchedStylePreview.image_url}`"
               alt="風格參考圖"
               @error="$event.target.style.display='none'"
             />

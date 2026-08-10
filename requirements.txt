@@ -26,8 +26,7 @@ uvicorn
 python-dotenv>=1.0.0
 python-multipart
 
-# LLM proxy
-litellm>=1.40.0
+# Grok (xAI) OpenAI-compatible client
 openai
 
 # Supabase (vector search + storage)
