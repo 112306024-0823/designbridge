@@ -63,7 +63,7 @@ def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     task_id = state.get("task_id") or str(uuid.uuid4())
     iteration = state.get("iteration", 0)
 
-    # Try LLM (via LiteLLM) first, fall back to passing prompt directly on failure
+    # Try LLM (Gemini) first, fall back to passing prompt directly on failure
     try:
         structured_requirement = _call_llm_requirement_analyzer(
             text_prompt, edit_scope, initial_image,
@@ -234,7 +234,7 @@ def _route_decision(state: DesignBridgeState) -> RoutingDecision:
 
 def design_director(state: DesignBridgeState) -> dict[str, Any]:
     """
-    動態調度：ENABLE_DYNAMIC_ROUTING=true 時由 LLM（LiteLLM / xAI Grok / Gemini，依 llm.py 優先序）讀 SKILL.md 決策；
+    動態調度：ENABLE_DYNAMIC_ROUTING=true 時由 LLM（Gemini）讀 SKILL.md 決策；
     否則使用原本的 rule-based routing。任何 LLM 失敗都自動 fallback。
     細部微調模式（refine_mode=True）直接強制 routing 到 design_adjuster。
     優先使用 requirement_analyzer 已由 LLM 決定的 routing_decision（語意理解）。
@@ -252,7 +252,7 @@ def design_director(state: DesignBridgeState) -> dict[str, Any]:
     if Config.get_dynamic_routing_enabled():
         try:
             from designbridge.router import call_llm_router, RouterLLMError
-            # Auth is resolved inside designbridge.llm (LiteLLM / xAI / Gemini).
+            # Auth is resolved inside designbridge.llm (Gemini).
             routing_decision = call_llm_router(
                 structured_requirement=state.get("structured_requirement") or {},
                 vision_features=state.get("vision_features") or {},

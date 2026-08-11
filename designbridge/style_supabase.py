@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-_embedding_model = None
 _text_embedding_model = None
 _supabase_client = None
 
@@ -29,14 +28,6 @@ _STYLE_PROMPTS: dict[str, dict[str, str]] = {
     "luxury":     {"positive": "luxury high-end interior, marble, gold accents, velvet, opulent, photorealistic, high quality", "negative": "minimalist, rustic, budget"},
     "neoclassic": {"positive": "neoclassical interior, elegant columns, symmetry, refined details, warm tones, photorealistic, high quality", "negative": "minimalist, industrial, rustic"},
 }
-
-
-def _get_embedding_model():
-    global _embedding_model
-    if _embedding_model is None:
-        from sentence_transformers import SentenceTransformer
-        _embedding_model = SentenceTransformer("clip-ViT-B-32")
-    return _embedding_model
 
 
 def _get_text_embedding_model():
@@ -136,47 +127,15 @@ def query_style_images_supabase(
     text_query: str,
     style_id: str | None = None,
     top_k: int = 3,
-    retrieval_mode: str = "text-to-image",
 ) -> list[SupabaseStyleResult]:
-    """Search style images by text query.
-
-    retrieval_mode:
-    - text-to-image: query text embedding vs image embeddings in pgvector (RPC).
-    - text-to-text: query text embedding vs style_kb text synthesized from JSON.
-    """
+    """Search style images by text query (text-to-text: query text embedding vs
+    style_kb text synthesized from JSON)."""
     q = text_query.strip() or style_id or "interior design"
-    mode = (retrieval_mode or "text-to-image").strip().lower()
-    if mode not in {"text-to-image", "text-to-text"}:
-        mode = "text-to-image"
-
-    if mode == "text-to-text":
-        return _query_style_text_to_text(
-            text_query=q,
-            style_id=style_id,
-            top_k=top_k,
-        )
-
-    model = _get_embedding_model()
-    embedding = model.encode(q, normalize_embeddings=True).tolist()
-    client = _get_supabase()
-    res = client.rpc("query_style_full", {
-        "query_embedding": embedding,
-        "filter_style_id": style_id or "",
-        "top_k": top_k,
-    }).execute()
-    if not res.data:
-        return []
-    results = []
-    for row in res.data:
-        style_name = (row.get("source_meta") or {}).get("style", row["style_id"])
-        results.append(SupabaseStyleResult(
-            style_id=row["style_id"],
-            image_url=row["image_url"],
-            style_name=style_name,
-            similarity=round(float(row["similarity"]), 4),
-        ))
-    _batch_load_style_kb(client, results)
-    return results
+    return _query_style_text_to_text(
+        text_query=q,
+        style_id=style_id,
+        top_k=top_k,
+    )
 
 
 def _compose_style_kb_text(row: dict[str, Any]) -> str:

@@ -4,9 +4,8 @@ Shifts cold-load cost from the first style search or first pipeline run to serve
 Controlled by ``DESIGNBRIDGE_STARTUP_WARMUP``:
 
 - ``off`` / ``0`` / ``false``: skip warmup
-- ``min`` (default): Supabase image-query embedder (CLIP via sentence-transformers),
-  local Chroma + MiniLM if the vector store exists, and pipeline CLIP (transformers)
-- ``full``: ``min`` plus the text-to-text embedding model (e.g. bge-m3)
+- ``min`` (default): local Chroma + MiniLM if the vector store exists,
+  pipeline CLIP (transformers), and the text-to-text style embedder (e.g. bge-m3)
 
 Each step is isolated: a failure in one step does not block the others.
 """
@@ -22,8 +21,7 @@ def run_startup_warmup() -> None:
     if raw in ("0", "false", "off", "no", "none", "skip"):
         return
 
-    mode = "full" if raw in ("full", "all", "1", "true", "yes") else "min"
-    print(f"DesignBridge startup warmup (mode={mode})…", flush=True)
+    print("DesignBridge startup warmup…", flush=True)
 
     def _step(name: str, fn) -> None:
         try:
@@ -31,11 +29,6 @@ def run_startup_warmup() -> None:
             print(f"  ✓ {name}", flush=True)
         except Exception as e:
             print(f"  ⚠ {name} skipped: {e}", flush=True)
-
-    def _warm_supabase_clip() -> None:
-        from designbridge.style_supabase import _get_embedding_model
-
-        _get_embedding_model()
 
     def _warm_chroma() -> None:
         from designbridge.style_vector import warmup_vector_collection
@@ -52,11 +45,8 @@ def run_startup_warmup() -> None:
 
         _get_text_embedding_model()
 
-    _step("Supabase style CLIP embedder (sentence-transformers)", _warm_supabase_clip)
     _step("Local Chroma vector store (if ready)", _warm_chroma)
     _step("Pipeline CLIP evaluator (transformers)", _warm_clip_eval)
-
-    if mode == "full":
-        _step("Text-to-text style embedder (sentence-transformers)", _warm_text_embedder)
+    _step("Text-to-text style embedder (sentence-transformers)", _warm_text_embedder)
 
     print("DesignBridge startup warmup done.", flush=True)

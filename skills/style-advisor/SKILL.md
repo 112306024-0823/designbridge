@@ -35,7 +35,6 @@ metadata:
   "user_input": {
     "text_prompt": "optional-使用者文字需求（用於向量檢索）",
     "style_profile_id": "optional-指定 style_id（例如 nordic / modern...；auto 時視同未指定）",
-    "style_retrieval_mode": "optional-text-to-image|text-to-text（預設 text-to-image，可由環境變數覆寫）",
     "no_style_reference": false
   }
 }

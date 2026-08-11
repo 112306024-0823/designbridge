@@ -19,15 +19,7 @@ class Config:
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
     GEMINI_TEMPERATURE: float = 0.3
 
-
-    # xAI Grok — independent OpenAI-compatible client, key: GROK_API_KEY or XAI_API_KEY.
-    XAI_MODEL: str = os.getenv("DESIGNBRIDGE_XAI_MODEL", "grok-3")
-    XAI_BASE_URL: str = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1")
-    XAI_API_KEY: str = os.getenv("GROK_API_KEY")
-
-    # Style retrieval mode for Supabase reference search: "text-to-image" | "text-to-text"
-    STYLE_RETRIEVAL_MODE: str = os.getenv("DESIGNBRIDGE_STYLE_RETRIEVAL_MODE", "text-to-image")
-    # Text-only embedding model for text-to-text style retrieval.
+    # Text embedding model for style retrieval (text-to-text).
     TEXT_EMBEDDING_MODEL: str = os.getenv("DESIGNBRIDGE_TEXT_EMBEDDING_MODEL", "BAAI/bge-m3")
 
     @classmethod
@@ -35,9 +27,6 @@ class Config:
         return os.getenv("DESIGNBRIDGE_ENABLE_DYNAMIC_ROUTING", "false").lower() in ("1", "true", "yes")
 
     ROUTER_TEMPERATURE: float = float(os.getenv("DESIGNBRIDGE_ROUTER_TEMPERATURE", "0.0"))
-
-    LITELLM_MODEL: str = os.getenv("LITELLM_MODEL", "gemini/gemini-2.5-flash-lite")
-    LITELLM_FALLBACK_MODEL: str = os.getenv("LITELLM_FALLBACK_MODEL", "gemini/gemini-2.5-flash-lite")
 
     # Image generation (Imagen) - same API key as Gemini; requires billing
     IMAGEN_MODEL: str = os.getenv("DESIGNBRIDGE_IMAGEN_MODEL", "imagen-4.0-generate-001")
@@ -119,8 +108,3 @@ class Config:
         raise ValueError(
             "GEMINI_API_KEY not set. Please set it in config.py or as environment variable."
         )
-
-    @classmethod
-    def get_xai_api_key(cls) -> str | None:
-        """xAI API key for Grok. Prefer GROK_API_KEY, accept XAI_API_KEY alias."""
-        return os.getenv("GROK_API_KEY") or os.getenv("XAI_API_KEY")
