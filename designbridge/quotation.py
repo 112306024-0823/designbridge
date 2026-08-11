@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -155,10 +156,90 @@ def _estimate_price_llm(name_zh: str) -> int:
 
 # ── Main build function ────────────────────────────────────────────────────────
 
+def _process_furniture_item(raw: dict, img: Any) -> tuple[FurnitureItem, bool]:
+    """Resolve one detected furniture item to KB candidates. Returns (item, matched_kb).
+
+    Independent per item (own crop/embedding/DB lookup), so build_quotation runs
+    this concurrently across all detected items instead of one at a time.
+    """
+    from designbridge.furniture_kb import find_top_k_by_embedding, search_kb
+
+    name_zh: str = raw.get("name_zh") or raw.get("name_en") or "家具"
+    category: str = raw.get("category") or ""
+    bbox_ratio: list[float] = raw.get("bbox") or []
+
+    candidates: list[FurnitureCandidate] = []
+    matched_kb = False
+
+    # shelf → storage（爬蟲分類統一用 storage）
+    if category == "shelf":
+        category = "storage"
+
+    # ── 嘗試 CLIP + Supabase pgvector ──
+    if img is not None and len(bbox_ratio) == 4:
+        try:
+            crop = crop_image_by_bbox(img, bbox_ratio)
+            if crop is not None:
+                emb = get_clip_embedding(crop)
+                kb_hits = find_top_k_by_embedding(emb, category=category, top_k=3)
+                if kb_hits:
+                    matched_kb = True
+                    sims = [round(float(h.get("similarity") or 0), 4) for h in kb_hits]
+                    print(f"[quotation] '{name_zh}' ({category}) 向量比對 top-{len(kb_hits)} 相似度：{sims}")
+                    for hit in kb_hits:
+                        candidates.append({
+                            "id": str(hit.get("id") or ""),
+                            "name": hit.get("name") or name_zh,
+                            "price": int(hit.get("price") or 0),
+                            "purchase_url": hit.get("url") or "",
+                            "product_image_url": hit.get("image_url") or "",
+                            "similarity": round(float(hit.get("similarity") or 0), 4),
+                        })
+                else:
+                    print(f"[quotation] '{name_zh}' ({category}) 無相似度達門檻的候選，改用文字搜尋 fallback")
+        except Exception as e:
+            print(f"[quotation] CLIP/vector search error for '{name_zh}': {e}")
+
+    # ── Fallback：本地 JSON 關鍵字搜尋 ──
+    if not candidates:
+        text_hits = search_kb(name_zh, category=category, top_k=3)
+        if text_hits:
+            matched_kb = True
+            for hit in text_hits:
+                candidates.append({
+                    "id": str(hit.get("id") or ""),
+                    "name": hit.get("name") or name_zh,
+                    "price": int(hit.get("price") or 0),
+                    "purchase_url": hit.get("url") or "",
+                    "product_image_url": hit.get("image_url") or "",
+                    "similarity": 0.5,
+                })
+
+    # ── Fallback：LLM 估算 ──
+    if not candidates:
+        estimated = _estimate_price_llm(name_zh)
+        candidates.append({
+            "id": "",
+            "name": name_zh,
+            "price": estimated,
+            "purchase_url": "",
+            "product_image_url": "",
+            "similarity": 0.0,
+        })
+
+    item: FurnitureItem = {
+        "detected_name": name_zh,
+        "category": category,
+        "candidates": candidates,
+        "selected_index": 0,
+    }
+    return item, matched_kb
+
+
 def build_quotation(image_path: str, req: dict) -> QuotationResultJSON:
     """
     1. detect_furniture_gemini() → 家具清單 + bbox
-    2. 每件家具：
+    2. 每件家具（平行處理，見 _process_furniture_item）：
        a. 依 bbox 裁切 crop
        b. CLIP embedding
        c. find_top_k_by_embedding() → top-3 IKEA 候選（Supabase pgvector）
@@ -168,7 +249,7 @@ def build_quotation(image_path: str, req: dict) -> QuotationResultJSON:
     4. 回傳 QuotationResultJSON
     """
     from PIL import Image
-    from designbridge.furniture_kb import find_top_k_by_embedding, search_kb
+    from designbridge.furniture_kb import _get_supabase_client, _load_local_kb, _load_embeddings
 
     # 取風格提示
     style_hint = ""
@@ -184,86 +265,24 @@ def build_quotation(image_path: str, req: dict) -> QuotationResultJSON:
         detected = _fallback_furniture(room_type)
         print(f"[quotation] Gemini 失敗，使用備用清單（{room_type}，{len(detected)} 件）")
 
-    furniture_list: list[FurnitureItem] = []
-    kb_match_count = 0
-
     try:
         img = Image.open(image_path).convert("RGB")
     except Exception as e:
         print(f"[quotation] cannot open image: {e}")
         img = None
 
-    for raw in detected:
-        name_zh: str = raw.get("name_zh") or raw.get("name_en") or "家具"
-        category: str = raw.get("category") or ""
-        bbox_ratio: list[float] = raw.get("bbox") or []
+    # 預先載入 lazy singleton（CLIP model / Supabase client / 本地 KB 快取），
+    # 避免多執行緒同時第一次觸發初始化造成 race condition。
+    _get_clip_model()
+    _get_supabase_client()
+    _load_local_kb()
+    _load_embeddings()
 
-        candidates: list[FurnitureCandidate] = []
-        used_vector_search = False
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(detected)))) as executor:
+        results = list(executor.map(lambda raw: _process_furniture_item(raw, img), detected))
 
-        # shelf → storage（爬蟲分類統一用 storage）
-        if category == "shelf":
-            category = "storage"
-
-        # ── 嘗試 CLIP + Supabase pgvector ──
-        if img is not None and len(bbox_ratio) == 4:
-            try:
-                crop = crop_image_by_bbox(img, bbox_ratio)
-                if crop is not None:
-                    emb = get_clip_embedding(crop)
-                    kb_hits = find_top_k_by_embedding(emb, category=category, top_k=3)
-                    if kb_hits:
-                        used_vector_search = True
-                        kb_match_count += 1
-                        sims = [round(float(h.get("similarity") or 0), 4) for h in kb_hits]
-                        print(f"[quotation] '{name_zh}' ({category}) 向量比對 top-{len(kb_hits)} 相似度：{sims}")
-                        for hit in kb_hits:
-                            candidates.append({
-                                "id": str(hit.get("id") or ""),
-                                "name": hit.get("name") or name_zh,
-                                "price": int(hit.get("price") or 0),
-                                "purchase_url": hit.get("url") or "",
-                                "product_image_url": hit.get("image_url") or "",
-                                "similarity": round(float(hit.get("similarity") or 0), 4),
-                            })
-                    else:
-                        print(f"[quotation] '{name_zh}' ({category}) 無相似度達門檻的候選，改用文字搜尋 fallback")
-            except Exception as e:
-                print(f"[quotation] CLIP/vector search error for '{name_zh}': {e}")
-
-        # ── Fallback：本地 JSON 關鍵字搜尋 ──
-        if not candidates:
-            text_hits = search_kb(name_zh, category=category, top_k=3)
-            if text_hits:
-                kb_match_count += 1
-                for hit in text_hits:
-                    candidates.append({
-                        "id": str(hit.get("id") or ""),
-                        "name": hit.get("name") or name_zh,
-                        "price": int(hit.get("price") or 0),
-                        "purchase_url": hit.get("url") or "",
-                        "product_image_url": hit.get("image_url") or "",
-                        "similarity": 0.5,
-                    })
-
-        # ── Fallback：LLM 估算 ──
-        if not candidates:
-            estimated = _estimate_price_llm(name_zh)
-            candidates.append({
-                "id": "",
-                "name": name_zh,
-                "price": estimated,
-                "purchase_url": "",
-                "product_image_url": "",
-                "similarity": 0.0,
-            })
-
-        furniture_list.append({
-            "detected_name": name_zh,
-            "category": category,
-            "candidates": candidates,
-            "selected_index": 0,
-        })
+    furniture_list: list[FurnitureItem] = [item for item, _ in results]
+    kb_match_count = sum(1 for _, matched in results if matched)
 
     # ── 計算三檔預算（以各品項第 0 候選價格為基準）──
     total_mid = sum(

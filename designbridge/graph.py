@@ -51,7 +51,8 @@ def build_graph() -> StateGraph:
     """
     Build DesignBridge workflow:
     START -> requirement_analyzer -> visual_preprocessing -> design_director
-      -> (adjuster_agent | layout_and_style_agent) -> renderer -> END
+      -> (adjuster_agent | layout_and_style_agent) -> renderer
+      -> (clip_evaluator | quotation_agent) -> END
     """
     graph: StateGraph[DesignBridgeState] = StateGraph(DesignBridgeState)
 
@@ -77,8 +78,12 @@ def build_graph() -> StateGraph:
     )
     graph.add_edge("adjuster_agent", "renderer")
     graph.add_edge("layout_and_style_agent", "renderer")
+    # clip_evaluator and quotation_agent both only read `generated_image` and write
+    # disjoint state keys, so they run as independent parallel branches off renderer
+    # instead of a serial chain — cuts wall-clock time to max(branch) instead of sum.
     graph.add_edge("renderer", "clip_evaluator")
-    graph.add_edge("clip_evaluator", "quotation_agent")
+    graph.add_edge("renderer", "quotation_agent")
+    graph.add_edge("clip_evaluator", END)
     graph.add_edge("quotation_agent", END)
 
     return graph
