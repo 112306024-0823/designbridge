@@ -40,8 +40,10 @@ from designbridge.render_backends import (
     _render_flux_redux_fal,
     _render_flux_redux_local,
     _render_flux_ipadapter_fal,
+    _render_flux_fal,
     _render_flux,
 )
+from designbridge.timing import timed_call
 
 _BASE_NEGATIVE_PROMPT = (
     "people, person, human, man, woman, child, hands, face, "
@@ -759,18 +761,21 @@ def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     req = state.get("structured_requirement") or {}
     user_input = state.get("user_input") or {}
     hint_layout = bool(req.get("hint_layout", False))
+    task_id = state.get("task_id") or str(uuid.uuid4())
 
-    style_params = build_style_params(req, user_input)
+    style_params = timed_call("layout_and_style.style_search", task_id, build_style_params, req, user_input)
 
     scene_graph: dict[str, Any] | None = None
     layout_intermediate: dict[str, Any] = {}
     if hint_layout:
         from designbridge.layout_agent import run_layout_agent
 
-        task_id = state.get("task_id") or str(uuid.uuid4())
         existing_layout = state.get("layout_from_depth")  # 照片萃取的現有家具位置（若有上傳圖）
         try:
-            result = run_layout_agent(req, task_id, existing_layout=existing_layout)
+            result = timed_call(
+                "layout_and_style.layout_agent", task_id,
+                run_layout_agent, req, task_id, existing_layout=existing_layout,
+            )
             scene_graph = result.get("scene_graph")
             layout_intermediate = result.get("intermediate_outputs") or {}
             layout_status = "ok"
@@ -929,7 +934,10 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
                 prompt = f"{prompt} Style reference: {_kb_text}"
                 print(f"📚 Supabase KB 描述已注入 prompt（跳過 Gemini 分析）：{_kb_text[:80]}…")
             else:
-                style_vision_desc = _analyze_style_image_with_gemini(user_style_reference_local)
+                style_vision_desc = timed_call(
+                    "renderer.gemini_style_analysis", task_id,
+                    _analyze_style_image_with_gemini, user_style_reference_local,
+                )
                 if style_vision_desc:
                     prompt = f"{prompt} Style reference: {style_vision_desc}"
                     generation_params["gemini_style_description"] = style_vision_desc
@@ -945,7 +953,9 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if style_method == "ipadapter" and user_style_reference_local and backend == "placeholder":
         if not Config.FAL_KEY:
             print("⚠️  IP-Adapter 模式需要 FAL_KEY，改走 ai_analysis fallback")
-        elif _render_flux_ipadapter_fal(
+        elif timed_call(
+            "renderer.flux_ipadapter_fal", task_id,
+            _render_flux_ipadapter_fal,
             user_style_reference_local, out_path, prompt=prompt,
             ip_adapter_scale=Config.FAL_IP_ADAPTER_SCALE,
             num_steps=Config.FAL_IP_ADAPTER_STEPS,
@@ -962,11 +972,20 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     if style_method == "redux" and user_style_reference_local and backend == "placeholder":
         if not Config.ENABLE_FLUX_REDUX:
             print("⚠️  FLUX.1-Redux 未啟用（DESIGNBRIDGE_ENABLE_FLUX_REDUX=false），改走 ai_analysis fallback")
-        elif Config.FAL_KEY and _render_flux_redux_fal(user_style_reference_local, out_path, prompt=prompt, output_size=output_size, num_steps=Config.FAL_REDUX_STEPS, guidance_scale=Config.FAL_REDUX_GUIDANCE):
+        elif Config.FAL_KEY and timed_call(
+            "renderer.flux_redux_fal", task_id,
+            _render_flux_redux_fal,
+            user_style_reference_local, out_path, prompt=prompt, output_size=output_size,
+            num_steps=Config.FAL_REDUX_STEPS, guidance_scale=Config.FAL_REDUX_GUIDANCE,
+        ):
             backend = "flux_redux_fal"
             generation_params["model"] = "fal-ai/flux-1/dev/redux"
             generation_params["style_reference"] = user_style_reference_local
-        elif _render_flux_redux_local(user_style_reference_local, out_path, prompt=prompt, output_size=output_size):
+        elif timed_call(
+            "renderer.flux_redux_local", task_id,
+            _render_flux_redux_local,
+            user_style_reference_local, out_path, prompt=prompt, output_size=output_size,
+        ):
             backend = "flux_redux_local"
             generation_params["model"] = "black-forest-labs/FLUX.1-Redux-dev (local)"
             generation_params["style_reference"] = user_style_reference_local
@@ -986,7 +1005,9 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         and Config.FAL_KEY
         and effective_depth_path and Path(str(effective_depth_path)).is_file()
     ):
-        if _render_flux_controlnet_depth_fal(
+        if timed_call(
+            "renderer.flux_controlnet_depth_fal", task_id,
+            _render_flux_controlnet_depth_fal,
             prompt, str(effective_depth_path), out_path,
             conditioning_scale=depth_conditioning_scale,
             output_size=output_size,
@@ -997,8 +1018,12 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
 
     if backend == "placeholder" and effective_depth_path and Path(str(effective_depth_path)).is_file():
         if Config.HF_TOKEN:
-            if _render_hf_kontext(prompt, str(effective_depth_path), out_path,
-                                  depth_conditioning_scale=depth_conditioning_scale):
+            if timed_call(
+                "renderer.hf_kontext", task_id,
+                _render_hf_kontext,
+                prompt, str(effective_depth_path), out_path,
+                depth_conditioning_scale=depth_conditioning_scale,
+            ):
                 backend = "hf_kontext"
                 generation_params["model"] = Config.KONTEXT_LORA_MODEL
                 generation_params["provider"] = Config.KONTEXT_PROVIDER
@@ -1006,20 +1031,34 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
 
     # AI 分析模式 fallback：HF Inference API
     if backend == "placeholder" and Config.ENABLE_HF_INFERENCE and Config.HF_TOKEN:
-        if _render_hf_inference(prompt, out_path, model=hf_model_id, output_size=output_size):
+        if timed_call(
+            "renderer.hf_inference", task_id,
+            _render_hf_inference,
+            prompt, out_path, model=hf_model_id, output_size=output_size,
+        ):
             backend = "hf_inference"
             generation_params["model"] = hf_model_id
             generation_params["provider"] = Config.HF_INFERENCE_PROVIDER
 
-    # 2. Local Flux model
+    # 2. fal.ai FLUX 純文字生圖（雲端，不需 depth/style 參考圖；HF 兩條路都失敗時的快速備援）
+    if backend == "placeholder" and Config.FAL_KEY:
+        if timed_call(
+            "renderer.flux_fal", task_id,
+            _render_flux_fal,
+            prompt, out_path, output_size=output_size,
+        ):
+            backend = "flux_fal"
+            generation_params["model"] = "fal-ai/flux/schnell"
+
+    # 3. Local Flux model（最後手段：CPU 推理慢，且首次會下載整包模型，僅在雲端全部失敗時使用）
     if backend == "placeholder" and Config.ENABLE_FLUX_FALLBACK:
-        if _render_flux(prompt, out_path):
+        if timed_call("renderer.flux_local", task_id, _render_flux, prompt, out_path):
             backend = "flux"
             generation_params["model"] = hf_model_id
         else:
             generation_params["render_error"] = "local render failed"
 
-    # 3. Fallback to placeholder
+    # 4. Fallback to placeholder
     if backend == "placeholder":
         generation_params["render_error"] = "API unavailable: both Kontext and HF Inference failed"
         print("⚠️  Renderer: all API backends failed, no image generated")
@@ -1057,10 +1096,11 @@ def clip_evaluator_node(state: DesignBridgeState) -> dict[str, Any]:
     if not raw_prompt:
         return {"evaluation_result": {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": "no text prompt", "issues_found": [], "suggestions": []}}
 
+    task_id = state.get("task_id")
     try:
         from designbridge.clip_evaluator import evaluate, _translate_to_english
-        text_prompt = _translate_to_english(raw_prompt)
-        result = evaluate(image_path, text_prompt)
+        text_prompt = timed_call("clip_evaluator.translate", task_id, _translate_to_english, raw_prompt)
+        result = timed_call("clip_evaluator.evaluate", task_id, evaluate, image_path, text_prompt)
     except Exception as e:
         result = {"scores": {}, "weighted_score": 0.0, "decision": "skip", "feedback": f"CLIP evaluation failed: {e}", "issues_found": [], "suggestions": []}
 

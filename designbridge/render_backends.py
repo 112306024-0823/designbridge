@@ -121,6 +121,64 @@ def _render_hf_inference(
         return False
 
 
+def _render_flux_fal(
+    prompt: str,
+    out_path: Path,
+    model: str = "fal-ai/flux/schnell",
+    num_steps: int = 4,
+    output_size: tuple[int, int] = (1024, 1024),
+) -> bool:
+    """Generate image via fal.ai FLUX text-to-image (cloud, no style/depth reference needed)."""
+    fal_key = Config.FAL_KEY
+    if not fal_key:
+        return False
+    try:
+        import fal_client
+        import requests
+        import os
+
+        os.environ["FAL_KEY"] = fal_key
+
+        print(f"☁️  fal.ai {model} 推理中...")
+
+        width, height = output_size
+        size_map = {
+            (1024, 1024): "square_hd",
+            (512, 512): "square",
+            (1024, 768): "landscape_4_3",
+            (768, 1024): "portrait_4_3",
+            (1280, 720): "landscape_16_9",
+            (720, 1280): "portrait_16_9",
+        }
+        image_size = size_map.get((width, height), {"width": width, "height": height})
+
+        result = fal_client.subscribe(
+            model,
+            arguments={
+                "prompt": prompt,
+                "image_size": image_size,
+                "num_inference_steps": num_steps,
+            },
+            with_logs=False,
+        )
+
+        img_url = result["images"][0]["url"]
+        resp = requests.get(img_url, timeout=60)
+        resp.raise_for_status()
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(resp.content)
+        print(f"✅ fal.ai {model} 完成：{out_path.name}")
+        return True
+
+    except ImportError:
+        print("⚠️  fal_client 未安裝，請執行：pip install fal-client")
+        return False
+    except Exception as e:
+        print(f"⚠️  fal.ai {model} 失敗：{e}")
+        return False
+
+
 def _render_hf_inference_redux(
     prompt: str,
     style_image_path: str,

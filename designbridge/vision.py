@@ -194,6 +194,7 @@ def run_visual_preprocessing(
         compute_spatial_metrics,
         build_layout_json,
     )
+    from designbridge.timing import log_stage
 
     out_dir = ensure_dir(artifacts_root / "vision" / task_id)
 
@@ -203,23 +204,26 @@ def run_visual_preprocessing(
     layout_json: dict | None = None  # depth_to_layout 結果
 
     if enable_depth:
-        depth_path, _ = run_depth_estimation(image_path, model_name=depth_model, out_dir=out_dir)
+        with log_stage("visual_preprocessing.depth_estimation", task_id=task_id):
+            depth_path, _ = run_depth_estimation(image_path, model_name=depth_model, out_dir=out_dir)
         # 萃取佈局 JSON
         try:
-            _d = load_depth(depth_path)
-            _zones = slice_zones(_d)
-            _blobs = detect_furniture_blobs(_d, _zones)
-            _metrics = compute_spatial_metrics(_d, _zones)
-            layout_json = build_layout_json(depth_path, _d, _zones, _blobs, _metrics)
+            with log_stage("visual_preprocessing.depth_to_layout", task_id=task_id):
+                _d = load_depth(depth_path)
+                _zones = slice_zones(_d)
+                _blobs = detect_furniture_blobs(_d, _zones)
+                _metrics = compute_spatial_metrics(_d, _zones)
+                layout_json = build_layout_json(depth_path, _d, _zones, _blobs, _metrics)
         except Exception as e:
             # 不影響主流程，失敗只記 warning
             import warnings
             warnings.warn(f"depth_to_layout 萃取失敗，略過：{e}")
 
     if enable_segmentation:
-        seg_path, seg_meta_path, _ = run_segmentation(
-            image_path, model_name=segmentation_model, out_dir=out_dir
-        )
+        with log_stage("visual_preprocessing.segmentation", task_id=task_id):
+            seg_path, seg_meta_path, _ = run_segmentation(
+                image_path, model_name=segmentation_model, out_dir=out_dir
+            )
 
     return VisionArtifacts(
         depth_path=depth_path,

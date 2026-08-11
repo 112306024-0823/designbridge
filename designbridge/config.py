@@ -17,6 +17,8 @@ class Config:
 
     GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
+    # Extra keys tried in order if GEMINI_API_KEY fails (comma-separated).
+    GEMINI_API_KEYS: str = os.getenv("GEMINI_API_KEYS", "")
     GEMINI_TEMPERATURE: float = 0.3
 
     # Text embedding model for style retrieval (text-to-text).

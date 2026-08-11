@@ -129,6 +129,7 @@ cd frontend && npm run dev
 | Key | 申請位置 | 用途 |
 |---|---|---|
 | `GEMINI_API_KEY` | [Google AI Studio](https://makersuite.google.com/app/apikey) | LLM 需求分析 + 動態 routing（直連 Gemini） |
+| `GEMINI_API_KEYS`（選填） | 同上，逗號分隔多組 | `GEMINI_API_KEY` 失敗（額度用盡等）時依序換下一把 |
 | `HF_TOKEN` | [Hugging Face Settings](https://huggingface.co/settings/tokens)（Read 權限）| 雲端圖片生成（Flux/SDXL），免本地 GPU |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Supabase 專案設定 | 風格向量庫搜尋 |
 

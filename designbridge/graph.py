@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import Any, Callable
+
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
@@ -17,6 +19,21 @@ from designbridge.nodes import (
     visual_preprocessing_local,
 )
 from designbridge.state import DesignBridgeState, RoutingDecision
+from designbridge.timing import log_stage
+
+
+def _timed_node(
+    name: str, fn: Callable[[DesignBridgeState], dict[str, Any]]
+) -> Callable[[DesignBridgeState], dict[str, Any]]:
+    """Wrap a graph node so its wall-clock duration is logged on exit."""
+
+    def _wrapped(state: DesignBridgeState) -> dict[str, Any]:
+        task_id = state.get("task_id")
+        with log_stage(name, task_id=task_id):
+            return fn(state)
+
+    _wrapped.__name__ = getattr(fn, "__name__", name)
+    return _wrapped
 
 
 def _route_after_director(state: DesignBridgeState) -> str:
@@ -38,14 +55,14 @@ def build_graph() -> StateGraph:
     """
     graph: StateGraph[DesignBridgeState] = StateGraph(DesignBridgeState)
 
-    graph.add_node("requirement_analyzer", requirement_analyzer)
-    graph.add_node("visual_preprocessing", visual_preprocessing_local)
-    graph.add_node("design_director", design_director)
-    graph.add_node("adjuster_agent", adjuster_agent_stub)
-    graph.add_node("layout_and_style_agent", layout_and_style_agent_stub)
-    graph.add_node("renderer", renderer)
-    graph.add_node("clip_evaluator", clip_evaluator_node)
-    graph.add_node("quotation_agent", quotation_agent)
+    graph.add_node("requirement_analyzer", _timed_node("requirement_analyzer", requirement_analyzer))
+    graph.add_node("visual_preprocessing", _timed_node("visual_preprocessing", visual_preprocessing_local))
+    graph.add_node("design_director", _timed_node("design_director", design_director))
+    graph.add_node("adjuster_agent", _timed_node("adjuster_agent", adjuster_agent_stub))
+    graph.add_node("layout_and_style_agent", _timed_node("layout_and_style_agent", layout_and_style_agent_stub))
+    graph.add_node("renderer", _timed_node("renderer", renderer))
+    graph.add_node("clip_evaluator", _timed_node("clip_evaluator", clip_evaluator_node))
+    graph.add_node("quotation_agent", _timed_node("quotation_agent", quotation_agent))
 
     graph.add_edge(START, "requirement_analyzer")
     graph.add_edge("requirement_analyzer", "visual_preprocessing")
