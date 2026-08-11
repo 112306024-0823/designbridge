@@ -75,6 +75,11 @@ class Config:
     DEPTH_CONTROLNET_MODEL: str = os.getenv(
         "DESIGNBRIDGE_DEPTH_CONTROLNET_MODEL", "Shakker-Labs/FLUX.1-dev-ControlNet-Depth"
     )
+    FAL_CONTROLNET_STEPS: int = int(os.getenv("DESIGNBRIDGE_FAL_CONTROLNET_STEPS", "20"))
+    FAL_CONTROLNET_GUIDANCE: float = float(os.getenv("DESIGNBRIDGE_FAL_CONTROLNET_GUIDANCE", "3.5"))
+    PROJECTED_DEPTH_MAX_CONDITIONING_SCALE: float = float(
+        os.getenv("DESIGNBRIDGE_PROJECTED_DEPTH_MAX_CONDITIONING_SCALE", "0.5")
+    )
 
     # Local vision preprocessing (Depth + UPerNet segmentation)
     # NOTE: These models will be downloaded on first run (requires internet).

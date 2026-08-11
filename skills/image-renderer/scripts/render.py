@@ -2,7 +2,7 @@
 Image Renderer skill script.
 讀取 stdin JSON → 生成室內設計圖 → 輸出 generated_image 路徑到 stdout。
 
-原始邏輯位於：designbridge/nodes.py::renderer
+原始邏輯位於：designbridge/core/nodes/renderer.py::renderer
 """
 import json
 import sys
@@ -14,11 +14,13 @@ _project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_project_root))
 
 from designbridge.core.config import Config
-from designbridge.core.nodes import (
+from designbridge.render.render_prompt import (
     _build_imagen_prompt_from_requirement,
+    _renderer_placeholder_image,
+)
+from designbridge.render.render_backends import (
     _render_hf_inference,
     _render_flux,
-    _renderer_placeholder_image,
 )
 
 
