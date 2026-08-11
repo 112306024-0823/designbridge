@@ -102,6 +102,7 @@ def _gemini_client_and_config(
     client = genai.Client(api_key=api_key)
     cfg = types.GenerateContentConfig(
         temperature=temperature if temperature is not None else Config.GEMINI_TEMPERATURE,
+        #thinking_config=types.ThinkingConfig(thinking_budget=Config.GEMINI_THINKING_BUDGET),
         **({"max_output_tokens": max_tokens} if max_tokens is not None else {}),
         **({"system_instruction": system} if system else {}),
     )

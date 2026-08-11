@@ -20,6 +20,9 @@ class Config:
     # Extra keys tried in order if GEMINI_API_KEY fails (comma-separated).
     GEMINI_API_KEYS: str = os.getenv("GEMINI_API_KEYS", "")
     GEMINI_TEMPERATURE: float = 0.3
+    # 2.5 系列模型預設會啟用隱藏推理（thinking），對抽取/翻譯/辨識這類簡單任務只會多花時間。
+    # 0 = 關閉 thinking；-1 = 交給模型動態決定；正整數 = 指定 thinking token 上限。
+    GEMINI_THINKING_BUDGET: int = int(os.getenv("DESIGNBRIDGE_GEMINI_THINKING_BUDGET", "0"))
 
     # Text embedding model for style retrieval (text-to-text).
     TEXT_EMBEDDING_MODEL: str = os.getenv("DESIGNBRIDGE_TEXT_EMBEDDING_MODEL", "BAAI/bge-m3")
