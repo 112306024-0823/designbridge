@@ -931,8 +931,10 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
                 and style_reference_image.strip() == _kb_url
             )
             if _is_kb_image:
-                prompt = f"{prompt} Style reference: {_kb_text}"
-                print(f"📚 Supabase KB 描述已注入 prompt（跳過 Gemini 分析）：{_kb_text[:80]}…")
+                # KB's English style_prompt is already folded into `prompt` by
+                # _build_imagen_prompt_from_requirement; its Chinese description
+                # (_kb_text) is UI-display-only, so skip re-injecting it here.
+                print(f"📚 Supabase KB 圖片已作為風格參考（風格描述已由 style_prompt 注入，跳過 Gemini 分析）")
             else:
                 style_vision_desc = timed_call(
                     "renderer.gemini_style_analysis", task_id,

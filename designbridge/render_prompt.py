@@ -69,22 +69,17 @@ def _build_imagen_prompt_from_requirement(
         return base_prompt
 
     color_guidance = style_params.get("color_guidance") or {}
-    visual_essence = color_guidance.get("visual_essence") or []
-    material_recommendations = style_params.get("material_recommendations") or []
     style_prompt = style_params.get("style_prompt") or ""
-    summary = style_params.get("style_summary") or ""
     strength = style_params.get("style_strength", 0.7)
 
+    # style_summary / visual_essence / material_recommendations come from the KB's
+    # human-readable (often Chinese) fields — meant for UI display, not the
+    # English image-gen prompt, so they're intentionally excluded here.
     extra_parts: list[str] = []
-    style_name = style_params.get("style_profile_name", "")
-    if style_name:
-        extra_parts.append(f"Style profile: {style_name} (strength {strength}).")
-    if summary:
-        extra_parts.append(summary)
-    if visual_essence:
-        extra_parts.append("Visual essence: " + ", ".join(str(item) for item in visual_essence[:4]) + ".")
-    if material_recommendations:
-        extra_parts.append("Materials: " + ", ".join(str(item) for item in material_recommendations[:4]) + ".")
+    style_id_for_prompt = (style_params.get("style_profile_id") or "").lower()
+    style_name_en = _STYLE_ID_TO_EN.get(style_id_for_prompt, "")
+    if style_name_en:
+        extra_parts.append(f"Style profile: {style_name_en} (strength {strength}).")
     if color_guidance.get("primary_color"):
         extra_parts.append(
             f"Palette: primary {color_guidance.get('primary_color')}, "

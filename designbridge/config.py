@@ -67,9 +67,11 @@ class Config:
     KONTEXT_PROVIDER: str = os.getenv("DESIGNBRIDGE_KONTEXT_PROVIDER", "fal-ai")
 
     # Depth conditioning backend for re-planned layouts (uses the scene-graph projected depth):
-    #   "kontext"    → Kontext depth-fusion LoRA (loose reference depth, current default)
-    #   "controlnet" → true FLUX depth ControlNet via fal.ai (stronger geometric control; needs FAL_KEY)
-    LAYOUT_DEPTH_CONTROL_BACKEND: str = os.getenv("DESIGNBRIDGE_LAYOUT_DEPTH_CONTROL_BACKEND", "kontext")
+    #   "kontext"    → Kontext depth-fusion LoRA (loose reference depth; community LoRA via HF's
+    #                  fal-ai provider routing — unreliable output quality, kept for reference only)
+    #   "controlnet" → true FLUX depth ControlNet via fal.ai directly (stronger, more reliable
+    #                  geometric control; needs FAL_KEY; current default)
+    LAYOUT_DEPTH_CONTROL_BACKEND: str = os.getenv("DESIGNBRIDGE_LAYOUT_DEPTH_CONTROL_BACKEND", "controlnet")
     DEPTH_CONTROLNET_MODEL: str = os.getenv(
         "DESIGNBRIDGE_DEPTH_CONTROLNET_MODEL", "Shakker-Labs/FLUX.1-dev-ControlNet-Depth"
     )

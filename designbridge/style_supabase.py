@@ -146,7 +146,7 @@ def _compose_style_kb_text(row: dict[str, Any]) -> str:
 
     style_info = style_kb.get("style_info") if isinstance(style_kb, dict) else {}
     if isinstance(style_info, dict):
-        name = style_info.get("name")
+        name = style_info.get("name") or style_info.get("style")
         if name:
             parts.append(str(name))
         tags = style_info.get("tags")
@@ -170,6 +170,8 @@ def _compose_style_kb_text(row: dict[str, Any]) -> str:
                             if m.get(k)
                         )
                     )
+                elif isinstance(m, str) and m.strip():
+                    parts.append(m.strip())
         lighting = visual.get("lighting")
         if isinstance(lighting, dict):
             if lighting.get("type"):
@@ -178,11 +180,9 @@ def _compose_style_kb_text(row: dict[str, Any]) -> str:
                 parts.append(f"{lighting['color_temp']}K")
 
     ai = style_kb.get("ai_params") if isinstance(style_kb, dict) else {}
-    if isinstance(ai, dict):
-        prompts = ai.get("prompts")
-        if isinstance(prompts, dict):
-            if prompts.get("positive"):
-                parts.append(str(prompts["positive"]))
+    pos_from_kb, _ = _extract_kb_prompts(ai if isinstance(ai, dict) else None)
+    if pos_from_kb:
+        parts.append(pos_from_kb)
 
     # fallback metadata
     if source_meta.get("style"):
@@ -301,7 +301,11 @@ def download_style_image(image_url: str) -> Path | None:
 
 
 def _extract_material_recommendations(style_kb: dict[str, Any]) -> list[str]:
-    """Extract compact material recommendation list from style_kb."""
+    """Extract compact material recommendation list from style_kb.
+
+    Tolerates both the {type, finish, target} object schema and the flat
+    string-list schema seen in older KB rows.
+    """
     visual = style_kb.get("visual_elements")
     if not isinstance(visual, dict):
         return []
@@ -311,15 +315,55 @@ def _extract_material_recommendations(style_kb: dict[str, Any]) -> list[str]:
 
     output: list[str] = []
     for item in materials:
-        if not isinstance(item, dict):
+        if isinstance(item, dict):
+            material_type = str(item.get("type", "")).strip()
+            finish = str(item.get("finish", "")).strip()
+            target = str(item.get("target", "")).strip()
+            label = " ".join(v for v in [material_type, finish, target] if v)
+        elif isinstance(item, str):
+            label = item.strip()
+        else:
             continue
-        material_type = str(item.get("type", "")).strip()
-        finish = str(item.get("finish", "")).strip()
-        target = str(item.get("target", "")).strip()
-        label = " ".join(v for v in [material_type, finish, target] if v)
         if label:
             output.append(label)
     return output[:6]
+
+
+def _extract_kb_prompts(ai_params: dict[str, Any] | None) -> tuple[str, str]:
+    """Read (positive, negative) prompts from ai_params.
+
+    Tolerates both the nested `prompts.{positive,negative}` schema (current
+    extraction template) and the flat `positive_prompt`/`negative_prompt`
+    schema found in older KB rows.
+    """
+    if not isinstance(ai_params, dict):
+        return "", ""
+    prompts = ai_params.get("prompts")
+    if isinstance(prompts, dict):
+        pos = str(prompts.get("positive", "")).strip()
+        neg = str(prompts.get("negative", "")).strip()
+        if pos or neg:
+            return pos, neg
+    pos = str(ai_params.get("positive_prompt", "")).strip()
+    neg = str(ai_params.get("negative_prompt", "")).strip()
+    return pos, neg
+
+
+def _extract_kb_strength(ai_params: dict[str, Any] | None) -> float | None:
+    """Read the IP-Adapter weight from ai_params, tolerating both the nested
+    `adapter_config.ip_adapter_weight` schema and flat key variants."""
+    if not isinstance(ai_params, dict):
+        return None
+    adapter_config = ai_params.get("adapter_config")
+    if isinstance(adapter_config, dict):
+        val = adapter_config.get("ip_adapter_weight")
+        if isinstance(val, (int, float)):
+            return float(val)
+    for key in ("recommended_ip_adapter_weight", "ip_adapter_weight"):
+        val = ai_params.get(key)
+        if isinstance(val, (int, float)):
+            return float(val)
+    return None
 
 def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str, Any] | None:
     """
@@ -338,17 +382,7 @@ def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str,
 
     style_kb = top.style_kb
     ai_params = style_kb.get("ai_params") if isinstance(style_kb, dict) else {}
-    prompts_from_kb = ai_params.get("prompts") if isinstance(ai_params, dict) else {}
-    pos_from_kb = (
-        str(prompts_from_kb.get("positive", "")).strip()
-        if isinstance(prompts_from_kb, dict)
-        else ""
-    )
-    neg_from_kb = (
-        str(prompts_from_kb.get("negative", "")).strip()
-        if isinstance(prompts_from_kb, dict)
-        else ""
-    )
+    pos_from_kb, neg_from_kb = _extract_kb_prompts(ai_params)
 
     # Priority 2: fallback to style_id-based static prompts
     prompts = _STYLE_PROMPTS.get(style_id, _STYLE_PROMPTS["modern"])
@@ -359,11 +393,8 @@ def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str,
     if isinstance(style_kb, dict):
         summary = str(style_kb.get("description", "")).strip()
 
-    style_strength = 0.8
-    if isinstance(ai_params, dict):
-        kb_strength = ai_params.get("recommended_ip_adapter_weight")
-        if isinstance(kb_strength, (int, float)):
-            style_strength = float(max(0.0, min(1.0, kb_strength)))
+    kb_strength = _extract_kb_strength(ai_params)
+    style_strength = float(max(0.0, min(1.0, kb_strength))) if kb_strength is not None else 0.8
 
     from style_kb.styles import STYLES
     style_name_map = {sid: sname for sid, sname in STYLES}
