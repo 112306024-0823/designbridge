@@ -32,7 +32,6 @@ const manualMaskPath = ref('')   // 手繪遮罩上傳後的伺服器路徑
 const brushSize      = ref(32)
 const drawMode       = ref('draw')
 const refineCanvasRef = ref(null)
-const styleRetrievalMode = ref('text-to-text')
 
 // 模式：'design'（整體設計） | 'refine'（細部微調）
 const mode = ref('design')
@@ -76,7 +75,7 @@ async function fetchStyleCandidates() {
   candidatesLoading.value = true
   try {
     const res = await fetch(
-      apiUrl(`/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=10&retrieval_mode=${encodeURIComponent(styleRetrievalMode.value)}`)
+      apiUrl(`/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=10`)
     )
     if (res.ok) {
       const data = await res.json()
@@ -247,7 +246,6 @@ async function handleSubmit() {
         refine_mode: mode.value === 'refine',
         output_aspect: outputAspect.value,
         mask_image_path: manualMaskPath.value || undefined,
-        style_retrieval_mode: styleRetrievalMode.value,
         family_needs: familyNeeds.value,
         fengshui_rules: fengshuiRules.value,
         style_method: styleMethod.value,
@@ -278,12 +276,6 @@ function handleConfirmStyle(candidate) {
 
 function handleClearConfirmedStyle() {
   confirmedStyle.value = null
-}
-
-function handleChangeRetrievalMode(nextMode) {
-  if (nextMode === styleRetrievalMode.value) return
-  styleRetrievalMode.value = nextMode
-  fetchStyleCandidates()
 }
 
 // ResultPanel 的「細部微調」按鈕觸發：切換模式並鎖定當前生圖為基底
@@ -440,11 +432,9 @@ onMounted(fetchStyleOptions)
           :candidates="styleCandidates"
           :confirmed="confirmedStyle"
           :loading="candidatesLoading"
-          :retrieval-mode="styleRetrievalMode"
           :api-base="API_BASE"
           @confirm="handleConfirmStyle"
           @clear="handleClearConfirmedStyle"
-          @change-mode="handleChangeRetrievalMode"
         />
         <ResultPanel v-else :key="submitKey" :result="result" :loading="loading" @refine="handleRefine" />
       </template>

@@ -7,7 +7,6 @@ Generative AI SDK (direct). ``RuntimeError`` is raised on failure.
 from __future__ import annotations
 
 import base64
-import os
 from pathlib import Path
 from typing import Iterator
 
@@ -90,6 +89,41 @@ def _history_to_gemini(history: list[dict]) -> list[dict]:
     return result
 
 
+# ── Gemini multi-key rotation ────────────────────────────────────────────────
+# Shared by every Gemini call site in this project (main app + offline style_kb
+# caption scripts). Advances past a key only on quota/rate-limit errors, and the
+# index is process-global so a dead key stays skipped for the rest of the run.
+
+_gemini_key_idx = 0
+
+
+def _is_gemini_quota_error(e: Exception) -> bool:
+    msg = str(e).lower()
+    return ("429" in msg or "quota" in msg or "resourceexhausted" in type(e).__name__.lower()
+            or "rate_limit" in msg or "ratelimit" in msg)
+
+
+def call_with_gemini_key_rotation(fn):
+    """Call ``fn(api_key)``, trying each configured Gemini key in order until one
+    doesn't hit a quota error. Raises RuntimeError if none work."""
+    global _gemini_key_idx
+    keys = Config.get_gemini_api_keys()
+    if not keys:
+        raise RuntimeError("GEMINI_API_KEY 未設定。請在 .env 中設定 GEMINI_API_KEY 或 GEMINI_API_KEYS。")
+
+    last_err: Exception | None = None
+    while _gemini_key_idx < len(keys):
+        try:
+            return fn(keys[_gemini_key_idx])
+        except Exception as e:
+            if not _is_gemini_quota_error(e):
+                raise
+            print(f"[llm] Gemini key #{_gemini_key_idx + 1}/{len(keys)} quota 已滿，切換下一個...")
+            last_err = e
+            _gemini_key_idx += 1
+    raise RuntimeError(f"所有 {len(keys)} 個 Gemini API key 均已達 quota 上限") from last_err
+
+
 # ── Gemini direct path ───────────────────────────────────────────────────────
 
 def _build_gemini_parts(
@@ -121,11 +155,6 @@ def _call_via_gemini(
     except ImportError as exc:
         raise RuntimeError("google-genai 未安裝。請先執行: pip install google-genai") from exc
 
-    api_key = Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY 未設定。請在 .env 中設定 GEMINI_API_KEY。")
-
-    client = genai.Client(api_key=api_key)
     cfg = types.GenerateContentConfig(
         temperature=temperature if temperature is not None else Config.GEMINI_TEMPERATURE,
         **({"max_output_tokens": max_tokens} if max_tokens is not None else {}),
@@ -133,16 +162,19 @@ def _call_via_gemini(
     )
     parts = _build_gemini_parts(prompt, images)
 
-    if history:
-        converted = _history_to_gemini(history)
-        chat = client.chats.create(model=Config.GEMINI_MODEL, config=cfg, history=converted)
-        response = chat.send_message(parts)
-    else:
-        response = client.models.generate_content(
-            model=Config.GEMINI_MODEL, contents=parts, config=cfg
-        )
+    def _do(api_key: str) -> str:
+        client = genai.Client(api_key=api_key)
+        if history:
+            converted = _history_to_gemini(history)
+            chat = client.chats.create(model=Config.GEMINI_MODEL, config=cfg, history=converted)
+            response = chat.send_message(parts)
+        else:
+            response = client.models.generate_content(
+                model=Config.GEMINI_MODEL, contents=parts, config=cfg
+            )
+        return response.text or ""
 
-    return response.text or ""
+    return call_with_gemini_key_rotation(_do)
 
 
 def _stream_via_gemini(
@@ -154,17 +186,17 @@ def _stream_via_gemini(
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> Iterator[str]:
+    global _gemini_key_idx
     try:
         from google import genai
         from google.genai import types
     except ImportError as exc:
         raise RuntimeError("google-genai 未安裝。請先執行: pip install google-genai") from exc
 
-    api_key = Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY 未設定。請在 .env 中設定 GEMINI_API_KEY。")
+    keys = Config.get_gemini_api_keys()
+    if not keys:
+        raise RuntimeError("GEMINI_API_KEY 未設定。請在 .env 中設定 GEMINI_API_KEY 或 GEMINI_API_KEYS。")
 
-    client = genai.Client(api_key=api_key)
     cfg = types.GenerateContentConfig(
         temperature=temperature if temperature is not None else Config.GEMINI_TEMPERATURE,
         **({"max_output_tokens": max_tokens} if max_tokens is not None else {}),
@@ -172,18 +204,33 @@ def _stream_via_gemini(
     )
     parts = _build_gemini_parts(prompt, images)
 
-    if history:
-        converted = _history_to_gemini(history)
-        chat = client.chats.create(model=Config.GEMINI_MODEL, config=cfg, history=converted)
-        for chunk in chat.send_message_stream(parts):
-            if chunk.text:
-                yield chunk.text
-    else:
-        for chunk in client.models.generate_content_stream(
-            model=Config.GEMINI_MODEL, contents=parts, config=cfg
-        ):
-            if chunk.text:
-                yield chunk.text
+    last_err: Exception | None = None
+    while _gemini_key_idx < len(keys):
+        client = genai.Client(api_key=keys[_gemini_key_idx])
+        yielded = False
+        try:
+            if history:
+                converted = _history_to_gemini(history)
+                chat = client.chats.create(model=Config.GEMINI_MODEL, config=cfg, history=converted)
+                stream = chat.send_message_stream(parts)
+            else:
+                stream = client.models.generate_content_stream(
+                    model=Config.GEMINI_MODEL, contents=parts, config=cfg
+                )
+            for chunk in stream:
+                if chunk.text:
+                    yielded = True
+                    yield chunk.text
+            return
+        except Exception as e:
+            # Once a chunk has already been yielded, the response is mid-flight —
+            # switching keys now would silently drop/duplicate content, so just raise.
+            if yielded or not _is_gemini_quota_error(e):
+                raise
+            print(f"[llm] Gemini key #{_gemini_key_idx + 1}/{len(keys)} quota 已滿，切換下一個...")
+            last_err = e
+            _gemini_key_idx += 1
+    raise RuntimeError(f"所有 {len(keys)} 個 Gemini API key 均已達 quota 上限") from last_err
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -199,8 +246,8 @@ def call_llm(
     max_tokens: int | None = None,
 ) -> str:
     """Call the LLM (Gemini) and return the response text."""
-    if not (Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")):
-        raise RuntimeError("GEMINI_API_KEY 未設定。請在 .env 中設定 GEMINI_API_KEY。")
+    if not Config.get_gemini_api_keys():
+        raise RuntimeError("GEMINI_API_KEY 未設定。請在 .env 中設定 GEMINI_API_KEY 或 GEMINI_API_KEYS。")
 
     return _call_via_gemini(
         prompt,
@@ -223,8 +270,8 @@ def call_llm_stream(
     max_tokens: int | None = None,
 ) -> Iterator[str]:
     """Streaming variant of ``call_llm`` — yields text chunks."""
-    if not (Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")):
-        raise RuntimeError("GEMINI_API_KEY 未設定。請在 .env 中設定 GEMINI_API_KEY。")
+    if not Config.get_gemini_api_keys():
+        raise RuntimeError("GEMINI_API_KEY 未設定。請在 .env 中設定 GEMINI_API_KEY 或 GEMINI_API_KEYS。")
 
     yield from _stream_via_gemini(
         prompt,

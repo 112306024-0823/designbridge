@@ -64,21 +64,6 @@ SPACE_ZH = {
 }
 
 
-# ── Gemini 多 Key 輪替 ────────────────────────────────────────────────────────
-
-_gemini_keys: list[str] = []
-_gemini_key_idx: int = 0
-
-
-def _load_gemini_keys() -> list[str]:
-    """從 GEMINI_API_KEYS（逗號分隔）或 GEMINI_API_KEY 讀取 API 金鑰清單。"""
-    multi = os.environ.get("GEMINI_API_KEYS", "")
-    if multi:
-        return [k.strip() for k in multi.split(",") if k.strip()]
-    single = os.environ.get("GEMINI_API_KEY", "")
-    return [single] if single else []
-
-
 def _build_prompt(style_id: str) -> str:
     hint = STYLE_CAPTION_HINTS.get(style_id, "Describe the visual style and dominant design elements.")
     return f"""You are an interior design image analyst. Analyze the image and return ONLY valid JSON, no extra text.
@@ -169,25 +154,12 @@ def _is_quota_error(e: Exception) -> bool:
 
 
 def _call_gemini_with_rotation(image_url: str, prompt: str) -> dict:
-    """依序嘗試所有 Gemini key；全部 quota 耗盡才 raise QuotaExceeded。"""
-    global _gemini_keys, _gemini_key_idx
-    if not _gemini_keys:
-        _gemini_keys = _load_gemini_keys()
-    if not _gemini_keys:
-        raise QuotaExceeded("未設定 GEMINI_API_KEY / GEMINI_API_KEYS")
-
-    while _gemini_key_idx < len(_gemini_keys):
-        key = _gemini_keys[_gemini_key_idx]
-        label = f"Key #{_gemini_key_idx + 1}/{len(_gemini_keys)} (...{key[-4:]})"
-        try:
-            return _call_gemini(image_url, prompt, api_key=key)
-        except Exception as e:
-            if _is_quota_error(e):
-                print(f"    ⚠️  {label} quota 已滿，切換下一個...")
-                _gemini_key_idx += 1
-            else:
-                raise
-    raise QuotaExceeded(f"所有 {len(_gemini_keys)} 個 Gemini API key 均已達 quota 上限")
+    """依序嘗試所有 Gemini key（共用 designbridge.llm 的輪替邏輯）；全部 quota 耗盡才 raise QuotaExceeded。"""
+    from designbridge.llm import call_with_gemini_key_rotation
+    try:
+        return call_with_gemini_key_rotation(lambda key: _call_gemini(image_url, prompt, api_key=key))
+    except RuntimeError as e:
+        raise QuotaExceeded(str(e)) from e
 
 
 def analyze_image(image_url: str, style_id: str, provider: str = "auto") -> dict | None:

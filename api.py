@@ -87,7 +87,6 @@ class DesignRequest(BaseModel):
     text_prompt: str = ""
     edit_scope: float = 0.6
     style_profile_id: Optional[str] = None
-    style_retrieval_mode: Optional[str] = None 
     initial_image_path: Optional[str] = None
     style_reference_image_path: Optional[str] = None
     no_style_reference: bool = False
@@ -126,15 +125,7 @@ async def upload_image(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, f)
     return {"path": str(dest)}
 
-_embedding_model = None
 _supabase_client = None
-
-def _get_embedding_model():
-    global _embedding_model
-    if _embedding_model is None:
-        from sentence_transformers import SentenceTransformer
-        _embedding_model = SentenceTransformer("clip-ViT-B-32")
-    return _embedding_model
 
 def _get_supabase():
     global _supabase_client
@@ -151,7 +142,6 @@ def search_styles(
     query: str = "",
     style_id: str = "",
     top_k: int = 3,
-    retrieval_mode: str = "text-to-text",
 ):
     """向量搜尋最相似的風格參考圖，回傳多筆候選供使用者選擇。"""
     from designbridge.style_supabase import _STYLE_PROMPTS
@@ -168,7 +158,6 @@ def search_styles(
             text_query=q,
             style_id=sid or None,
             top_k=min(top_k, 10),
-            retrieval_mode=retrieval_mode,
         )
         if not results:
             return []
@@ -216,7 +205,6 @@ def search_styles(
 def get_style_preview(
     query: str = "",
     style_id: str = "",
-    retrieval_mode: str = "text-to-text",
 ):
     """根據文字語意搜尋最符合的風格參考圖（Supabase pgvector），供前端即時預覽。"""
     sid = style_id.strip() or ""
@@ -228,7 +216,6 @@ def get_style_preview(
             text_query=q,
             style_id=sid or None,
             top_k=1,
-            retrieval_mode=retrieval_mode,
         )
         if not results:
             return {"image_url": None}
@@ -355,8 +342,6 @@ async def generate_design(request: DesignRequest):
         }
         if request.style_profile_id and request.style_profile_id != "auto":
             user_input["style_profile_id"] = request.style_profile_id
-        if request.style_retrieval_mode:
-            user_input["style_retrieval_mode"] = request.style_retrieval_mode
         if request.initial_image_path:
             user_input["initial_image"] = request.initial_image_path
         if request.style_reference_image_path:

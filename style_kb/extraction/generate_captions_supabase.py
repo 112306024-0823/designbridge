@@ -98,62 +98,34 @@ def update_caption(row_id: str, caption: str) -> None:
     get_supabase().table("style_images").update({"caption_en2": caption}).eq("id", row_id).execute()
 
 
-# ── Gemini（多 Key 輪替）──────────────────────────────────────────────────────
-
-_gemini_keys: list[str] = []
-_gemini_key_idx: int = 0
-
-
-def _load_gemini_keys() -> list[str]:
-    """從 GEMINI_API_KEYS（逗號分隔）或 GEMINI_API_KEY 讀取 API 金鑰清單。"""
-    multi = os.environ.get("GEMINI_API_KEYS", "")
-    if multi:
-        return [k.strip() for k in multi.split(",") if k.strip()]
-    single = os.environ.get("GEMINI_API_KEY", "")
-    return [single] if single else []
-
+# ── Gemini（多 Key 輪替，共用 designbridge.llm）───────────────────────────────
 
 class QuotaExceeded(Exception):
     pass
 
 
-def _is_quota_error(e: Exception) -> bool:
-    msg = str(e).lower()
-    return ("429" in msg or "quota" in msg or "resourceexhausted" in type(e).__name__.lower()
-            or "rate_limit" in msg or "ratelimit" in msg)
-
-
 def generate_caption(image_bytes: bytes, mime_type: str) -> str:
     """依序嘗試所有 Gemini key；全部 quota 耗盡才 raise QuotaExceeded。"""
     import google.generativeai as genai
+    from designbridge.llm import call_with_gemini_key_rotation
 
-    global _gemini_keys, _gemini_key_idx
-    if not _gemini_keys:
-        _gemini_keys = _load_gemini_keys()
-    if not _gemini_keys:
-        raise QuotaExceeded("未設定 GEMINI_API_KEY / GEMINI_API_KEYS")
+    def _do(api_key: str) -> str:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(Config.GEMINI_MODEL)
+        response = model.generate_content(
+            [{"mime_type": mime_type, "data": image_bytes}, CAPTION_PROMPT],
+            generation_config=genai.GenerationConfig(temperature=0.3),
+        )
+        caption = (getattr(response, "text", "") or "").strip()
+        # 去除可能的引號包裹
+        if caption.startswith('"') and caption.endswith('"'):
+            caption = caption[1:-1].strip()
+        return caption
 
-    while _gemini_key_idx < len(_gemini_keys):
-        key = _gemini_keys[_gemini_key_idx]
-        try:
-            genai.configure(api_key=key)
-            model = genai.GenerativeModel(Config.GEMINI_MODEL)
-            response = model.generate_content(
-                [{"mime_type": mime_type, "data": image_bytes}, CAPTION_PROMPT],
-                generation_config=genai.GenerationConfig(temperature=0.3),
-            )
-            caption = (getattr(response, "text", "") or "").strip()
-            # 去除可能的引號包裹
-            if caption.startswith('"') and caption.endswith('"'):
-                caption = caption[1:-1].strip()
-            return caption
-        except Exception as e:
-            if _is_quota_error(e):
-                print(f"    ⚠️  Key #{_gemini_key_idx + 1}/{len(_gemini_keys)} quota 已滿，切換下一個...")
-                _gemini_key_idx += 1
-            else:
-                raise
-    raise QuotaExceeded(f"所有 {len(_gemini_keys)} 個 Gemini API key 均已達 quota 上限")
+    try:
+        return call_with_gemini_key_rotation(_do)
+    except RuntimeError as e:
+        raise QuotaExceeded(str(e)) from e
 
 
 # ── 下載 ─────────────────────────────────────────────────────────────────────

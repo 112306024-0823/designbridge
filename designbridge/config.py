@@ -19,8 +19,6 @@ class Config:
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
     GEMINI_TEMPERATURE: float = 0.3
 
-    # Style retrieval mode for Supabase reference search: "text-to-image" | "text-to-text"
-    STYLE_RETRIEVAL_MODE: str = os.getenv("DESIGNBRIDGE_STYLE_RETRIEVAL_MODE", "text-to-image")
     # Text-only embedding model for text-to-text style retrieval.
     TEXT_EMBEDDING_MODEL: str = os.getenv("DESIGNBRIDGE_TEXT_EMBEDDING_MODEL", "BAAI/bge-m3")
 
@@ -110,3 +108,17 @@ class Config:
         raise ValueError(
             "GEMINI_API_KEY not set. Please set it in config.py or as environment variable."
         )
+
+    @classmethod
+    def get_gemini_api_keys(cls) -> list[str]:
+        """All configured Gemini keys, in try-order: GEMINI_API_KEY first, then any extra
+        keys from GEMINI_API_KEYS (comma-separated), deduped."""
+        keys = []
+        single = (cls.GEMINI_API_KEY or "").strip()
+        if single:
+            keys.append(single)
+        for k in os.getenv("GEMINI_API_KEYS", "").split(","):
+            k = k.strip()
+            if k and k not in keys:
+                keys.append(k)
+        return keys
