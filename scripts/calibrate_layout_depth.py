@@ -34,7 +34,7 @@ import numpy as np
 # 允許從專案根目錄直接 `python -m scripts.calibrate_layout_depth`
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from designbridge.scene_graph_to_depth import (  # noqa: E402
+from designbridge.layout.scene_graph_to_depth import (  # noqa: E402
     _load_placements,
     project_scene_graph_to_depth,
 )
@@ -57,8 +57,8 @@ def _floats(s: str) -> list[float]:
 
 def _render_depth(prompt: str, depth_path: str, out_path: Path, depth_scale: float) -> str | None:
     """用既有後端以深度圖為條件算圖。優先 fal.ai，退而求其次 HF Kontext。回傳成圖路徑或 None。"""
-    from designbridge.config import Config
-    from designbridge.render_backends import _render_flux_kontext_fal, _render_hf_kontext
+    from designbridge.core.config import Config
+    from designbridge.render.render_backends import _render_flux_kontext_fal, _render_hf_kontext
 
     if Config.FAL_KEY:
         if _render_flux_kontext_fal(prompt, depth_path, out_path, depth_conditioning_scale=depth_scale):

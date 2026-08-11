@@ -36,7 +36,7 @@ def _save_history(record: dict) -> None:
 
 # 匯入設計引擎
 from designbridge import get_compiled_graph
-from designbridge.style_apply import list_available_style_profiles
+from designbridge.style.style_apply import list_available_style_profiles
 from style_kb.styles import STYLES
 
 
@@ -47,7 +47,7 @@ async def _app_lifespan(_: FastAPI):
 
     def _warmup():
         try:
-            from designbridge.warmup import run_startup_warmup
+            from designbridge.core.warmup import run_startup_warmup
             run_startup_warmup()
         except Exception as e:
             print(f"⚠️ DesignBridge startup warmup failed: {e}")
@@ -144,14 +144,14 @@ def search_styles(
     top_k: int = 3,
 ):
     """向量搜尋最相似的風格參考圖，回傳多筆候選供使用者選擇。"""
-    from designbridge.style_supabase import _STYLE_PROMPTS
+    from designbridge.style.style_supabase import _STYLE_PROMPTS
     from style_kb.styles import STYLES
     style_name_map = {sid: sname for sid, sname in STYLES}
 
     sid = style_id.strip() or ""
     q = query.strip() or sid or "interior design"
     try:
-        from designbridge.style_supabase import query_style_images_supabase
+        from designbridge.style.style_supabase import query_style_images_supabase
 
         client = _get_supabase()
         results = query_style_images_supabase(
@@ -210,7 +210,7 @@ def get_style_preview(
     sid = style_id.strip() or ""
     q = query.strip() or sid or "interior design"
     try:
-        from designbridge.style_supabase import query_style_images_supabase
+        from designbridge.style.style_supabase import query_style_images_supabase
 
         results = query_style_images_supabase(
             text_query=q,
@@ -290,7 +290,6 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
-    model: Optional[str] = None
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     stream: bool = False
@@ -298,19 +297,18 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    """通用 LLM chat endpoint，透過 designbridge.llm 呼叫 Gemini。
+    """通用 LLM chat endpoint，透過 Gemini。
 
     - stream=false（預設）：回傳 { "content": "..." }
     - stream=true：Server-Sent Events，每個 chunk 為 data: <text>\\n\\n
     """
-    from designbridge.llm import call_llm, call_llm_stream
-    from designbridge.config import Config
+    from designbridge.render.llm import call_llm, call_llm_stream
+    from designbridge.core.config import Config
 
     history = [{"role": m.role, "content": m.content} for m in request.messages[:-1]]
     last = request.messages[-1]
 
     kwargs = dict(
-        model=request.model,
         history=history or None,
         temperature=request.temperature,
         max_tokens=request.max_tokens,
@@ -325,7 +323,7 @@ async def chat(request: ChatRequest):
 
     try:
         content = call_llm(last.content, **kwargs)
-        return {"content": content, "model": request.model or Config.GEMINI_MODEL}
+        return {"content": content, "model": Config.GEMINI_MODEL}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -449,7 +447,7 @@ class QuotationRequest(BaseModel):
 @app.post("/api/quotation")
 async def get_quotation(req: QuotationRequest):
     """手動觸發估價（使用者點「重新估價」按鈕）。"""
-    from designbridge.quotation import build_quotation
+    from designbridge.pricing.quotation import build_quotation
     try:
         return build_quotation(req.image_path, req.structured_requirement or {})
     except Exception as e:

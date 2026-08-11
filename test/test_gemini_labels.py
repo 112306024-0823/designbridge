@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from designbridge.llm import call_llm
+from designbridge.render.llm import call_llm
 
 TEST_CASES = [
     "把沙發換成藍色",

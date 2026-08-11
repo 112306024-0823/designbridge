@@ -12,11 +12,11 @@ from pathlib import Path
 _project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_project_root))
 
-from designbridge.nodes import (
+from designbridge.core.nodes import (
     _call_gemini_requirement_analyzer,
     _rule_based_requirement_analyzer,
 )
-from designbridge.config import Config
+from designbridge.core.config import Config
 
 
 def main():
