@@ -8,7 +8,7 @@ from typing import Any, Callable
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
-from designbridge.nodes import (
+from designbridge.core.nodes import (
     adjuster_agent_stub,
     clip_evaluator_node,
     design_director,
@@ -18,8 +18,8 @@ from designbridge.nodes import (
     renderer,
     visual_preprocessing_local,
 )
-from designbridge.state import DesignBridgeState, RoutingDecision
-from designbridge.timing import log_stage
+from designbridge.core.state import DesignBridgeState, RoutingDecision
+from designbridge.core.timing import log_stage
 
 
 def _timed_node(

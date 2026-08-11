@@ -15,7 +15,7 @@ from typing import Any
 _text_embedding_model = None
 _supabase_client = None
 
-STYLE_REF_DIR = Path(__file__).resolve().parent.parent / "artifacts" / "style_ref"
+STYLE_REF_DIR = Path(__file__).resolve().parent.parent.parent / "artifacts" / "style_ref"
 
 _STYLE_PROMPTS: dict[str, dict[str, str]] = {
     "modern":     {"positive": "modern contemporary interior, clean lines, neutral tones, minimalist, photorealistic, high quality", "negative": "cluttered, dark, vintage, rustic"},

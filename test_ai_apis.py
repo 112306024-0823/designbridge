@@ -18,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from designbridge.config import Config
+from designbridge.core.config import Config
 
 
 def _any_llm_key() -> bool:
@@ -26,7 +26,7 @@ def _any_llm_key() -> bool:
 
 
 def test_llm() -> bool:
-    from designbridge.llm import call_llm
+    from designbridge.render.llm import call_llm
 
     out = call_llm(
         'Reply with one word: OK',

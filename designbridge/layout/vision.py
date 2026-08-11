@@ -187,14 +187,14 @@ def run_visual_preprocessing(
     artifacts_root: Path,
 ) -> VisionArtifacts:
     """Run local visual preprocessing and save outputs."""
-    from designbridge.depth_to_layout import (
+    from designbridge.layout.depth_to_layout import (
         load_depth,
         slice_zones,
         detect_furniture_blobs,
         compute_spatial_metrics,
         build_layout_json,
     )
-    from designbridge.timing import log_stage
+    from designbridge.core.timing import log_stage
 
     out_dir = ensure_dir(artifacts_root / "vision" / task_id)
 

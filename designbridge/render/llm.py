@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from typing import Iterator
 
-from designbridge.config import Config
+from designbridge.core.config import Config
 
 
 # ── Shared helpers ───────────────────────────────────────────────────────────

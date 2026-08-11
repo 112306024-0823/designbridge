@@ -28,7 +28,7 @@ class ConstraintRegistry:
 
     def __init__(self, constraints_root: Path | None = None) -> None:
         if constraints_root is None:
-            _root = Path(__file__).resolve().parent.parent
+            _root = Path(__file__).resolve().parent.parent.parent
             constraints_root = _root / "skills" / "constraints"
         self._root = constraints_root
         self._cache: dict[str, ConstraintSkillCard] | None = None

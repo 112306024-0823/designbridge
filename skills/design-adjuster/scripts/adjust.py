@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 _project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_project_root))
 
-from designbridge.config import Config
-from designbridge.inpaint import (
+from designbridge.core.config import Config
+from designbridge.render.inpaint import (
     mask_from_segmentation,
     fallback_center_mask,
     build_inpaint_prompt,

@@ -25,7 +25,7 @@ def test_kb_search():
     print("【測試 1】本地 KB 文字搜尋")
     print("=" * 60)
 
-    from designbridge.furniture_kb import search_kb, _load_local_kb
+    from designbridge.pricing.furniture_kb import search_kb, _load_local_kb
 
     kb = _load_local_kb()
     if not kb:
@@ -65,7 +65,7 @@ def test_clip_embedding():
     print("=" * 60)
 
     import numpy as np
-    from designbridge.furniture_kb import find_top_k_by_embedding, _load_embeddings, _load_local_kb
+    from designbridge.pricing.furniture_kb import find_top_k_by_embedding, _load_embeddings, _load_local_kb
 
     matrix = _load_embeddings()
     kb = _load_local_kb()
@@ -101,11 +101,11 @@ def test_full_quotation(image_path: str | None = None, skip_gemini: bool = False
 
     # --skip-gemini：直接 patch detect_furniture_gemini 回傳空，觸發備用清單
     if skip_gemini:
-        import designbridge.quotation as _q
+        import designbridge.pricing.quotation as _q
         _q.detect_furniture_gemini = lambda *a, **kw: []
         print("  ⚡ --skip-gemini：直接使用備用家具清單（不呼叫 Gemini）")
 
-    from designbridge.quotation import build_quotation
+    from designbridge.pricing.quotation import build_quotation
 
     # 模擬 structured_requirement
     mock_req = {

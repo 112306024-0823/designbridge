@@ -1,9 +1,7 @@
-"""Style-application helpers — vector store first, aggregated JSON fallback."""
+"""Style-application helpers — Supabase pgvector first, local ChromaDB fallback."""
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 from style_kb.styles import STYLES
@@ -54,7 +52,6 @@ def build_style_params(
     優先順序：
     1. Supabase pgvector 語義搜尋
     2. 本地 ChromaDB（若 Supabase 不可用）
-    3. Fallback：aggregated JSON
     """
     if (user_input or {}).get("no_style_reference"):
         return None
@@ -71,7 +68,7 @@ def build_style_params(
 
     # ── 1. Supabase pgvector 搜尋（文字對比） ──────────────────────────────────
     try:
-        from designbridge.style_supabase import (
+        from designbridge.style.style_supabase import (
             query_style_images_supabase,
             blend_style_params_supabase,
         )
@@ -87,7 +84,7 @@ def build_style_params(
 
     # ── 2. 本地 ChromaDB 搜尋 ─────────────────────────────────────────────────
     try:
-        from designbridge.style_vector import (
+        from designbridge.style.style_vector import (
             is_vector_store_ready,
             query_style_images,
             blend_style_params,
@@ -105,38 +102,4 @@ def build_style_params(
     except Exception as e:
         print(f"⚠️  本地向量庫查詢失敗：{e}")
 
-    # ── 3. Fallback：aggregated JSON ──────────────────────────────────────────
-    if not style_profile_id:
-        return None
-
-    aggregated_dir = Path(__file__).resolve().parent.parent / "style_kb" / "aggregated"
-    profile_path = aggregated_dir / f"{style_profile_id}_aggregated.json"
-    if not profile_path.exists():
-        return None
-
-    profile = json.loads(profile_path.read_text(encoding="utf-8"))
-    style_prefs = req.get("style_preferences") or {}
-    statistics = profile.get("statistics") or {}
-    ai_config = profile.get("ai_config") or {}
-    style_profile_data = profile.get("style_profile") or {}
-
-    style_strength = float(style_prefs.get("style_strength", 0.7))
-    recommended_weight = float(ai_config.get("recommended_ip_adapter_weight", 0.85))
-
-    print(f"⚠️  使用 aggregated fallback：{style_profile_id}")
-    return {
-        "style_profile_id": profile.get("style_id", style_profile_id),
-        "style_profile_name": profile.get("style_name", style_profile_id),
-        "style_prompt": ai_config.get("unified_positive_prompt", ""),
-        "negative_prompt": ai_config.get("unified_negative_prompt", ""),
-        "style_strength": round((style_strength + recommended_weight) / 2, 2),
-        "color_guidance": {
-            "primary_color": statistics.get("primary_color"),
-            "secondary_color": statistics.get("secondary_color"),
-            "accent_color": statistics.get("accent_color"),
-            "avg_color_temp_k": statistics.get("avg_color_temp_k"),
-        },
-        "controlnet_type": ai_config.get("controlnet_type", "depth"),
-        "style_summary": style_profile_data.get("summary", ""),
-        "source": "aggregated_fallback",
-    }
+    return None

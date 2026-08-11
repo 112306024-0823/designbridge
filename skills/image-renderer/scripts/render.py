@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 _project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_project_root))
 
-from designbridge.config import Config
-from designbridge.nodes import (
+from designbridge.core.config import Config
+from designbridge.core.nodes import (
     _build_imagen_prompt_from_requirement,
     _render_hf_inference,
     _render_flux,

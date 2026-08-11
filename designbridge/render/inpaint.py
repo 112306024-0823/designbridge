@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from designbridge.config import Config
+from designbridge.core.config import Config
 
 # ---------------------------------------------------------------------------
 # Pipeline cache
@@ -29,7 +29,7 @@ _inpaint_pipeline: Any = None
 _sam2_predictor: Any = None
 
 # checkpoint 與 config 路徑（相對於本專案 model/ 資料夾）
-_SAM2_CHECKPOINT = Path(__file__).parent.parent / "model" / "sam2" / "checkpoints" / "sam2.1_hiera_tiny.pt"
+_SAM2_CHECKPOINT = Path(__file__).parent.parent.parent / "model" / "sam2" / "checkpoints" / "sam2.1_hiera_tiny.pt"
 _SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_t.yaml"
 
 

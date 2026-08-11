@@ -12,8 +12,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from designbridge.llm import call_llm
-from designbridge.schemas import FurnitureCandidate, FurnitureItem, QuotationResultJSON
+from designbridge.render.llm import call_llm
+from designbridge.core.schemas import FurnitureCandidate, FurnitureItem, QuotationResultJSON
 
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
@@ -162,7 +162,7 @@ def _process_furniture_item(raw: dict, img: Any) -> tuple[FurnitureItem, bool]:
     Independent per item (own crop/embedding/DB lookup), so build_quotation runs
     this concurrently across all detected items instead of one at a time.
     """
-    from designbridge.furniture_kb import find_top_k_by_embedding, search_kb
+    from designbridge.pricing.furniture_kb import find_top_k_by_embedding, search_kb
 
     name_zh: str = raw.get("name_zh") or raw.get("name_en") or "家具"
     category: str = raw.get("category") or ""
@@ -249,7 +249,7 @@ def build_quotation(image_path: str, req: dict) -> QuotationResultJSON:
     4. 回傳 QuotationResultJSON
     """
     from PIL import Image
-    from designbridge.furniture_kb import _get_supabase_client, _load_local_kb, _load_embeddings
+    from designbridge.pricing.furniture_kb import _get_supabase_client, _load_local_kb, _load_embeddings
 
     # 取風格提示
     style_hint = ""

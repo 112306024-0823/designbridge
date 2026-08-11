@@ -6,7 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from designbridge.config import Config
+from designbridge.core.config import Config
 
 # ── Model caches (loaded once, reused) ────────────────────────────────────────
 

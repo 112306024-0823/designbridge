@@ -18,7 +18,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from designbridge.config import Config
+from designbridge.core.config import Config
 from style_kb.styles import STYLES
 
 # 專案根目錄（layout_kb/ 的上層）
@@ -40,14 +40,14 @@ def _image_to_layout(
     1. 用 vision.py 的 run_depth_estimation 產深度圖
     2. 用 depth_to_layout 萃取佈局 JSON
     """
-    from designbridge.depth_to_layout import (
+    from designbridge.layout.depth_to_layout import (
         build_layout_json,
         compute_spatial_metrics,
         detect_furniture_blobs,
         load_depth,
         slice_zones,
     )
-    from designbridge.vision import run_depth_estimation
+    from designbridge.layout.vision import run_depth_estimation
 
     depth_out_path.parent.mkdir(parents=True, exist_ok=True)
 

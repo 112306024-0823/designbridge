@@ -31,17 +31,17 @@ def run_startup_warmup() -> None:
             print(f"  ⚠ {name} skipped: {e}", flush=True)
 
     def _warm_chroma() -> None:
-        from designbridge.style_vector import warmup_vector_collection
+        from designbridge.style.style_vector import warmup_vector_collection
 
         warmup_vector_collection()
 
     def _warm_clip_eval() -> None:
-        from designbridge.clip_evaluator import _load_model
+        from designbridge.render.clip_evaluator import _load_model
 
         _load_model()
 
     def _warm_text_embedder() -> None:
-        from designbridge.style_supabase import _get_text_embedding_model
+        from designbridge.style.style_supabase import _get_text_embedding_model
 
         _get_text_embedding_model()
 

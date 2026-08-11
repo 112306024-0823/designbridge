@@ -18,7 +18,7 @@ scene_graph_to_depth.py
   world: X 左右、Y 遠近(由近相機側往遠牆遞增)、Z 上下(地板 0、天花板 H)
 
 用法：
-  python -m designbridge.scene_graph_to_depth placements.json --out depth.png --seg seg.png --vis
+  python -m designbridge.layout.scene_graph_to_depth placements.json --out depth.png --seg seg.png --vis
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ _SHELL_COLORS: dict[str, tuple[int, int, int]] = {
 
 
 def _furniture_color(ftype: str) -> tuple[int, int, int]:
-    from designbridge.layout_agent import FURNITURE_COLORS
+    from designbridge.layout.layout_agent import FURNITURE_COLORS
     return FURNITURE_COLORS.get(ftype, FURNITURE_COLORS["default"])
 
 

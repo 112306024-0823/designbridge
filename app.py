@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 import streamlit as st
 from designbridge import get_compiled_graph
-from designbridge.style_apply import list_available_style_profiles
+from designbridge.style.style_apply import list_available_style_profiles
 
 
 @st.cache_resource
@@ -63,13 +63,13 @@ style_options = ["自動（依文字需求判斷）"] + [
 ]
 
 selected_style_option = st.sidebar.selectbox(
-    "套用聚合風格檔（方案 B）",
+    "指定風格",
     options=style_options,
     index=0,
-    help="若選擇特定風格，系統會直接讀取 style_kb/aggregated 裡的聚合風格檔來組裝生成 prompt。",
+    help="若選擇特定風格，會限定向量搜尋（Supabase → 本地 ChromaDB）只在該風格內找參考圖來組裝生成 prompt。",
 )
 
-# 風格參考圖上傳欄位（移到聚合風格檔下方）
+# 風格參考圖上傳欄位（移到指定風格下方）
 st.sidebar.markdown("**風格參考圖（可選）**")
 style_reference_file = st.sidebar.file_uploader(
     "上傳風格參考圖",

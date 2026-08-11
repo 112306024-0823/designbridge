@@ -21,7 +21,7 @@ class LayoutConstraintRegistry:
 
     def __init__(self, constraints_root: Optional[Path] = None) -> None:
         if constraints_root is None:
-            _root = Path(__file__).resolve().parent.parent
+            _root = Path(__file__).resolve().parent.parent.parent
             constraints_root = _root / "skills" / "layout-constraints"
         self._root = constraints_root
         self._cache: Optional[list[LayoutConstraintCard]] = None

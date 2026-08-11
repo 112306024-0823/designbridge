@@ -32,7 +32,7 @@ def _translate_to_english(text: str) -> str:
     if all(ord(c) < 128 for c in text):
         return text
     try:
-        from designbridge.llm import call_llm
+        from designbridge.render.llm import call_llm
         result = call_llm(
             f"Translate the following text to English. Output only the translated text, nothing else:\n{text}",
             max_tokens=200,

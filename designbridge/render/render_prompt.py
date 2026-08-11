@@ -6,14 +6,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from designbridge.style_apply import STYLE_NAME_TO_ID
+from designbridge.style.style_apply import STYLE_NAME_TO_ID
 
 # ── Prompt builders ────────────────────────────────────────────────────────────
 
 def _analyze_style_image_with_gemini(image_path: str) -> str:
     """Use Gemini vision to extract a concise style description from a reference image."""
     try:
-        from designbridge.llm import call_llm
+        from designbridge.render.llm import call_llm
 
         analysis_prompt = (
             "Analyze this interior design style reference image. "

@@ -24,7 +24,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from designbridge.config import Config
+from designbridge.core.config import Config
 from style_kb.extraction.prompts_style_kb import STYLE_KB_PROMPT
 from style_kb.styles import STYLES
 

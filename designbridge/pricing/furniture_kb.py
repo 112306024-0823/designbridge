@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-_BASE = Path(__file__).parent / "furniture_kb"
+_BASE = Path(__file__).parent.parent / "furniture_kb"
 _LOCAL_KB_PATH  = _BASE / "ikea_tw.json"
 _EMB_PATH       = _BASE / "ikea_embeddings.npz"
 

@@ -33,8 +33,8 @@ class SkillRegistry:
 
     def __init__(self, skills_root: Optional[Path] = None) -> None:
         if skills_root is None:
-            # Same logic as config.py: _root = Path(__file__).resolve().parent.parent
-            _root = Path(__file__).resolve().parent.parent
+            # Same logic as config.py: _root = Path(__file__).resolve().parent.parent.parent
+            _root = Path(__file__).resolve().parent.parent.parent
             skills_root = _root / "skills"
         self._skills_root = skills_root
         self._cache: Optional[dict[str, SkillCard]] = None

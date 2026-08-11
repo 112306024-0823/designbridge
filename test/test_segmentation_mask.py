@@ -16,7 +16,7 @@ from pathlib import Path
 # 讓 Python 找得到 designbridge 套件
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from designbridge.inpaint import mask_from_segmentation, fallback_center_mask
+from designbridge.render.inpaint import mask_from_segmentation, fallback_center_mask
 
 # ── 設定：改成你要測試的 task_id ────────────────────────────────────────────────
 VISION_DIR = Path(__file__).resolve().parent.parent / "artifacts" / "vision"

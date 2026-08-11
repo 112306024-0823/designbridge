@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-VECTOR_STORE_DIR = Path(__file__).resolve().parent.parent / "style_kb" / "vector_store"
+VECTOR_STORE_DIR = Path(__file__).resolve().parent.parent.parent / "style_kb" / "vector_store"
 COLLECTION_NAME = "style_images"
 EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 

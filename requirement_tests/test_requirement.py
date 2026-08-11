@@ -20,8 +20,8 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from designbridge.config import Config
-from designbridge.nodes import (
+from designbridge.core.config import Config
+from designbridge.core.nodes import (
     _call_gemini_requirement_analyzer,
     _rule_based_requirement_analyzer,
 )

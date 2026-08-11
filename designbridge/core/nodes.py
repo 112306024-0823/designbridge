@@ -9,13 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from designbridge.config import Config
-from designbridge.prompts import REQUIREMENT_ANALYZER_PROMPT
-from designbridge.style_apply import build_style_params, STYLE_NAME_TO_ID
-from designbridge.state import DesignBridgeState, RoutingDecision
-from designbridge.vision import run_visual_preprocessing
-from designbridge.schemas import RequirementJSON, StyleParamsJSON
-from designbridge.inpaint import (
+from designbridge.core.config import Config
+from designbridge.core.prompts import REQUIREMENT_ANALYZER_PROMPT
+from designbridge.style.style_apply import build_style_params, STYLE_NAME_TO_ID
+from designbridge.core.state import DesignBridgeState, RoutingDecision
+from designbridge.layout.vision import run_visual_preprocessing
+from designbridge.core.schemas import RequirementJSON, StyleParamsJSON
+from designbridge.render.inpaint import (
     mask_from_segmentation,
     expand_mask_by_segmentation,
     fallback_center_mask,
@@ -27,12 +27,12 @@ from designbridge.inpaint import (
     run_fal_inpainting,
     load_mask_from_path,
 )
-from designbridge.render_prompt import (
+from designbridge.render.render_prompt import (
     _analyze_style_image_with_gemini,
     _build_imagen_prompt_from_requirement,
     _resolve_output_size,
 )
-from designbridge.render_backends import (
+from designbridge.render.render_backends import (
     _render_hf_inference,
     _render_hf_kontext,
     _render_flux_kontext_fal,
@@ -43,7 +43,7 @@ from designbridge.render_backends import (
     _render_flux_fal,
     _render_flux,
 )
-from designbridge.timing import timed_call
+from designbridge.core.timing import timed_call
 
 _BASE_NEGATIVE_PROMPT = (
     "people, person, human, man, woman, child, hands, face, "
@@ -88,7 +88,7 @@ def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
     family_needs   = user.get("family_needs")   or []
     fengshui_rules = user.get("fengshui_rules") or []
     if family_needs or fengshui_rules:
-        from designbridge.special_constraints import enrich_requirement
+        from designbridge.layout.special_constraints import enrich_requirement
         structured_requirement = enrich_requirement(structured_requirement, family_needs, fengshui_rules)
 
     # If the user explicitly selected a style from the dropdown, override whatever
@@ -135,7 +135,7 @@ def _call_llm_requirement_analyzer(
     The new prompt asks for a single JSON with both fields. Falls back to legacy NL parsing.
     """
     import json as _json
-    from designbridge.llm import call_llm
+    from designbridge.render.llm import call_llm
 
     prompt = REQUIREMENT_ANALYZER_PROMPT.format(
         text_prompt=text_prompt,
@@ -253,8 +253,8 @@ def design_director(state: DesignBridgeState) -> dict[str, Any]:
 
     if Config.get_dynamic_routing_enabled():
         try:
-            from designbridge.router import call_llm_router, RouterLLMError
-            # Auth is resolved inside designbridge.llm (Gemini).
+            from designbridge.core.router import call_llm_router, RouterLLMError
+            # Auth is resolved inside designbridge.render.llm (Gemini).
             routing_decision = call_llm_router(
                 structured_requirement=state.get("structured_requirement") or {},
                 vision_features=state.get("vision_features") or {},
@@ -270,60 +270,6 @@ def design_director(state: DesignBridgeState) -> dict[str, Any]:
     routing_decision = _route_decision(state)
     print(f"[design_director] fallback rule-based routing: {routing_decision}")
     return {"routing_decision": routing_decision}
-
-
-
-def layout_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
-    from designbridge.layout_agent import run_layout_agent
-
-    task_id = state.get("task_id") or str(uuid.uuid4())
-    req = state.get("structured_requirement") or {}
-
-    try:
-        result = run_layout_agent(req, task_id)
-    except Exception as e:
-        print(f"⚠️ Layout agent failed ({e}), skipping layout")
-        return {
-            "intermediate_outputs": {
-                **(state.get("intermediate_outputs") or {}),
-                "layout_agent": f"failed: {e}",
-            }
-        }
-
-    return {
-        "scene_graph": result.get("scene_graph"),
-        "intermediate_outputs": {
-            **(state.get("intermediate_outputs") or {}),
-            **(result.get("intermediate_outputs") or {}),
-        },
-    }
-
-
-def style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
-    """Quick style agent: load aggregated style profile and build prompt params."""
-    req = state.get("structured_requirement") or {}
-    user_input = state.get("user_input") or {}
-    style_params = build_style_params(req, user_input)
-
-    if not style_params:
-        return {
-            "intermediate_outputs": {
-                **(state.get("intermediate_outputs") or {}),
-                "style_agent": "no_aggregated_style_profile",
-            }
-        }
-
-    return {
-        "style_params": style_params,
-        "intermediate_outputs": {
-            **(state.get("intermediate_outputs") or {}),
-            "style_agent": {
-                "status": "aggregated_style_loaded",
-                "style_profile_id": style_params.get("style_profile_id"),
-                "style_profile_name": style_params.get("style_profile_name"),
-            },
-        }
-    }
 
 
 _ZH_TO_SEG_LABELS: dict[str, list[str]] = {
@@ -359,7 +305,7 @@ Where x1,y1 is top-left corner and x2,y2 is bottom-right corner.
 If the object is not visible in the image, return: {{"not_found": true}}"""
 
     try:
-        from designbridge.llm import call_llm
+        from designbridge.render.llm import call_llm
         raw = call_llm(prompt, images=[image_path], max_tokens=60, temperature=0.0)
         raw = raw.strip()
         if "```" in raw:
@@ -438,7 +384,7 @@ seg_labels rules:
 replace_with: describe the new object only if action=replace, else null."""
 
     try:
-        from designbridge.llm import call_llm
+        from designbridge.render.llm import call_llm
         images = [image_path] if image_path and Path(image_path).is_file() else None
         raw = call_llm(prompt, images=images, max_tokens=150, temperature=0.0)
         raw = raw.strip()
@@ -628,7 +574,7 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
             # 嘗試用 Gemini 翻譯成英文（FLUX 效果更好），失敗就直接用原文
             en_text = user_text
             try:
-                from designbridge.llm import call_llm
+                from designbridge.render.llm import call_llm
                 obj_hint = f" The selected object is: {seg_labels[0]}." if seg_labels else ""
                 translated = call_llm(
                     f"Translate this interior design modification request to English in one sentence.{obj_hint} "
@@ -768,7 +714,7 @@ def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     scene_graph: dict[str, Any] | None = None
     layout_intermediate: dict[str, Any] = {}
     if hint_layout:
-        from designbridge.layout_agent import run_layout_agent
+        from designbridge.layout.layout_agent import run_layout_agent
 
         existing_layout = state.get("layout_from_depth")  # 照片萃取的現有家具位置（若有上傳圖）
         try:
@@ -838,7 +784,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
         if not layout_prompt:
             layout_from_depth = state.get("layout_from_depth") or {}
             if layout_from_depth:
-                from designbridge.render_prompt import _layout_json_to_prompt_text
+                from designbridge.render.render_prompt import _layout_json_to_prompt_text
                 layout_prompt = _layout_json_to_prompt_text(layout_from_depth)
 
         if layout_prompt:
@@ -910,7 +856,7 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
             user_style_reference_local = style_reference_candidate
         elif style_reference_candidate.startswith(("http://", "https://")):
             try:
-                from designbridge.style_supabase import download_style_image
+                from designbridge.style.style_supabase import download_style_image
 
                 downloaded_ref = download_style_image(style_reference_candidate)
                 if downloaded_ref and downloaded_ref.exists():
@@ -1104,7 +1050,7 @@ def clip_evaluator_node(state: DesignBridgeState) -> dict[str, Any]:
 
     task_id = state.get("task_id")
     try:
-        from designbridge.clip_evaluator import evaluate, _translate_to_english
+        from designbridge.render.clip_evaluator import evaluate, _translate_to_english
         if design_description:
             text_prompt = design_description
         else:
@@ -1125,7 +1071,7 @@ def quotation_agent(state: DesignBridgeState) -> dict[str, Any]:
         return {"quotation_result": None}
 
     try:
-        from designbridge.quotation import build_quotation
+        from designbridge.pricing.quotation import build_quotation
         result = build_quotation(image_path, req)
         total = len(result["furniture_list"])
         matched = result["kb_match_count"]

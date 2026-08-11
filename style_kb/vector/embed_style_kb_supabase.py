@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-from designbridge.style_supabase import _compose_style_kb_text
+from designbridge.style.style_supabase import _compose_style_kb_text
 
 
 def _encode_query_text(text: str, model_name: str) -> str:

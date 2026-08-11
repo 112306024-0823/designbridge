@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from designbridge.config import Config
-from designbridge.layout_constraints import get_layout_constraint_registry
+from designbridge.core.config import Config
+from designbridge.layout.layout_constraints import get_layout_constraint_registry
 
 
 FURNITURE_SIZES: dict[str, tuple[float, float]] = {
@@ -575,7 +575,7 @@ def _parse_llm_layout(text: str) -> list[dict] | None:
 
 
 def _call_llm_layout(prompt: str) -> list[FurnitureItem]:
-    from designbridge.llm import call_llm
+    from designbridge.render.llm import call_llm
 
     text = call_llm(prompt)
     furniture_list = _parse_llm_layout(text)
@@ -683,7 +683,7 @@ def _generate_projected_depth(
     if not Config.ENABLE_LAYOUT_DEPTH_PROJECTION:
         return None, None
     try:
-        from designbridge.scene_graph_to_depth import project_scene_graph_to_depth
+        from designbridge.layout.scene_graph_to_depth import project_scene_graph_to_depth
 
         out_dir = Path(Config.ARTIFACTS_DIR) / "layout"
         depth_out = out_dir / f"{task_id}_projected_depth.png"
@@ -741,7 +741,7 @@ def run_layout_agent(
     existing_layout: photo-extracted current arrangement (state["layout_from_depth"]); when
           present, the planner adjusts from it rather than re-planning from scratch.
     """
-    from designbridge.prompts import LAYOUT_AGENT_PROMPT, LAYOUT_REFINEMENT_PROMPT
+    from designbridge.core.prompts import LAYOUT_AGENT_PROMPT, LAYOUT_REFINEMENT_PROMPT
 
     layout_registry = get_layout_constraint_registry()
     meta = structured_requirement.get("meta") or {}
@@ -800,7 +800,7 @@ def run_layout_agent(
             _fn = _LAYOUT_ENFORCERS.get(_card.enforce)
             if _fn:
                 items = _fn(items, space_info, _card.parameters)
-        from designbridge.special_constraints import apply_special_layout_constraints
+        from designbridge.layout.special_constraints import apply_special_layout_constraints
         items = apply_special_layout_constraints(items, structured_requirement)
         items = _clip_to_room(items)
 
@@ -838,7 +838,7 @@ def run_layout_agent(
         f"best={best_score:.3f} acceptance_rate={acceptance_rate:.2%}"
     )
 
-    from designbridge.special_constraints import verify_special_constraints
+    from designbridge.layout.special_constraints import verify_special_constraints
     special_satisfaction = verify_special_constraints(best_items, structured_requirement)
     infeasible_constraints = [k for k, v in special_satisfaction.items() if not v]
     feasible = not infeasible_constraints

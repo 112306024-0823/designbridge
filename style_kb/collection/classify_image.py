@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from designbridge.config import Config
+from designbridge.core.config import Config
 from style_kb.styles import STYLES
 
 # ──────────────────────────────────────────────────────────────────────────

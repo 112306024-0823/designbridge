@@ -6,10 +6,10 @@ from __future__ import annotations
 import json
 from typing import Optional, TYPE_CHECKING
 
-from designbridge.state import RoutingDecision
+from designbridge.core.state import RoutingDecision
 
 if TYPE_CHECKING:
-    from designbridge.skill_registry import SkillRegistry
+    from designbridge.core.skill_registry import SkillRegistry
 
 
 class RouterLLMError(Exception):
@@ -75,7 +75,7 @@ import re
 
 def build_router_prompt(structured_requirement: dict, skill_descriptions: str) -> str:
     """Fill DESIGN_DIRECTOR_ROUTER_PROMPT template."""
-    from designbridge.prompts import DESIGN_DIRECTOR_ROUTER_PROMPT
+    from designbridge.core.prompts import DESIGN_DIRECTOR_ROUTER_PROMPT
 
     requirement_json = json.dumps(structured_requirement, ensure_ascii=False, indent=2)
     return (
@@ -89,7 +89,7 @@ def call_llm_router(
     vision_features: dict,
     temperature: float = 0.0,
     registry: Optional["SkillRegistry"] = None,
-    # Deprecated: kept for backward compat, ignored (designbridge.llm handles auth)
+    # Deprecated: kept for backward compat, ignored (designbridge.render.llm handles auth)
     api_key: str = "",
     gemini_model: str = "",
     gemini_temperature: float | None = None,
@@ -100,7 +100,7 @@ def call_llm_router(
     Raises RouterLLMError if the LLM output cannot be parsed into a RoutingDecision.
     """
     if registry is None:
-        from designbridge.skill_registry import get_registry
+        from designbridge.core.skill_registry import get_registry
         registry = get_registry()
 
     # gemini_temperature kept for backward compat; takes precedence if explicitly passed
@@ -110,7 +110,7 @@ def call_llm_router(
     prompt = build_router_prompt(structured_requirement, skill_descriptions)
 
     try:
-        from designbridge.llm import call_llm
+        from designbridge.render.llm import call_llm
         llm_output = call_llm(prompt, temperature=resolved_temperature)
     except Exception as e:
         raise RouterLLMError(f"LLM call failed: {e}")
