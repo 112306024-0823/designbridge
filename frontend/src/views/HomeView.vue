@@ -330,7 +330,9 @@ async function runGenerate(payload, requestId, plan) {
 }
 
 function handleConfirmPlan() {
-  if (!pendingPlan.value || !pendingPayload.value) return
+  // loading 期間擋掉重複點擊——不然還沒回來又點一次，會兩個 /api/generate 同時打出去，
+  // 用同一個 task_id 各自生一張圖，最後互相覆蓋結果，畫面會亂掉甚至看起來空白
+  if (loading.value || !pendingPlan.value || !pendingPayload.value) return
   // 有拖曳過就用編輯後的座標，沒有就照原本 AI 規劃的送出
   const plan = editedPlacements.value
     ? {
@@ -349,9 +351,11 @@ function handleLayoutChanged(updatedPlacements) {
 }
 
 function handleRejectPlan() {
+  currentRequestId++   // 讓任何還在飛的 plan-layout/generate 回應失效，不會晚點又冒出來蓋掉畫面
   pendingPlan.value = null
   pendingPayload.value = null
   editedPlacements.value = null
+  planningLoading.value = false
 }
 
 function handleConfirmStyle(candidate) {
@@ -529,7 +533,9 @@ onMounted(fetchStyleOptions)
           />
           <div class="plan-confirm-actions">
             <button class="plan-reject-btn" @click="handleRejectPlan">重新輸入</button>
-            <button class="plan-confirm-btn" @click="handleConfirmPlan">確認佈局，開始生成</button>
+            <button class="plan-confirm-btn" :disabled="loading" @click="handleConfirmPlan">
+              {{ loading ? '生成中…' : '確認佈局，開始生成' }}
+            </button>
           </div>
         </div>
 
@@ -662,6 +668,7 @@ onMounted(fetchStyleOptions)
   cursor: pointer;
 }
 .plan-confirm-btn:hover { background: #6d4a2f; }
+.plan-confirm-btn:disabled { background: #b0977f; cursor: not-allowed; }
 
 /* 生成結果 */
 .refine-result {
