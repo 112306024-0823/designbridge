@@ -19,6 +19,11 @@ class Config:
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
     # Extra keys tried in order if GEMINI_API_KEY fails (comma-separated).
     GEMINI_API_KEYS: str = os.getenv("GEMINI_API_KEYS", "")
+
+    # Vertex AI mode: no API key, authenticate via service-account JSON (ADC).
+    GOOGLE_GENAI_USE_VERTEXAI: bool = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in ("1", "true", "yes")
+    GOOGLE_CLOUD_PROJECT: str = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+    GOOGLE_CLOUD_LOCATION: str = os.getenv("GOOGLE_CLOUD_LOCATION", "global")
     GEMINI_TEMPERATURE: float = 0.3
     # 2.5 系列模型預設會啟用隱藏推理（thinking），對抽取/翻譯/辨識這類簡單任務只會多花時間。
     # 0 = 關閉 thinking；-1 = 交給模型動態決定；正整數 = 指定 thinking token 上限。
@@ -81,7 +86,7 @@ class Config:
     FAL_CONTROLNET_STEPS: int = int(os.getenv("DESIGNBRIDGE_FAL_CONTROLNET_STEPS", "20"))
     FAL_CONTROLNET_GUIDANCE: float = float(os.getenv("DESIGNBRIDGE_FAL_CONTROLNET_GUIDANCE", "3.5"))
     PROJECTED_DEPTH_MAX_CONDITIONING_SCALE: float = float(
-        os.getenv("DESIGNBRIDGE_PROJECTED_DEPTH_MAX_CONDITIONING_SCALE", "0.5")
+        os.getenv("DESIGNBRIDGE_PROJECTED_DEPTH_MAX_CONDITIONING_SCALE", "0.3")
     )
 
     # Local vision preprocessing (Depth + UPerNet segmentation)
