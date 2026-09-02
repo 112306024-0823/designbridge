@@ -117,14 +117,43 @@ def _batch_load_style_kb(
             or []
         )
         kb_map: dict[str, dict[str, Any]] = {
-            row["image_url"]: row["style_kb"]
+            row["image_url"]: _pick_style_kb(row)
             for row in rows
-            if isinstance(row.get("style_kb"), dict)
+            if _pick_style_kb(row)
         }
         for r in results:
             r.style_kb = kb_map.get(r.image_url)
     except Exception as e:
         print(f"⚠️ Batch style_kb 載入失敗：{e}")
+
+
+def query_style_image_by_url(image_url: str) -> list[SupabaseStyleResult]:
+    """Look up the exact row for a specific image (e.g. one the user picked from the
+    AI-suggested candidates) instead of re-running a fresh text search that might
+    silently return a different image — see RECORD.md 「兩張圖都套用」."""
+    client = _get_supabase()
+    rows = (
+        client.table("style_images")
+        .select("style_id,image_url,source_meta,style_kb")
+        .eq("image_url", image_url)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        return []
+    row = rows[0]
+    style_name = (row.get("source_meta") or {}).get("style", row["style_id"])
+    return [
+        SupabaseStyleResult(
+            style_id=row["style_id"],
+            image_url=row["image_url"],
+            style_name=style_name,
+            similarity=1.0,  # 使用者明確選定，不是排序出來的分數
+            style_kb=_pick_style_kb(row) or None,
+        )
+    ]
 
 
 def query_style_images_supabase(
@@ -142,63 +171,31 @@ def query_style_images_supabase(
     )
 
 
+def _pick_style_kb(row: dict[str, Any]) -> dict[str, Any]:
+    """style_kb has 100% coverage; the legacy style_kb_2 column was renamed to style_kb."""
+    kb = row.get("style_kb")
+    return kb if isinstance(kb, dict) else {}
+
+
 def _compose_style_kb_text(row: dict[str, Any]) -> str:
-    """Build a compact searchable text from style_kb JSON."""
-    style_kb = row.get("style_kb") or {}
-    source_meta = row.get("source_meta") or {}
+    """Build a compact searchable text from style_kb JSON: description + tags only
+    (Chinese version). Per RECORD.md decision — both are pure Chinese (no zh/en mixing
+    diluting embedding semantics), and `description` is already a Gemini-summarized
+    style/color/atmosphere digest, so materials/lighting/prompt keywords/source_meta
+    just add noise without adding retrieval signal."""
+    style_kb = _pick_style_kb(row)
     parts: list[str] = []
 
-    style_info = style_kb.get("style_info") if isinstance(style_kb, dict) else {}
-    if isinstance(style_info, dict):
-        name = style_info.get("name") or style_info.get("style")
-        if name:
-            parts.append(str(name))
-        tags = style_info.get("tags")
-        if isinstance(tags, list):
-            parts.append(" ".join(str(t) for t in tags if t))
+    desc = style_kb.get("description")
+    zh_desc = desc.get("zh") if isinstance(desc, dict) else desc
+    if zh_desc:
+        parts.append(str(zh_desc))
 
-    desc = style_kb.get("description") if isinstance(style_kb, dict) else None
-    if desc:
-        parts.append(str(desc))
+    tags = (style_kb.get("style_info") or {}).get("tags")
+    zh_tags = tags.get("zh") if isinstance(tags, dict) else tags if isinstance(tags, list) else None
+    if zh_tags:
+        parts.append(" ".join(str(t) for t in zh_tags if t))
 
-    visual = style_kb.get("visual_elements") if isinstance(style_kb, dict) else {}
-    if isinstance(visual, dict):
-        mats = visual.get("materials")
-        if isinstance(mats, list):
-            for m in mats:
-                if isinstance(m, dict):
-                    parts.append(
-                        " ".join(
-                            str(m.get(k, "")).strip()
-                            for k in ("type", "finish", "target")
-                            if m.get(k)
-                        )
-                    )
-                elif isinstance(m, str) and m.strip():
-                    parts.append(m.strip())
-        lighting = visual.get("lighting")
-        if isinstance(lighting, dict):
-            if lighting.get("type"):
-                parts.append(str(lighting["type"]))
-            if lighting.get("color_temp"):
-                parts.append(f"{lighting['color_temp']}K")
-
-    ai = style_kb.get("ai_params") if isinstance(style_kb, dict) else {}
-    pos_from_kb, _ = _extract_kb_prompts(ai if isinstance(ai, dict) else None)
-    if pos_from_kb:
-        parts.append(pos_from_kb)
-
-    # fallback metadata
-    if source_meta.get("style"):
-        parts.append(str(source_meta["style"]))
-    if source_meta.get("kind"):
-        parts.append(str(source_meta["kind"]))
-
-    style_id_val = row.get("style_id")
-    if style_id_val:
-        parts.append(str(style_id_val))
-
-    # normalize whitespace and keep deterministic order
     return " ".join(p.replace("\n", " ").strip() for p in parts if p and str(p).strip())
 
 
@@ -271,7 +268,7 @@ def _query_style_text_to_text(
     results: list[SupabaseStyleResult] = []
     for row, score in ranked:
         style_name = (row.get("source_meta") or {}).get("style", row["style_id"])
-        kb = row.get("style_kb")
+        kb = _pick_style_kb(row)
         results.append(
             SupabaseStyleResult(
                 style_id=row["style_id"],
@@ -369,6 +366,21 @@ def _extract_kb_strength(ai_params: dict[str, Any] | None) -> float | None:
             return float(val)
     return None
 
+def _extract_kb_color_guidance(style_kb: dict[str, Any] | None) -> dict[str, str]:
+    """Read the HEX color palette from visual_elements.colors, renamed to the
+    primary_color/secondary_color/accent_color keys render_prompt.py expects."""
+    if not isinstance(style_kb, dict):
+        return {}
+    colors = (style_kb.get("visual_elements") or {}).get("colors")
+    if not isinstance(colors, dict):
+        return {}
+    guidance = {}
+    for src, dst in (("primary", "primary_color"), ("secondary", "secondary_color"), ("accent", "accent_color")):
+        if colors.get(src):
+            guidance[dst] = colors[src]
+    return guidance
+
+
 def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str, Any] | None:
     """
     Build style params from Supabase search results.
@@ -395,7 +407,10 @@ def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str,
 
     summary = ""
     if isinstance(style_kb, dict):
-        summary = str(style_kb.get("description", "")).strip()
+        desc = style_kb.get("description", "")
+        # v2 schema: {"zh": "...", "en": "..."}; v1 schema: plain string. Use zh
+        # (embedding/display both stay on the Chinese version; en is for a future EN UI).
+        summary = str(desc.get("zh", "") if isinstance(desc, dict) else desc).strip()
 
     kb_strength = _extract_kb_strength(ai_params)
     style_strength = float(max(0.0, min(1.0, kb_strength))) if kb_strength is not None else 0.8
@@ -414,7 +429,7 @@ def blend_style_params_supabase(results: list[SupabaseStyleResult]) -> dict[str,
         "style_prompt": style_prompt,
         "negative_prompt": negative_prompt,
         "style_strength": style_strength,
-        "color_guidance": {},
+        "color_guidance": _extract_kb_color_guidance(style_kb),
         "controlnet_type": "depth",
         "style_summary": summary,
         "material_recommendations": _extract_material_recommendations(style_kb or {}),

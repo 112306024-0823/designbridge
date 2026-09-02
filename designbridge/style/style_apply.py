@@ -70,13 +70,20 @@ def build_style_params(
     try:
         from designbridge.style.style_supabase import (
             query_style_images_supabase,
+            query_style_image_by_url,
             blend_style_params_supabase,
         )
-        results = query_style_images_supabase(
-            text_query=query,
-            style_id=style_profile_id,
-            top_k=3,
-        )
+        if isinstance(style_ref, str) and style_ref.startswith(("http://", "https://")):
+            # 使用者已經從候選卡片明確選了某張圖 → 直接用那張的 style_kb，
+            # 不要重新搜（重新搜可能搜出別張，導致跟 renderer.py 判斷用的
+            # 參考圖不一致，兩張圖的風格描述都被塞進最終 prompt）
+            results = query_style_image_by_url(style_ref)
+        else:
+            results = query_style_images_supabase(
+                text_query=query,
+                style_id=style_profile_id,
+                top_k=3,
+            )
         if results:
             return blend_style_params_supabase(results)
     except Exception as e:

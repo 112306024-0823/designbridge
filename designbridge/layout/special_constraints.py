@@ -439,9 +439,11 @@ def enrich_requirement(
     if prompt_parts:
         existing = (structured_requirement.get("design_description") or "").strip()
         addition = "; ".join(prompt_parts)
-        structured_requirement["design_description"] = (
-            f"{existing}. {addition}" if existing else addition
-        )
+        if existing:
+            existing = existing.rstrip(".")
+            structured_requirement["design_description"] = f"{existing}. {addition}"
+        else:
+            structured_requirement["design_description"] = addition
 
     structured_requirement["special_constraints"] = {
         trigger: trigger in active_triggers for trigger in cards

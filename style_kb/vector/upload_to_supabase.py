@@ -103,13 +103,12 @@ def upload_style(client, style_id: str, limit: int | None, dry_run: bool) -> int
                 else:
                     raise
 
-        # Insert row
+        # Insert row（style_kb 留空，交給 fill_style_kb_from_supabase.py 之後批次補上）
         client.table("style_images").insert({
             "style_id": style_id,
             "image_path": storage_path,
             "image_url": image_url,
             "source_meta": source_meta,
-            "style_kb": style_kb,
         }).execute()
 
         count += 1

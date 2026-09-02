@@ -2,6 +2,12 @@
 .vscode/
 .idea/
 designbridge_dataset.zip
+
+# GCP service-account credentials — never commit
+service-account.json
+.gcp/
+*-service-account.json
+trained_loras.json
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -110,3 +116,4 @@ style_kb/raw
 
 .claude/
 model/
+dataset_export

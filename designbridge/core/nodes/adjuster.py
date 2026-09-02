@@ -485,7 +485,7 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
                 "model": "stable-diffusion-2-inpainting",
                 "strength": strength,
                 "mask_source": mask_source,
-                "prompt_preview": prompt[:150],
+                "prompt_preview": prompt,  # 完整 prompt（不截斷）：testing 用
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },

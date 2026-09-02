@@ -156,7 +156,43 @@ def _call_llm_requirement_analyzer(
         if routing not in _VALID_ROUTING_DECISIONS:
             routing = "design"
         req["_routing_decision"] = routing
-        return req
+        return _normalize_requirement(req)
 
     # Fallback: LLM returned the old flat structure directly
-    return parsed
+    return _normalize_requirement(parsed)
+
+
+def _normalize_str_list(items: Any) -> list[str]:
+    """Coerce a value that should be list[str] but may contain stray dicts (Gemini's
+    JSON output isn't schema-enforced, so it occasionally nests an object where a
+    plain string was asked for) back into plain strings."""
+    if not isinstance(items, list):
+        return []
+    result: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            if item.strip():
+                result.append(item.strip())
+        elif isinstance(item, dict):
+            name = item.get("item") or item.get("name") or item.get("type") or item.get("label")
+            if name:
+                result.append(str(name).strip())
+        elif item is not None:
+            result.append(str(item).strip())
+    return result
+
+
+def _normalize_requirement(req: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize the LLM's raw JSON once, at the single place it becomes
+    ``structured_requirement`` — every downstream consumer (layout_agent's
+    ``", ".join(...)``/``.lower()`` calls, adjuster.py, inpaint.py) assumes
+    ``layout_constraints.{must_keep,must_add,must_remove}`` are ``list[str]``
+    and crashes on a stray dict item otherwise."""
+    if not isinstance(req, dict):
+        return req
+    constraints = req.get("layout_constraints")
+    if isinstance(constraints, dict):
+        for key in ("must_keep", "must_add", "must_remove"):
+            if key in constraints:
+                constraints[key] = _normalize_str_list(constraints[key])
+    return req

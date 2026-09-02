@@ -180,7 +180,9 @@ def search_styles(
             negative_prompt = fallback.get("negative", "")
 
             if style_kb and isinstance(style_kb, dict):
-                description = style_kb.get("description")
+                desc_raw = style_kb.get("description")
+                # v2 schema: {"zh": "...", "en": "..."}；前端顯示用中文版
+                description = desc_raw.get("zh") if isinstance(desc_raw, dict) else desc_raw
                 ai = style_kb.get("ai_params") or {}
                 prompts = ai.get("prompts") or {}
                 positive_prompt = prompts.get("positive") or positive_prompt

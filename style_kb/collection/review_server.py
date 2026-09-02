@@ -399,7 +399,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
                 raise ValueError("missing id")
             from style_kb.collection.generate_review import get_supabase
             client = get_supabase()
-            allowed = {"caption_en", "space", "style_id"}
+            allowed = {"caption_en2", "space", "style_id"}
             update = {k: v for k, v in body.items() if k in allowed}
             if not update:
                 self._json_resp(200, {"ok": True})

@@ -90,9 +90,10 @@ async function fetchStyleCandidates() {
       matchedStylePreview.value = sorted[0]
         ? { image_url: sorted[0].image_url, style_name: sorted[0].style_name, similarity: sorted[0].similarity }
         : null
-      if (confirmedStyle.value && !sorted.find(c => c.image_url === confirmedStyle.value.image_url)) {
-        confirmedStyle.value = null
-      }
+      // 預設框住相似度最高的那張，使用者可再改；已選且仍在清單中則保留
+      const keep = confirmedStyle.value
+        && sorted.find(c => c.image_url === confirmedStyle.value.image_url)
+      confirmedStyle.value = keep || sorted[0] || null
     }
   } catch {}
   finally {

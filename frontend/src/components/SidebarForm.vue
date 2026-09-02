@@ -201,11 +201,6 @@ const emit = defineEmits(['submit', 'mask-ready', 'retry-style-options'])
               AI 依描述自動選取：<strong>{{ matchedStylePreview.style_name }}</strong>
               <span class="score">{{ (matchedStylePreview.similarity * 100).toFixed(0) }}%</span>
             </div>
-            <img
-              :src="matchedStylePreview.image_url?.startsWith('http') ? matchedStylePreview.image_url : `http://localhost:8000${matchedStylePreview.image_url}`"
-              alt="風格參考圖"
-              @error="$event.target.style.display='none'"
-            />
           </div>
         </template>
         <div v-else class="no-style-hint">純文字 prompt 生圖，不套用風格參考圖</div>
@@ -492,12 +487,7 @@ select:focus { outline: none; border-color: var(--primary); background: #fffaf5;
 .style-method-group .radio-content small  { font-size: 0.68rem; }
 
 /* Matched preview */
-.matched-preview { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.15rem; }
-.matched-preview img {
-  width: 100%; max-height: 160px; object-fit: cover;
-  border-radius: var(--radius-md); border: 1.5px solid var(--primary-border);
-  display: block; cursor: zoom-in;
-}
+.matched-preview { margin-top: 0.15rem; }
 .matched-label {
   font-size: 0.75rem; color: var(--primary);
   display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;

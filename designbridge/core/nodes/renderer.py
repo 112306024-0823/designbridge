@@ -87,8 +87,9 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     output_size = _resolve_output_size(output_aspect, user_input.get("initial_image"))
     output_width, output_height = output_size
     generation_params: dict[str, Any] = {
-        "prompt_preview": prompt[:200],
-        "negative_prompt_preview": (negative_prompt or "")[:200],
+        # 完整 prompt（不截斷）：testing 用，前端結構化需求卡片會顯示這份
+        "prompt_preview": prompt,
+        "negative_prompt_preview": negative_prompt or "",
         "output_aspect": output_aspect,
         "output_size": {"width": output_width, "height": output_height},
     }
