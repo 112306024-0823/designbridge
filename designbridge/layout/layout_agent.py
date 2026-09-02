@@ -712,6 +712,47 @@ def _generate_projected_depth(
         return None, None
 
 
+def reproject_scene_graph(
+    scene_graph: dict[str, Any],
+    space_info: dict[str, Any],
+    task_id: str,
+    output_size: tuple[int, int] | None = None,
+) -> dict[str, Any]:
+    """Re-run the floor-plan/depth-projection step against `furniture_placements` that
+    may have been hand-edited by the user in the 3D preview (drag to reposition).
+
+    This is pure NumPy rasterization, not an LLM call — cheap to redo. It has to be
+    redone whenever we resume from a pre-seeded scene_graph, because `projected_depth_path`
+    is what actually reaches ControlNet; skipping this would silently render the
+    original AI-planned positions even after the user dragged furniture around.
+    """
+    placements = scene_graph.get("furniture_placements") or []
+    items = [
+        FurnitureItem(
+            id=str(p.get("id", "")),
+            type=str(p.get("type", "default")),
+            x=float(p.get("x", 0)), y=float(p.get("y", 0)),
+            w=float(p.get("w", 0.1)), h=float(p.get("h", 0.1)),
+            rotation=float(p.get("rotation", 0.0)),
+        )
+        for p in placements
+    ]
+    items = _clip_to_room(items)
+
+    floor_plan_path = _generate_floor_plan(items, task_id)
+    projected_depth_path, projected_seg_path = _generate_projected_depth(
+        items, space_info, task_id, image_size=output_size or (1024, 1024)
+    )
+
+    return {
+        **scene_graph,
+        "furniture_placements": [item.to_dict() for item in items],
+        "floor_plan_path": floor_plan_path,
+        "projected_depth_path": projected_depth_path,
+        "projected_seg_path": projected_seg_path,
+    }
+
+
 # ─────────────────────────── Main Entry Point ───────────────────────────
 
 def _format_existing_layout(existing_layout: dict | None) -> str:

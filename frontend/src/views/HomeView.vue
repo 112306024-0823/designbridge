@@ -201,9 +201,11 @@ async function uploadFile(file) {
 // planningLoading：規劃階段（/api/plan-layout，不生圖）的 loading 狀態
 // pendingPlan：規劃結果，等使用者確認 3D 佈局後才真的生圖
 // pendingPayload：對應的請求 payload，確認時原樣帶去 /api/generate（省去重打一次表單）
+// editedPlacements：使用者在 3D 預覽裡拖曳過的家具座標（沒拖過就是 null，照原規劃送出）
 const planningLoading = ref(false)
 const pendingPlan = ref(null)
 const pendingPayload = ref(null)
+const editedPlacements = ref(null)
 
 async function handleSubmit() {
   const hasText = textPrompt.value.trim()
@@ -224,6 +226,7 @@ async function handleSubmit() {
   error.value = ''
   result.value = null
   pendingPlan.value = null
+  editedPlacements.value = null
   loading.value = true
   try {
     // 細部微調優先用上次生成圖（已在伺服器），否則才上傳空間圖
@@ -310,6 +313,7 @@ async function runGenerate(payload, requestId, plan) {
       result.value = data
       pendingPlan.value = null
       pendingPayload.value = null
+      editedPlacements.value = null
       // 每次成功生圖後更新基底圖（細部微調下一輪用）
       if (data.generated_image_path) {
         lastGeneratedImage.value = {
@@ -327,12 +331,27 @@ async function runGenerate(payload, requestId, plan) {
 
 function handleConfirmPlan() {
   if (!pendingPlan.value || !pendingPayload.value) return
-  runGenerate(pendingPayload.value, currentRequestId, pendingPlan.value)
+  // 有拖曳過就用編輯後的座標，沒有就照原本 AI 規劃的送出
+  const plan = editedPlacements.value
+    ? {
+        ...pendingPlan.value,
+        scene_graph: { ...pendingPlan.value.scene_graph, furniture_placements: editedPlacements.value },
+      }
+    : pendingPlan.value
+  runGenerate(pendingPayload.value, currentRequestId, plan)
+}
+
+// 使用者在 3D 預覽裡拖動完家具後觸發。故意不寫回 pendingPlan（那會觸發
+// LayoutPreview3D 的 sceneGraph prop 變化、重建整個場景、相機視角被重置回預設）——
+// Three.js 場景裡的位置本身已經是最新的了，這裡只是記下來給「確認生成」時用。
+function handleLayoutChanged(updatedPlacements) {
+  editedPlacements.value = updatedPlacements
 }
 
 function handleRejectPlan() {
   pendingPlan.value = null
   pendingPayload.value = null
+  editedPlacements.value = null
 }
 
 function handleConfirmStyle(candidate) {
@@ -500,11 +519,13 @@ onMounted(fetchStyleOptions)
         <!-- 佈局規劃完成，先讓使用者在 3D 預覽裡確認，再花時間真正生圖 -->
         <div v-else-if="pendingPlan" class="plan-confirm">
           <h2>確認佈局</h2>
-          <p class="plan-confirm-hint">AI 規劃了以下家具擺位，確認沒問題後再開始生成圖片</p>
+          <p class="plan-confirm-hint">AI 規劃了以下家具擺位，可以拖曳調整位置，確認沒問題後再開始生成圖片</p>
           <LayoutPreview3D
             :scene-graph="pendingPlan.scene_graph"
             :render-config="pendingPlan.layout_render_config"
             :space-info="pendingPlan.structured_requirement?.space_info"
+            editable
+            @layout-changed="handleLayoutChanged"
           />
           <div class="plan-confirm-actions">
             <button class="plan-reject-btn" @click="handleRejectPlan">重新輸入</button>
