@@ -302,6 +302,13 @@ def project_scene_graph_to_depth(
             bright = ((1.0 - norm) * 255.0).clip(0, 255)
             depth_img[finite] = bright[finite].astype(np.uint8)
 
+    # 合成深度是硬邊方塊（家具邊緣沒有真實深度圖的漸層過渡），ControlNet 用力
+    # 對齊硬邊時容易在物件邊界生成半透明疊影。輕微模糊軟化邊緣，緩解此瑕疵。
+    from PIL import Image, ImageFilter
+    depth_img = np.array(
+        Image.fromarray(depth_img, mode="L").filter(ImageFilter.GaussianBlur(radius=3))
+    )
+
     result: dict[str, Any] = {
         "depth_array": depth_img,
         "id_map": idbuf,

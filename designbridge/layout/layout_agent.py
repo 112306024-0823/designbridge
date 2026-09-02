@@ -674,9 +674,15 @@ def _generate_floor_plan(items: list[FurnitureItem], task_id: str) -> str | None
 
 
 def _generate_projected_depth(
-    items: list[FurnitureItem], space_info: dict, task_id: str
+    items: list[FurnitureItem],
+    space_info: dict,
+    task_id: str,
+    image_size: tuple[int, int] = (1024, 1024),
 ) -> tuple[str | None, str | None]:
     """Project furniture boxes into a perspective depth map (+ segmentation) for ControlNet.
+
+    image_size must match the aspect ratio the renderer will actually request, otherwise
+    the control image and render canvas mismatch (see run_layout_agent's output_size doc).
 
     Returns (depth_path, seg_path). Pure NumPy — no Blender/3D dependencies.
     """
@@ -692,6 +698,7 @@ def _generate_projected_depth(
             [item.to_dict() for item in items],
             space_info,
             depth_out,
+            image_size=image_size,
             seg_out_path=seg_out,
             camera_overrides={
                 "hfov_deg": Config.LAYOUT_PROJECTION_HFOV,
@@ -732,6 +739,7 @@ def run_layout_agent(
     structured_requirement: dict[str, Any],
     task_id: str,
     existing_layout: dict[str, Any] | None = None,
+    output_size: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     """
     Run layout planning. Returns a partial state dict (scene_graph, intermediate_outputs).
@@ -740,6 +748,10 @@ def run_layout_agent(
           Floor plan PNG is used for ControlNet only when ENABLE_LAYOUT_CONTROLNET=true.
     existing_layout: photo-extracted current arrangement (state["layout_from_depth"]); when
           present, the planner adjusts from it rather than re-planning from scratch.
+    output_size: (width, height) the renderer will request from the image model. The projected
+          depth map must be built at this same aspect ratio, or the ControlNet control image gets
+          mismatched against the render canvas and the uncovered margins render as unconstrained
+          (unrelated) content instead of room geometry. Defaults to a square canvas.
     """
     from designbridge.core.prompts import LAYOUT_AGENT_PROMPT, LAYOUT_REFINEMENT_PROMPT
 
@@ -883,7 +895,7 @@ def run_layout_agent(
 
     floor_plan_path = _generate_floor_plan(best_items, task_id)
     projected_depth_path, projected_seg_path = _generate_projected_depth(
-        best_items, space_info, task_id
+        best_items, space_info, task_id, image_size=output_size or (1024, 1024)
     )
 
     scene_graph: dict[str, Any] = {

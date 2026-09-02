@@ -2,6 +2,7 @@
 import { computed, ref, reactive, watch } from 'vue'
 
 const refExpanded = ref(true)
+const rawExpanded = ref(false)
 
 const props = defineProps({
   result:  { type: Object,  default: null },
@@ -172,6 +173,21 @@ const styleReferenceImageUrl = computed(() => {
           <div class="req-item" v-if="result.structured_requirement.edit_scope?.scope_value !== undefined">
             <span class="req-label">改動幅度</span>
             <span class="req-value">{{ Number(result.structured_requirement.edit_scope.scope_value).toFixed(1) }}</span>
+          </div>
+        </div>
+
+        <!-- testing 用：完整結構化需求 + 這次生成實際用的參數/prompt -->
+        <button class="raw-toggle" @click="rawExpanded = !rawExpanded">
+          {{ rawExpanded ? '收合完整 JSON ▲' : '顯示完整 JSON（含 prompt / 生成參數） ▼' }}
+        </button>
+        <div v-if="rawExpanded" class="raw-json-group">
+          <div>
+            <div class="raw-json-label">structured_requirement</div>
+            <pre class="raw-json">{{ JSON.stringify(result.structured_requirement, null, 2) }}</pre>
+          </div>
+          <div v-if="result.render_result?.generation_params">
+            <div class="raw-json-label">generation_params</div>
+            <pre class="raw-json">{{ JSON.stringify(result.render_result.generation_params, null, 2) }}</pre>
           </div>
         </div>
       </div>
@@ -540,6 +556,28 @@ const styleReferenceImageUrl = computed(() => {
 }
 .req-label { font-size: 0.68rem; color: var(--text-3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 .req-value { font-size: 0.85rem; color: var(--text-1); font-weight: 600; }
+
+/* Raw JSON (testing) */
+.raw-toggle {
+  background: none; border: none; cursor: pointer;
+  font-size: 0.75rem; font-weight: 600; color: var(--primary);
+  padding: 0.2rem 0; text-align: left;
+}
+.raw-toggle:hover { text-decoration: underline; }
+.raw-json-group { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.5rem; }
+.raw-json-label { font-size: 0.68rem; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+.raw-json {
+  background: rgba(0,0,0,0.85); color: #d4e8d4;
+  border-radius: var(--radius-md);
+  padding: 0.75rem 0.9rem;
+  font-size: 0.72rem;
+  font-family: monospace;
+  line-height: 1.5;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 /* Style meta */
 .style-meta    { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; margin-bottom: 0.9rem; }

@@ -46,10 +46,16 @@ def fetch_rows(style: str | None, show_all: bool) -> list[dict]:
     offset = 0
     while True:
         q = (client.table("style_images")
-             .select("id, image_url, style_id, quality_score, quality_flags, width, height, file_size_kb, caption_en, space, ai_style_confidence, caption_model")
+             .select("id, image_url, source_meta, style_id, quality_score, quality_flags, width, height, file_size_kb, caption_en2, space, ai_style_confidence, caption_model")
              .order("quality_score", desc=False))
         if not show_all:
-            q = q.lt("quality_score", 1.0)
+            # 「有問題的」= 舊的技術性 quality_score 過低，或新的 AI 語意判斷標記為不適合
+            # （近景特寫 / 風格明顯不符 / 信心分數偏低），兩種來源合併篩選。
+            q = q.or_(
+                "quality_score.lt.1,"
+                "ai_style_confidence.lt.0.5,"
+                "quality_flags->>is_closeup.eq.true"
+            )
         if style:
             q = q.eq("style_id", style)
         batch = (q.range(offset, offset + PAGE - 1).execute()).data or []
@@ -90,6 +96,7 @@ FLAG_LABELS = {
     "bad_ratio":        ("比例異常", "#0ea5e9"),
     "too_small_kb":     ("檔案太小", "#64748b"),
     "corrupt":          ("損毀", "#1e293b"),
+    "is_closeup":       ("近景特寫", "#eab308"),
 }
 
 
@@ -104,9 +111,12 @@ def build_html(rows: list[dict], generated_at: str, db_style_counts: dict[str, i
                         if v is True and k in FLAG_LABELS]
         all_flags.update(active_flags)
         orient = flags.get("orientation", "")
+        # source_meta.url（原始來源）比 image_url（R2 鏡像，部分資料夾已失效如 american/japanese）
+        # 更可靠，實測 20 筆抽樣 R2 只有 80% 存活、source_meta.url 100% 存活，優先用它顯示
+        source_url = (r.get("source_meta") or {}).get("url") or ""
         cards.append({
             "id":         r["id"],
-            "url":        r["image_url"],
+            "url":        source_url or r["image_url"],
             "style":      r["style_id"] or "other",
             "score":      r.get("quality_score") or 0,
             "w":          r.get("width") or 0,
@@ -115,11 +125,13 @@ def build_html(rows: list[dict], generated_at: str, db_style_counts: dict[str, i
             "orient":     orient,
             "flags":      active_flags,
             "lap":        (r.get("quality_flags") or {}).get("laplacian", ""),
-            "caption":    r.get("caption_en") or "",
+            "caption":    r.get("caption_en2") or "",
             "aiStyle":    r.get("style_id") or "other",
             "spaceType":  r.get("space") or "",
             "confidence": r.get("ai_style_confidence"),
-            "hasAI":      bool(r.get("caption_model")),
+            "hasAI":      bool(r.get("caption_model")) or r.get("ai_style_confidence") is not None,
+            "mismatchReason": (r.get("quality_flags") or {}).get("style_mismatch_reason") or "",
+            "suggestedStyles": (r.get("quality_flags") or {}).get("suggested_styles") or [],
         })
 
     flag_options_html = ""
@@ -243,6 +255,11 @@ body{{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   border-radius:99px; font-size:11px; font-weight:700;
   backdrop-filter:blur(4px);
 }}
+.conf-badge{{
+  position:absolute; bottom:8px; right:8px; padding:2px 8px;
+  border-radius:99px; font-size:11px; font-weight:700;
+  backdrop-filter:blur(4px);
+}}
 
 /* ── Card body ── */
 .card-body{{ padding:10px 12px }}
@@ -306,6 +323,12 @@ body{{ padding-bottom:64px }}
   color:#e2e8f0; border-radius:4px; padding:3px 6px; font-size:11px
 }}
 .ai-conf{{ font-size:10px; color:#64748b; white-space:nowrap }}
+.suggest-chip{{
+  background:transparent; border:1px solid #334155; color:#94a3b8;
+  border-radius:99px; padding:2px 9px; font-size:10px; cursor:pointer;
+}}
+.suggest-chip:hover{{ border-color:#6366f1; color:#c7d2fe }}
+.suggest-chip.current{{ background:#6366f1; border-color:#6366f1; color:#fff }}
 .ai-caption{{
   width:100%; background:#0f172a; border:1px solid #334155;
   color:#cbd5e1; border-radius:4px; padding:4px 6px;
@@ -352,6 +375,8 @@ body{{ padding-bottom:64px }}
     <select id="sort-select">
       <option value="score-asc">分數低→高</option>
       <option value="score-desc">分數高→低</option>
+      <option value="conf-asc">AI 信心低→高</option>
+      <option value="conf-desc">AI 信心高→低</option>
       <option value="style">風格</option>
     </select>
   </div>
@@ -367,10 +392,11 @@ body{{ padding-bottom:64px }}
   <input class="copy-output" id="copy-output" readonly
          placeholder="複製後貼到 purge_rejected.py --ids 後面">
   <button class="btn btn-danger" onclick="copyPurgeCmd()">複製刪除指令</button>
+  <button class="btn btn-danger" onclick="deleteSelected()">直接刪除（永久，不能復原）</button>
 </div>
 
 <script>
-const CARDS = {cards_json};
+let CARDS = {cards_json};
 const FLAG_LABELS = {flag_labels_json};
 
 let activeFlag = "all";
@@ -400,6 +426,11 @@ function renderGrid() {{
   if (sort === "score-asc")  data.sort((a,b) => a.score - b.score);
   if (sort === "score-desc") data.sort((a,b) => b.score - a.score);
   if (sort === "style")      data.sort((a,b) => a.style.localeCompare(b.style));
+  // 沒有 ai_style_confidence 的圖（還沒跑過 AI 判斷）固定排最後，不管哪個方向
+  if (sort === "conf-asc")
+    data.sort((a,b) => (a.confidence ?? 999) - (b.confidence ?? 999));
+  if (sort === "conf-desc")
+    data.sort((a,b) => (b.confidence ?? -999) - (a.confidence ?? -999));
 
   visibleIds = new Set(data.map(c => c.id));
   document.getElementById("total-count").textContent = data.length;
@@ -432,6 +463,12 @@ function renderGrid() {{
                      border:1px solid ${{scoreColor(card.score)}}44">
           ${{card.score.toFixed(2)}}
         </span>
+        ${{card.confidence != null ? `
+        <span class="conf-badge" title="${{card.mismatchReason || 'AI 風格符合信心'}}"
+              style="background:${{scoreColor(card.confidence)}}22;color:${{scoreColor(card.confidence)}};
+                     border:1px solid ${{scoreColor(card.confidence)}}44">
+          AI ${{Math.round(card.confidence*100)}}%
+        </span>` : ""}}
       </div>
       <div class="card-body">
         <div class="card-style">${{card.style}} · ${{card.orient}}</div>
@@ -490,8 +527,32 @@ function copyPurgeCmd() {{
   document.getElementById("copy-output").value = cmd;
 }}
 
+async function deleteSelected() {{
+  const ids = [...selectedIds];
+  if (!ids.length) {{ alert("請先選取要刪除的圖片"); return; }}
+  if (!confirm(`確定要永久刪除這 ${{ids.length}} 張圖片嗎？會同時刪除 Storage 檔案跟資料庫紀錄，無法復原。`)) return;
+
+  let ok = 0, fail = 0;
+  for (const id of ids) {{
+    try {{
+      const r = await fetch("/delete", {{
+        method: "POST", headers: {{"Content-Type": "application/json"}},
+        body: JSON.stringify({{ id }}),
+      }});
+      const j = await r.json();
+      if (j.ok) ok++; else fail++;
+    }} catch (e) {{ fail++; }}
+  }}
+
+  CARDS = CARDS.filter(c => !ids.includes(c.id));
+  selectedIds.clear();
+  updateCount();
+  renderGrid();
+  alert(`刪除完成：成功 ${{ok}} 張，失敗 ${{fail}} 張`);
+}}
+
 // ── AI Panel ─────────────────────────────────────────────────────────────────
-const SPACE_OPT = ["客廳","臥室","廚房","浴室","餐廳","書房","走道","陽台","其他"];
+const SPACE_OPT = ["客廳","臥室","廚房","浴室","餐廳","書房","走道","玄關","陽台","辦公室","其他"];
 const STYLE_OPT = ["modern","nordic","japanese","industrial","american","classic","luxury","country","other"];
 const STYLE_ZH2 = {{modern:"現代",nordic:"北歐",japanese:"日式",industrial:"工業",american:"美式",classic:"古典",luxury:"奢華",country:"鄉村",other:"其他"}};
 const aiState = {{}};
@@ -509,7 +570,7 @@ function buildAIPanel(card) {{
     return wrap;
   }}
 
-  aiState[card.id] = {{ caption_en: card.caption, space: card.spaceType, style_id: card.aiStyle }};
+  aiState[card.id] = {{ caption_en2: card.caption, space: card.spaceType, style_id: card.aiStyle }};
 
   const parts = [STYLE_ZH2[card.aiStyle]||card.aiStyle, card.spaceType].filter(Boolean).join(" · ");
   const toggle = document.createElement("button");
@@ -539,13 +600,32 @@ function buildAIPanel(card) {{
   stSel.onchange = () => aiState[card.id].style_id = stSel.value;
   const confSpan = document.createElement("span"); confSpan.className = "ai-conf";
   confSpan.textContent = card.confidence != null ? Math.round(card.confidence*100)+"%" : "";
+  if (card.mismatchReason) confSpan.title = card.mismatchReason;
   styleRow.appendChild(stLbl); styleRow.appendChild(stSel); styleRow.appendChild(confSpan);
   content.appendChild(styleRow);
+
+  // AI 建議風格（點一下直接套用到上面的下拉選單，不用自己找）
+  if (card.suggestedStyles && card.suggestedStyles.length) {{
+    const sugRow = document.createElement("div");
+    sugRow.className = "ai-row";
+    const sugLbl = document.createElement("span"); sugLbl.className = "ai-lbl"; sugLbl.textContent = "AI 建議";
+    sugRow.appendChild(sugLbl);
+    card.suggestedStyles.forEach(s => {{
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "suggest-chip" + (s === card.aiStyle ? " current" : "");
+      chip.textContent = STYLE_ZH2[s] || s;
+      chip.onclick = () => {{ stSel.value = s; aiState[card.id].style_id = s;
+        sugRow.querySelectorAll(".suggest-chip").forEach(c => c.classList.toggle("current", c===chip)); }};
+      sugRow.appendChild(chip);
+    }});
+    content.appendChild(sugRow);
+  }}
 
   // Caption textarea
   const ta = document.createElement("textarea");
   ta.className = "ai-caption"; ta.rows = 3; ta.value = card.caption || "";
-  ta.oninput = () => aiState[card.id].caption_en = ta.value;
+  ta.oninput = () => aiState[card.id].caption_en2 = ta.value;
   content.appendChild(ta);
 
   // Action buttons

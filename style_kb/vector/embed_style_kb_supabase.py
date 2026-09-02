@@ -70,14 +70,23 @@ def main() -> None:
     client = create_client(supabase_url, service_role_key)
     model = SentenceTransformer(model_name)
 
-    q = client.table("style_images").select("id,style_id,image_url,source_meta,style_kb,style_kb_embedding")
-    q = q.not_.is_("style_kb", "null")
-    if not args.reset:
-        q = q.is_("style_kb_embedding", "null")
-    if args.style:
-        q = q.eq("style_id", args.style)
-
-    rows = q.execute().data or []
+    # PostgREST 單次查詢預設上限 1000 筆，用 .range() 分頁抓到全部（不然超過 1000 筆的表
+    # 永遠只會處理到前 1000 筆，跟 fill_style_kb_from_supabase.py 的 fetch_null_rows() 同一套模式）。
+    PAGE = 1000
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        q = client.table("style_images").select("id,style_id,image_url,source_meta,style_kb,style_kb_embedding")
+        q = q.not_.is_("style_kb", "null")
+        if not args.reset:
+            q = q.is_("style_kb_embedding", "null")
+        if args.style:
+            q = q.eq("style_id", args.style)
+        batch = q.range(offset, offset + PAGE - 1).execute().data or []
+        rows.extend(batch)
+        if len(batch) < PAGE:
+            break
+        offset += PAGE
     print(f"待處理：{len(rows)} 筆")
     if not rows:
         return

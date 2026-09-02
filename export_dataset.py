@@ -10,8 +10,8 @@ from supabase import create_client
 client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
 
 rows = (client.table("style_images")
-        .select("id, image_url, caption_en, style_id")
-        .not_.is_("caption_en", "null")
+        .select("id, image_url, caption_en2, style_id")
+        .not_.is_("caption_en2", "null")
         .not_.is_("image_url", "null")
         .execute().data)
 
@@ -26,7 +26,7 @@ for i, row in enumerate(rows):
     try:
         img_bytes = httpx.get(row["image_url"], timeout=20, follow_redirects=True).content
         (out / f"{stem}.jpg").write_bytes(img_bytes)
-        (out / f"{stem}.txt").write_text(row["caption_en"], encoding="utf-8")
+        (out / f"{stem}.txt").write_text(row["caption_en2"], encoding="utf-8")
         if (i + 1) % 50 == 0:
             print(f"[{i+1}/{len(rows)}] ✅")
     except Exception as e:

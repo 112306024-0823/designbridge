@@ -28,12 +28,19 @@ def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     layout_intermediate: dict[str, Any] = {}
     if hint_layout:
         from designbridge.layout.layout_agent import run_layout_agent
+        from designbridge.render.render_prompt import _resolve_output_size
 
         existing_layout = state.get("layout_from_depth")  # 照片萃取的現有家具位置（若有上傳圖）
+        # 必須跟 renderer 最終請求的畫布比例一致，否則投影深度圖與生圖畫布長寬比不符，
+        # ControlNet 對不到深度的邊緣區域會生成跟房間無關的內容。
+        output_size = _resolve_output_size(
+            str(user_input.get("output_aspect") or "auto"), user_input.get("initial_image")
+        )
         try:
             result = timed_call(
                 "layout_and_style.layout_agent", task_id,
-                run_layout_agent, req, task_id, existing_layout=existing_layout,
+                run_layout_agent, req, task_id,
+                existing_layout=existing_layout, output_size=output_size,
             )
             scene_graph = result.get("scene_graph")
             layout_intermediate = result.get("intermediate_outputs") or {}
