@@ -17,6 +17,11 @@ def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     (hint_layout=True from LLM semantic analysis). Otherwise only style params are built,
     and spatial structure is left to the depth map (if available).
     """
+    # 已經跑過一次了（/api/plan-layout 先規劃、使用者確認後才呼叫 /api/generate）——
+    # scene_graph/style_params 直接沿用，不要重新搜尋風格、更不要重新呼叫 layout_agent 的 Gemini。
+    if state.get("scene_graph") or state.get("style_params"):
+        return {}
+
     req = state.get("structured_requirement") or {}
     user_input = state.get("user_input") or {}
     hint_layout = bool(req.get("hint_layout", False))

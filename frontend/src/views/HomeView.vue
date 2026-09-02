@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, watch, computed, defineAsyncComponent } from 'vue'
 import { useImageField } from '@/composables/useImageField'
 import designbridgeLogo from '../../asset/designbridge_logo.png'
 import SidebarForm from '@/components/SidebarForm.vue'
@@ -7,6 +7,8 @@ import ResultPanel from '@/components/ResultPanel.vue'
 import StyleSuggestions from '@/components/StyleSuggestions.vue'
 import RefineCanvas from '@/components/RefineCanvas.vue'
 import { API_BASE, apiUrl, mediaUrl } from '@/config/api'
+
+const LayoutPreview3D = defineAsyncComponent(() => import('@/components/LayoutPreview3D.vue'))
 
 const textPrompt = ref('')
 const editScope = ref(0.6)
@@ -196,6 +198,13 @@ async function uploadFile(file) {
   return (await res.json()).path
 }
 
+// planningLoading：規劃階段（/api/plan-layout，不生圖）的 loading 狀態
+// pendingPlan：規劃結果，等使用者確認 3D 佈局後才真的生圖
+// pendingPayload：對應的請求 payload，確認時原樣帶去 /api/generate（省去重打一次表單）
+const planningLoading = ref(false)
+const pendingPlan = ref(null)
+const pendingPayload = ref(null)
+
 async function handleSubmit() {
   const hasText = textPrompt.value.trim()
   const hasStyle = selectedStyle.value !== 'auto'
@@ -214,6 +223,7 @@ async function handleSubmit() {
   submitKey.value++
   error.value = ''
   result.value = null
+  pendingPlan.value = null
   loading.value = true
   try {
     // 細部微調優先用上次生成圖（已在伺服器），否則才上傳空間圖
@@ -232,30 +242,74 @@ async function handleSubmit() {
       }
     }
 
+    const payload = {
+      text_prompt: textPrompt.value,
+      edit_scope: editScope.value,
+      style_profile_id: !noStyleReference.value && selectedStyle.value !== 'auto'
+        ? selectedStyle.value
+        : !noStyleReference.value ? confirmedStyle.value?.style_id || undefined : undefined,
+      initial_image_path,
+      style_reference_image_path,
+      no_style_reference: mode.value === 'refine' || noStyleReference.value,
+      refine_mode: mode.value === 'refine',
+      output_aspect: outputAspect.value,
+      mask_image_path: manualMaskPath.value || undefined,
+      family_needs: familyNeeds.value,
+      fengshui_rules: fengshuiRules.value,
+      style_method: styleMethod.value,
+    }
+
+    // 細部微調不會有 layout 可規劃/預覽，照舊直接生成
+    if (mode.value === 'refine') {
+      await runGenerate(payload, requestId)
+      return
+    }
+
+    // 先規劃（不生圖），有規劃出佈局才停下來讓使用者在 3D 預覽裡確認，
+    // 沒有的話（純風格調整、沒有 hint_layout）就直接繼續生成，不多一次無意義的確認點擊
+    planningLoading.value = true
+    const planRes = await fetch(apiUrl('/api/plan-layout'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!planRes.ok) throw new Error(`${planRes.status}`)
+    const plan = await planRes.json()
+    if (requestId !== currentRequestId) return
+
+    if (plan.scene_graph?.furniture_placements?.length) {
+      pendingPlan.value = plan
+      pendingPayload.value = payload
+      loading.value = false
+      planningLoading.value = false
+      return
+    }
+
+    await runGenerate(payload, requestId, plan)
+  } catch (e) {
+    if (requestId === currentRequestId) {
+      error.value = e.message
+      loading.value = false
+      planningLoading.value = false
+    }
+  }
+}
+
+async function runGenerate(payload, requestId, plan) {
+  loading.value = true
+  planningLoading.value = false
+  try {
     const res = await fetch(apiUrl('/api/generate'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text_prompt: textPrompt.value,
-        edit_scope: editScope.value,
-        style_profile_id: !noStyleReference.value && selectedStyle.value !== 'auto'
-          ? selectedStyle.value
-          : !noStyleReference.value ? confirmedStyle.value?.style_id || undefined : undefined,
-        initial_image_path,
-        style_reference_image_path,
-        no_style_reference: mode.value === 'refine' || noStyleReference.value,
-        refine_mode: mode.value === 'refine',
-        output_aspect: outputAspect.value,
-        mask_image_path: manualMaskPath.value || undefined,
-        family_needs: familyNeeds.value,
-        fengshui_rules: fengshuiRules.value,
-        style_method: styleMethod.value,
-      }),
+      body: JSON.stringify(plan ? { ...payload, plan } : payload),
     })
     if (!res.ok) throw new Error(`${res.status}`)
     const data = await res.json()
     if (requestId === currentRequestId) {
       result.value = data
+      pendingPlan.value = null
+      pendingPayload.value = null
       // 每次成功生圖後更新基底圖（細部微調下一輪用）
       if (data.generated_image_path) {
         lastGeneratedImage.value = {
@@ -269,6 +323,16 @@ async function handleSubmit() {
   } finally {
     if (requestId === currentRequestId) loading.value = false
   }
+}
+
+function handleConfirmPlan() {
+  if (!pendingPlan.value || !pendingPayload.value) return
+  runGenerate(pendingPayload.value, currentRequestId, pendingPlan.value)
+}
+
+function handleRejectPlan() {
+  pendingPlan.value = null
+  pendingPayload.value = null
 }
 
 function handleConfirmStyle(candidate) {
@@ -426,10 +490,30 @@ onMounted(fetchStyleOptions)
         />
       </template>
 
-      <!-- 整體設計：風格推薦 / 結果 -->
+      <!-- 整體設計：規劃中 / 佈局確認 / 風格推薦 / 結果 -->
       <template v-else>
+        <div v-if="planningLoading" class="plan-loading">
+          <div class="refine-spinner"></div>
+          <p>規劃佈局中…</p>
+        </div>
+
+        <!-- 佈局規劃完成，先讓使用者在 3D 預覽裡確認，再花時間真正生圖 -->
+        <div v-else-if="pendingPlan" class="plan-confirm">
+          <h2>確認佈局</h2>
+          <p class="plan-confirm-hint">AI 規劃了以下家具擺位，確認沒問題後再開始生成圖片</p>
+          <LayoutPreview3D
+            :scene-graph="pendingPlan.scene_graph"
+            :render-config="pendingPlan.layout_render_config"
+            :space-info="pendingPlan.structured_requirement?.space_info"
+          />
+          <div class="plan-confirm-actions">
+            <button class="plan-reject-btn" @click="handleRejectPlan">重新輸入</button>
+            <button class="plan-confirm-btn" @click="handleConfirmPlan">確認佈局，開始生成</button>
+          </div>
+        </div>
+
         <StyleSuggestions
-          v-if="showSuggestions"
+          v-else-if="showSuggestions"
           :candidates="styleCandidates"
           :confirmed="confirmedStyle"
           :loading="candidatesLoading"
@@ -493,6 +577,70 @@ onMounted(fetchStyleOptions)
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* 佈局規劃中 / 確認 */
+.plan-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  color: #8B5E3C;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.plan-confirm {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+.plan-confirm h2 {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: #5c3d24;
+  margin: 0;
+}
+.plan-confirm-hint {
+  font-size: 0.85rem;
+  color: #a07850;
+  margin: 0 0 0.5rem;
+}
+.plan-confirm > :deep(.layout-3d-wrap) {
+  width: 100%;
+  max-width: 640px;
+}
+.plan-confirm-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+.plan-reject-btn {
+  padding: 0.6rem 1.2rem;
+  border: 1.5px solid #999;
+  border-radius: 8px;
+  background: transparent;
+  color: #444;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.plan-reject-btn:hover { background: #f0f0f0; border-color: #666; }
+.plan-confirm-btn {
+  padding: 0.6rem 1.4rem;
+  border: none;
+  border-radius: 8px;
+  background: #8B5E3C;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.plan-confirm-btn:hover { background: #6d4a2f; }
 
 /* 生成結果 */
 .refine-result {
