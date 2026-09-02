@@ -8,21 +8,48 @@ Raises ``RuntimeError`` if no key is set or every key fails.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Iterator
 
 from designbridge.core.config import Config
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
 
 # ── Shared helpers ───────────────────────────────────────────────────────────
 
-def _resolve_gemini_api_keys() -> list[str]:
+def _find_service_account() -> Path | None:
+    """Locate a GCP service-account JSON: GOOGLE_APPLICATION_CREDENTIALS if set,
+    else ``service-account.json`` (or ``.gcp/*.json``) in the repo root."""
+    explicit = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    if explicit:
+        p = Path(explicit)
+        return p if p.is_file() else None
+    for cand in (_REPO_ROOT / "service-account.json", *sorted(_REPO_ROOT.glob(".gcp/*.json"))):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _vertex_enabled() -> bool:
+    """Vertex mode is on if explicitly flagged, or a service-account JSON is present."""
+    return bool(Config.GOOGLE_GENAI_USE_VERTEXAI or _find_service_account())
+
+def _resolve_gemini_api_keys() -> list[str | None]:
     """Ordered, deduplicated list of Gemini API keys to try.
 
-    ``GEMINI_API_KEY`` is tried first, then each entry of ``GEMINI_API_KEYS``
-    (comma-separated) in order.
+    In Vertex AI mode (``GOOGLE_GENAI_USE_VERTEXAI``) there is no API key —
+    returns ``[None]`` so callers make a single attempt with the Vertex client
+    (auth via service-account JSON / ADC).
+
+    Otherwise ``GEMINI_API_KEY`` is tried first, then each entry of
+    ``GEMINI_API_KEYS`` (comma-separated) in order.
     """
+    if _vertex_enabled():
+        return [None]
+
     keys: list[str] = []
     primary = (Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY") or "").strip()
     if primary:
@@ -88,7 +115,7 @@ def _build_gemini_parts(
 
 
 def _gemini_client_and_config(
-    api_key: str,
+    api_key: str | None,
     system: str | None,
     temperature: float | None,
     max_tokens: int | None,
@@ -99,7 +126,18 @@ def _gemini_client_and_config(
     except ImportError as exc:
         raise RuntimeError("google-genai 未安裝。請先執行: pip install google-genai") from exc
 
-    client = genai.Client(api_key=api_key)
+    if api_key is None:  # Vertex AI mode
+        sa = _find_service_account()
+        project = Config.GOOGLE_CLOUD_PROJECT or os.getenv("GOOGLE_CLOUD_PROJECT", "")
+        if sa:
+            os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", str(sa))
+            if not project:  # project id lives inside the service-account json
+                project = json.loads(sa.read_text(encoding="utf-8")).get("project_id", "")
+        if not project:
+            raise RuntimeError("Vertex 模式但找不到 project id（放 service-account.json 或設 GOOGLE_CLOUD_PROJECT）")
+        client = genai.Client(vertexai=True, project=project, location=Config.GOOGLE_CLOUD_LOCATION)
+    else:
+        client = genai.Client(api_key=api_key)
     cfg = types.GenerateContentConfig(
         temperature=temperature if temperature is not None else Config.GEMINI_TEMPERATURE,
         thinking_config=types.ThinkingConfig(thinking_budget=Config.GEMINI_THINKING_BUDGET),
@@ -110,7 +148,11 @@ def _gemini_client_and_config(
 
 
 def _no_key_error() -> RuntimeError:
-    return RuntimeError("GEMINI_API_KEY 未設定。請在 .env 中設定 GEMINI_API_KEY（可選：GEMINI_API_KEYS 作為備援）。")
+    return RuntimeError(
+        "未設定 Gemini 認證。擇一：\n"
+        "  (a) .env 設 GEMINI_API_KEY（可選 GEMINI_API_KEYS 作為備援）\n"
+        "  (b) 把 GCP service-account.json 放到專案根目錄（project id 從檔案自動讀取）"
+    )
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
