@@ -5,24 +5,29 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 import numpy as np
 from PIL import Image
-from transformers import CLIPModel, CLIPProcessor
 
 _MODEL_ID = "openai/clip-vit-base-patch32"
-_model: Optional[CLIPModel] = None
-_processor: Optional[CLIPProcessor] = None
+_model: Optional[Any] = None
+_processor: Optional[Any] = None
 
 
-def _load_model() -> tuple[CLIPModel, CLIPProcessor]:
+def _load_model() -> tuple[Any, Any]:
     global _model, _processor
     if _model is None:
-        _processor = CLIPProcessor.from_pretrained(_MODEL_ID)
-        _model = CLIPModel.from_pretrained(_MODEL_ID)
-        _model.eval()
+        from designbridge.core.model_lock import MODEL_LOAD_LOCK
+
+        with MODEL_LOAD_LOCK:
+            if _model is None:
+                from transformers import CLIPModel, CLIPProcessor
+
+                _processor = CLIPProcessor.from_pretrained(_MODEL_ID)
+                _model = CLIPModel.from_pretrained(_MODEL_ID)
+                _model.eval()
     return _model, _processor
 
 

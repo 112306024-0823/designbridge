@@ -33,9 +33,13 @@ _STYLE_PROMPTS: dict[str, dict[str, str]] = {
 def _get_text_embedding_model():
     global _text_embedding_model
     if _text_embedding_model is None:
-        from sentence_transformers import SentenceTransformer
-        model_name = os.getenv("DESIGNBRIDGE_TEXT_EMBEDDING_MODEL", "BAAI/bge-m3")
-        _text_embedding_model = SentenceTransformer(model_name)
+        from designbridge.core.model_lock import MODEL_LOAD_LOCK
+
+        with MODEL_LOAD_LOCK:
+            if _text_embedding_model is None:
+                from sentence_transformers import SentenceTransformer
+                model_name = os.getenv("DESIGNBRIDGE_TEXT_EMBEDDING_MODEL", "BAAI/bge-m3")
+                _text_embedding_model = SentenceTransformer(model_name)
     return _text_embedding_model
 
 

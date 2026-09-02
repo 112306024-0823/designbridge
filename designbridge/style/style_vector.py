@@ -65,18 +65,24 @@ def _get_collection():
     if _collection is not None:
         return _collection
 
-    import chromadb
-    from chromadb.utils import embedding_functions
+    from designbridge.core.model_lock import MODEL_LOAD_LOCK
 
-    ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=EMBEDDING_MODEL
-    )
-    _client = chromadb.PersistentClient(path=str(VECTOR_STORE_DIR))
-    _collection = _client.get_collection(
-        name=COLLECTION_NAME,
-        embedding_function=ef,
-    )
-    return _collection
+    with MODEL_LOAD_LOCK:
+        if _collection is not None:
+            return _collection
+
+        import chromadb
+        from chromadb.utils import embedding_functions
+
+        ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=EMBEDDING_MODEL
+        )
+        _client = chromadb.PersistentClient(path=str(VECTOR_STORE_DIR))
+        _collection = _client.get_collection(
+            name=COLLECTION_NAME,
+            embedding_function=ef,
+        )
+        return _collection
 
 
 def _parse_result(doc_id: str, metadata: dict, distance: float) -> StyleImageResult:

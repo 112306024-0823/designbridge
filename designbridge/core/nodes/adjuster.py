@@ -190,26 +190,72 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     replace_with     = None
     effective_labels: list[str] = []
 
-    if manual_mask_path and Path(str(manual_mask_path)).is_file():
+    has_manual_mask = bool(manual_mask_path and Path(str(manual_mask_path)).is_file())
+
+    if has_manual_mask:
         drawn_mask = load_mask_from_path(str(manual_mask_path), img_size)
 
-        # 優先用 SAM 2 取得實例層級精確遮罩
-        sam2_mask, sam2_ok = generate_mask_with_sam2(image_path, drawn_mask, img_size)
-        if sam2_ok:
-            mask = sam2_mask
-            mask_source = "sam2_instance"
-            seg_labels = []
-            print("[adjuster] mask source: SAM 2 instance segmentation")
-        elif has_seg:
-            # SAM 2 失敗 → fallback：手繪 + UPerNet 展開
-            mask, seg_labels = expand_mask_by_segmentation(
-                drawn_mask, str(seg_path), str(seg_meta), img_size
-            )
-            mask_source = "manual_expanded_by_seg"
+        # 若有 segmentation，先算出手繪範圍觸碰到的物件類別完整展開遮罩，
+        # 當作 SAM 2 box prompt 的輔助範圍：避免使用者只塗到物件局部
+        # （例如椅背/椅座，漏畫輪子、桌腳），導致 SAM 2 的框也只框住局部
+        seg_aux_mask = None
+        seg_aux_labels: list[str] = []
+        seg_aux_per_object: list[tuple[Any, Any, str]] = []
+        if has_seg:
+            try:
+                seg_aux_mask, seg_aux_labels, seg_aux_per_object = expand_mask_by_segmentation(
+                    drawn_mask, str(seg_path), str(seg_meta), img_size
+                )
+            except Exception as e:
+                print(f"[adjuster] seg aux mask for SAM2 box failed: {e}")
+
+        if len(seg_aux_per_object) > 1:
+            # 使用者同時塗到多個不相鄰的物件（例如左邊櫃子 + 右邊檯燈）。
+            # SAM 2 的一次 box prompt 只能回傳「單一物件」的實例遮罩，
+            # 若把所有物件的範圍合併成一個大 box 丟給 SAM 2，只會選中其中
+            # 一個最顯眼的物件、漏掉其他物件。因此改成對每個物件個別呼叫
+            # SAM 2（box 範圍只框住該物件自己的塗鴉 + segmentation 範圍），
+            # 再把每個物件的精確遮罩聯集起來。
+            import numpy as np
+            from PIL import Image
+
+            combined_arr = None
+            ok_count = 0
+            for comp_drawn, class_full, label in seg_aux_per_object:
+                obj_mask, obj_ok = generate_mask_with_sam2(
+                    image_path, comp_drawn, img_size, aux_mask=class_full
+                )
+                if obj_ok:
+                    ok_count += 1
+                    arr = np.array(obj_mask.convert("L"))
+                    combined_arr = arr if combined_arr is None else np.maximum(combined_arr, arr)
+                else:
+                    # 該物件 SAM 2 失敗 → 至少用 segmentation 的完整像素範圍頂替
+                    arr = np.array(class_full.convert("L"))
+                    combined_arr = arr if combined_arr is None else np.maximum(combined_arr, arr)
+
+            mask = Image.fromarray(combined_arr, mode="L")
+            mask_source = f"sam2_instance_multi(x{ok_count}/{len(seg_aux_per_object)})"
+            seg_labels = seg_aux_labels
+            print(f"[adjuster] mask source: SAM 2 instance segmentation, multi-object x{len(seg_aux_per_object)}")
         else:
-            mask = drawn_mask
-            mask_source = "manual_drawing"
-            seg_labels = []
+            # 優先用 SAM 2 取得實例層級精確遮罩
+            sam2_mask, sam2_ok = generate_mask_with_sam2(
+                image_path, drawn_mask, img_size, aux_mask=seg_aux_mask
+            )
+            if sam2_ok:
+                mask = sam2_mask
+                mask_source = "sam2_instance"
+                seg_labels = seg_aux_labels
+                print("[adjuster] mask source: SAM 2 instance segmentation")
+            elif has_seg and seg_aux_mask is not None:
+                # SAM 2 失敗 → fallback：沿用剛才算好的 segmentation 展開遮罩
+                mask, seg_labels = seg_aux_mask, seg_aux_labels
+                mask_source = "manual_expanded_by_seg"
+            else:
+                mask = drawn_mask
+                mask_source = "manual_drawing"
+                seg_labels = []
     else:
         # Gemini Vision 判斷意圖：物件目標 + 動作類型
         text_prompt = user_input.get("text_prompt") or ""
@@ -220,8 +266,8 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
         effective_labels = seg_labels or target_labels
         print(f"[adjuster] effective_labels: {effective_labels}")
         if has_seg:
-            mask = mask_from_segmentation(str(seg_path), str(seg_meta), effective_labels, img_size)
-            mask_source = f"segmentation({'+'.join(effective_labels[:3])})"
+            mask, seg_matched = mask_from_segmentation(str(seg_path), str(seg_meta), effective_labels, img_size)
+            mask_source = f"segmentation({'+'.join(seg_matched[:3])})" if seg_matched else "fallback_center"
         else:
             mask = fallback_center_mask(img_size)
             mask_source = "fallback_center"
@@ -338,17 +384,36 @@ def adjuster_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
     print(f"[adjuster] mask: {mask_white}/{mask_total} white px ({mask_white/mask_total:.1%} edit area)" if mask_total > 0 else "[adjuster] mask: unknown")
     print(f"[adjuster] mask_source: {mask_source}")
 
-    # mask 覆蓋率過低（< 2%）且無手繪遮罩：改用 Vision bbox 定位
-    if (edit_action is not None and mask_total > 0
-            and mask_white / mask_total < 0.02):
+    # 無手繪遮罩時，以下兩種情況改用 Vision bbox 精準定位：
+    #   1. mask 覆蓋率過低（< 2%），代表 segmentation 幾乎沒抓到東西
+    #   2. mask_source 是 fallback_center，代表完全沒比對到目標物件標籤，
+    #      此時 mask 雖然有 25% 面積（不會被上面 < 2% 擋到），但位置是
+    #      固定置中矩形，對天花板燈具、窗邊家具等邊緣物件幾乎必定對不準
+    mask_too_small = mask_total > 0 and mask_white / mask_total < 0.02
+    mask_is_center_fallback = mask_source == "fallback_center"
+    if edit_action is not None and (mask_too_small or mask_is_center_fallback):
         target_name = (effective_labels or seg_labels or ["object"])[0]
-        print(f"[adjuster] mask too small ({mask_white/mask_total:.1%}), trying vision bbox for '{target_name}'")
+        reason = "too small" if mask_too_small else "center fallback (no label matched)"
+        area_desc = f"{mask_white/mask_total:.1%}" if mask_total > 0 else "n/a"
+        print(f"[adjuster] mask {reason} ({area_desc}), trying vision bbox for '{target_name}'")
         bbox_mask = _bbox_mask_from_vision(image_path, target_name, img_size)
         if bbox_mask is not None:
             mask = bbox_mask
             mask_source = f"vision_bbox({target_name})"
             mask_white = sum(1 for p in mask.getdata() if p > 128)
             print(f"[adjuster] bbox mask: {mask_white}/{mask_total} white px ({mask_white/mask_total:.1%})")
+
+    # 無手繪遮罩時，若已定位到合理範圍（非置中 fallback，因為置中矩形
+    # 位置本身就不可靠，拿去當 SAM 2 box prompt 沒有意義），用 SAM 2 精修一次，
+    # 取得像素級精確輪廓（例如連椅子的輪子、桌腳一起框進去），
+    # 避免純 segmentation/vision bbox 遮罩過於粗略導致邊緣殘留或誤刪背景
+    if not has_manual_mask and mask_source != "fallback_center":
+        sam2_refined, sam2_ok = generate_mask_with_sam2(image_path, mask, img_size)
+        if sam2_ok:
+            mask = sam2_refined
+            mask_source = f"sam2_refined({mask_source})"
+            mask_white = sum(1 for p in mask.getdata() if p > 128)
+            print(f"[adjuster] SAM 2 refine: {mask_white}/{mask_total} white px ({mask_white/mask_total:.1%})" if mask_total > 0 else "[adjuster] SAM 2 refine done")
 
     # DRY_RUN 模式：只存遮罩，不呼叫任何 inpainting API（測試用）
     import os

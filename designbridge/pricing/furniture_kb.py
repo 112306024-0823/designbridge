@@ -199,6 +199,40 @@ def search_kb(query: str, category: str = "", top_k: int = 3) -> list[dict]:
     return [item for item, score in scored[:top_k] if score > 0]
 
 
+# ── 家具查詢（供前端瀏覽 / 篩選使用）───────────────────────────────────────────
+
+def list_categories() -> list[str]:
+    """回傳本地 KB 中所有出現過的家具分類（依名稱排序）。"""
+    kb = _load_local_kb()
+    return sorted({item.get("category", "") for item in kb if item.get("category")})
+
+
+def list_furniture(
+    category: str = "",
+    min_price: float | None = None,
+    max_price: float | None = None,
+) -> list[dict]:
+    """回傳符合分類 / 價位區間的家具清單（本地 JSON KB）。
+
+    - category 為空字串代表不篩選分類
+    - min_price / max_price 為 None 代表不限制該端
+    """
+    kb = _load_local_kb()
+    results = []
+    for item in kb:
+        if category and item.get("category") != category:
+            continue
+        price = item.get("price")
+        if price is None:
+            continue
+        if min_price is not None and price < min_price:
+            continue
+        if max_price is not None and price > max_price:
+            continue
+        results.append(item)
+    return results
+
+
 # ── 工具 ────────────────────────────────────────────────────────────────────────
 
 def reload_kb() -> None:

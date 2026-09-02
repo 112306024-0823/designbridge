@@ -42,15 +42,18 @@ def _get_sam2_predictor():
         print(f"[SAM2] checkpoint not found: {_SAM2_CHECKPOINT}")
         return None
     try:
-        import torch
-        from sam2.build_sam import build_sam2
-        from sam2.sam2_image_predictor import SAM2ImagePredictor
+        from designbridge.core.model_lock import MODEL_LOAD_LOCK
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = build_sam2(_SAM2_CONFIG, str(_SAM2_CHECKPOINT), device=device)
-        _sam2_predictor = SAM2ImagePredictor(model)
-        print(f"[SAM2] predictor loaded on {device}")
-        return _sam2_predictor
+        with MODEL_LOAD_LOCK:
+            import torch
+            from sam2.build_sam import build_sam2
+            from sam2.sam2_image_predictor import SAM2ImagePredictor
+
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model = build_sam2(_SAM2_CONFIG, str(_SAM2_CHECKPOINT), device=device)
+            _sam2_predictor = SAM2ImagePredictor(model)
+            print(f"[SAM2] predictor loaded on {device}")
+            return _sam2_predictor
     except Exception as e:
         print(f"[SAM2] failed to load: {e}")
         return None
@@ -113,7 +116,7 @@ def mask_from_segmentation(
     seg_meta_path: str,
     target_labels: list[str],
     image_size: tuple[int, int],
-) -> Any:
+) -> tuple[Any, list[str]]:
     """
     從語義分割圖產生 inpainting mask。
     白色（255）= 要修改的區域，黑色（0）= 保留。
@@ -125,7 +128,11 @@ def mask_from_segmentation(
         image_size: 原始圖片尺寸 (width, height)
 
     Returns:
-        PIL.Image mask（灰階）
+        (mask, matched_labels)：
+        - mask: PIL.Image mask（灰階）
+        - matched_labels: 實際比對到的 segmentation class 名稱；
+          空 list 代表沒有比對到任何物件（此時 mask 為中央 fallback，
+          呼叫端應視情況改用其他策略，例如 vision bbox）
     """
     import numpy as np
     from PIL import Image, ImageFilter
@@ -150,13 +157,15 @@ def mask_from_segmentation(
                 matched.append(seg_label)
 
     if not matched:
-        # 找不到對應物件時，回傳中央區域 fallback
-        return fallback_center_mask(image_size)
+        # 找不到對應物件時（常見於天花板燈具、窗邊家具等被分割模型誤判成
+        # 背景類別的情況），回傳中央區域 fallback，並回報「未比對到」
+        # 讓呼叫端可以改用 vision bbox 等更精準的策略
+        return fallback_center_mask(image_size), []
 
     mask = Image.fromarray(mask_array).resize(image_size)
     # 膨脹邊緣讓 inpainting 邊界更自然
     mask = mask.filter(ImageFilter.MaxFilter(7))
-    return mask
+    return mask, matched
 
 
 # 背景類別：不應該被當作修改目標
@@ -172,29 +181,46 @@ _BG_LABELS = {
     "building", "house", "skyscraper",
 }
 
+# 塗鴉與某個 class 的重疊像素數 / 塗鴉總像素數，至少要達到這個比例，
+# 才會被視為使用者「真的有塗到」該物件，否則視為邊界雜訊忽略。
+_MIN_OVERLAP_RATIO = 0.15
+
 
 def expand_mask_by_segmentation(
     manual_mask: Any,
     seg_path: str,
     seg_meta_path: str,
     image_size: tuple[int, int],
-    top_k: int = 2,
-) -> tuple[Any, list[str]]:
+    top_k: int = 4,
+) -> tuple[Any, list[str], list[tuple[Any, Any, str]]]:
     """
     方式二：手繪遮罩 → 自動偵測被觸碰的物件 → 展開成完整物件遮罩。
 
-    回傳 (mask, selected_labels)：
-    - mask: 展開後的遮罩圖
+    回傳 (mask, selected_labels, per_object)：
+    - mask: 展開後的聯集遮罩圖（所有選中物件的完整像素）
     - selected_labels: 選中的 class 名稱列表（供 prompt 補全使用）
+    - per_object: [(component_drawn_mask, class_full_mask, label), ...]
+      每個元素對應「一個被選中的物件」：
+        - component_drawn_mask：使用者塗到這個物件的那一筆塗鴉（segmentation 解析度）
+        - class_full_mask：這個物件在 segmentation 裡的完整像素範圍（image_size 解析度）
+      用途：呼叫端可以針對每個物件個別呼叫 SAM 2（見 generate_mask_with_sam2），
+      避免使用者同時塗到「多個不相鄰物件」時，單一 box prompt 只能框出其中一個、
+      SAM 2 遺漏其他物件的問題。
 
     步驟：
     1. 把手繪遮罩縮放到 segmentation 尺寸
-    2. 排除背景類別（floor, wall, ceiling...）
-    3. 只取重疊比例最高的 top_k 個 class
-    4. 把這些 class 的完整像素塗白 → 輸出完整物件遮罩
+    2. 用連通元件（connected components）拆出使用者畫的每一筆獨立塗鴉區域
+       （例如「左邊櫃子」和「右邊檯燈」是兩筆不相鄰的塗鴉）
+    3. 每一筆塗鴉區域各自找出重疊比例最高、且達到最低門檻的 class，
+       避免：
+       (a) 單一物件塗鴉不小心碰到旁邊物件邊緣（雜訊）誤觸發大範圍遮罩
+       (b) 多物件塗鴉時，面積較小的物件（如檯燈）被面積較大物件（如櫃子）
+           稀釋掉整體比例而被誤判成雜訊、漏選
+    4. 把選中 class 的完整像素塗白 → 輸出完整物件遮罩
     """
     import numpy as np
     from PIL import Image, ImageFilter
+    from scipy import ndimage
 
     seg_img = Image.open(seg_path)
     seg_array = np.array(seg_img)
@@ -205,64 +231,113 @@ def expand_mask_by_segmentation(
     drawn_array = np.array(drawn) > 128
 
     if not drawn_array.any():
-        return fallback_center_mask(image_size), []
+        return fallback_center_mask(image_size), [], []
 
     with open(seg_meta_path) as f:
         meta = json.load(f)
     labels_dict = meta.get("present_labels") or meta.get("labels") or {}
 
-    drawn_count = int(drawn_array.sum())
-    touched_ids = set(seg_array[drawn_array].tolist())
+    # 用連通元件拆出每一筆獨立的塗鴉區域，逐筆判斷各自最匹配的 class，
+    # 避免不同物件的塗鴉互相稀釋比例（見函式說明）
+    labeled_array, num_features = ndimage.label(drawn_array)
 
-    # 計算每個 class 的重疊比例，排除背景
-    candidates = []
-    for cid in touched_ids:
-        label = labels_dict.get(str(cid), "").strip().lower()
-        if label in _BG_LABELS:
+    best_per_component: list[tuple[float, int, str, np.ndarray]] = []
+    for comp_id in range(1, num_features + 1):
+        comp_mask = labeled_array == comp_id
+        comp_count = int(comp_mask.sum())
+        if comp_count == 0:
             continue
-        overlap = int(((seg_array == cid) & drawn_array).sum())
-        ratio = overlap / drawn_count
-        candidates.append((ratio, cid, label))
+        comp_touched_ids = set(seg_array[comp_mask].tolist())
+        best = None
+        for cid in comp_touched_ids:
+            label = labels_dict.get(str(cid), "").strip().lower()
+            if label in _BG_LABELS:
+                continue
+            overlap = int(((seg_array == cid) & comp_mask).sum())
+            ratio = overlap / comp_count
+            if best is None or ratio > best[0]:
+                best = (ratio, cid, label, comp_mask)
+        if best is not None:
+            best_per_component.append(best)
 
-    if not candidates:
-        return fallback_center_mask(image_size), []
+    if not best_per_component:
+        # 手繪塗鴉觸碰到的類別全部都是背景（wall/ceiling/floor/window...）。
+        # 這常發生在「家具貼著天花板/牆面/窗戶」時，分割模型把邊界像素
+        # 誤判成背景類別，導致完全沒有可用的物件候選。
+        # 過去的做法是退回「畫面正中間 50%」的固定矩形，但這個矩形結構上
+        # 永遠涵蓋不到外圍的天花板/地板/窗邊，等於完全漏掉使用者想改的位置。
+        # 改為直接使用「使用者原始塗鴉範圍」（已經是原圖解析度），
+        # 並做輕微膨脹增加容錯，這樣至少一定會涵蓋使用者實際想修改的位置。
+        print("[adjuster] expand: 塗鴉觸碰類別皆為背景，改用原始塗鴉範圍而非置中 fallback")
+        raw_mask = manual_mask.convert("L")
+        raw_mask = raw_mask.filter(ImageFilter.MaxFilter(9))
+        return raw_mask, [], []
 
-    # 只取重疊比例最高的 top_k 個
-    candidates.sort(reverse=True)
-    selected = candidates[:top_k]
-    for ratio, cid, label in selected:
+    # 每個連通區塊只保留達到最低重疊比例門檻的最佳 class；
+    # 若所有區塊比例都偏低，保底取全域最佳的一個，避免完全沒有物件可刪
+    selected = [c for c in best_per_component if c[0] >= _MIN_OVERLAP_RATIO]
+    if not selected:
+        selected = [max(best_per_component, key=lambda c: c[0])]
+
+    # 去除重複 class（多筆塗鴉指到同一個 class 時只留比例最高那筆）
+    seen_cids: set[int] = set()
+    dedup_selected: list[tuple[float, int, str, np.ndarray]] = []
+    for ratio, cid, label, comp_mask in sorted(selected, key=lambda c: c[0], reverse=True):
+        if cid in seen_cids:
+            continue
+        seen_cids.add(cid)
+        dedup_selected.append((ratio, cid, label, comp_mask))
+    dedup_selected = dedup_selected[:top_k]
+
+    for ratio, cid, label, _ in dedup_selected:
         print(f"[adjuster] expand: class {cid} ({label})  overlap={ratio:.1%}")
 
-    selected_labels = [label for _, _, label in selected]
+    selected_labels = [label for _, _, label, _ in dedup_selected]
 
-    # 把選中 class 的完整像素塗白
-    valid_ids = [cid for _, cid, _ in selected]
+    # 聯集遮罩：所有選中 class 的完整像素塗白
     mask_array = np.zeros(seg_array.shape, dtype=np.uint8)
-    for cid in valid_ids:
+    for _, cid, _, _ in dedup_selected:
         mask_array[seg_array == cid] = 255
-
     mask = Image.fromarray(mask_array).resize(image_size, Image.NEAREST)
     mask = mask.filter(ImageFilter.MaxFilter(7))
-    return mask, selected_labels
+
+    # per_object：供呼叫端對每個物件個別做 SAM 2 精修
+    per_object: list[tuple[Any, Any, str]] = []
+    for _, cid, label, comp_mask in dedup_selected:
+        comp_drawn = Image.fromarray((comp_mask * 255).astype(np.uint8), mode="L")
+        class_array = np.zeros(seg_array.shape, dtype=np.uint8)
+        class_array[seg_array == cid] = 255
+        class_full = Image.fromarray(class_array).resize(image_size, Image.NEAREST)
+        class_full = class_full.filter(ImageFilter.MaxFilter(7))
+        per_object.append((comp_drawn, class_full, label))
+
+    return mask, selected_labels, per_object
 
 
 def generate_mask_with_sam2(
     image_path: str,
     drawn_mask: Any,
     image_size: tuple[int, int],
+    aux_mask: Any = None,
 ) -> tuple[Any, bool]:
     """
     使用 SAM 2 從手繪框生成精確的實例層級遮罩。
 
     步驟：
     1. 從手繪遮罩計算 bounding box
-    2. 以 box 作為 SAM 2 的 prompt
-    3. 回傳精確物件輪廓遮罩
+    2. 若有 aux_mask（例如 segmentation 展開後的完整物件範圍），
+       與手繪 bounding box 取聯集，避免手繪只畫到物件局部
+       （例如椅子的椅背/椅座，漏畫輪子、桌腳等）導致 SAM 2 的
+       box prompt 也只框住局部
+    3. 以 box 作為 SAM 2 的 prompt
+    4. 回傳精確物件輪廓遮罩
 
     Args:
         image_path: 原始圖片路徑
         drawn_mask: 手繪遮罩 (PIL.Image)
         image_size: 原始圖片尺寸 (width, height)
+        aux_mask: 輔助遮罩（可選），用來擴大 SAM 2 的 box prompt。
+            通常來自 expand_mask_by_segmentation() 的結果。
 
     Returns:
         (mask, success): mask = PIL.Image L mode；success = 是否成功
@@ -291,11 +366,44 @@ def generate_mask_with_sam2(
         dw, dh = drawn_mask.size
         w, h = image_size
         sx, sy = w / dw, h / dh
+        x_min_o = int(x_min * sx)
+        y_min_o = int(y_min * sy)
+        x_max_o = int(x_max * sx)
+        y_max_o = int(y_max * sy)
+
+        # 若有輔助遮罩（segmentation 展開後的完整物件範圍），與手繪
+        # bounding box 取聯集，確保 box 涵蓋整個語意分割判定的物件範圍
+        # （例如椅子的輪子、桌子的桌腳），而不只是使用者實際塗鴉到的小範圍
+        if aux_mask is not None:
+            aux_arr = np.array(aux_mask.convert("L").resize(image_size)) > 128
+            if aux_arr.any():
+                aux_rows = np.any(aux_arr, axis=1)
+                aux_cols = np.any(aux_arr, axis=0)
+                ay_min, ay_max = int(np.where(aux_rows)[0][0]), int(np.where(aux_rows)[0][-1])
+                ax_min, ax_max = int(np.where(aux_cols)[0][0]), int(np.where(aux_cols)[0][-1])
+
+                # 防呆：aux box 面積不應該遠大於手繪 box 面積。
+                # 若 segmentation 展開誤把不相關的大型物件（例如衣櫃、整片牆）
+                # 納入 aux_mask，聯集後的 box 會暴衝到接近整張圖，
+                # 導致 SAM 2 產生過大範圍的遮罩、LaMa 重建大面積畫面而模糊。
+                # 這裡限制 aux box 面積最多是手繪 box 面積的 8 倍，超過就略過擴張。
+                drawn_area = max(1, (x_max_o - x_min_o + 1) * (y_max_o - y_min_o + 1))
+                aux_area = (ax_max - ax_min + 1) * (ay_max - ay_min + 1)
+                if aux_area > drawn_area * 8:
+                    print(f"[SAM2] aux mask box too large ({aux_area}px vs drawn {drawn_area}px), ignoring aux expansion")
+                else:
+                    if (ax_min, ay_min, ax_max, ay_max) != (x_min_o, y_min_o, x_max_o, y_max_o):
+                        print(f"[SAM2] box expanded by aux mask: ({x_min_o},{y_min_o},{x_max_o},{y_max_o}) + ({ax_min},{ay_min},{ax_max},{ay_max})")
+                    x_min_o = min(x_min_o, ax_min)
+                    y_min_o = min(y_min_o, ay_min)
+                    x_max_o = max(x_max_o, ax_max)
+                    y_max_o = max(y_max_o, ay_max)
+
         pad = 8
-        x_min = max(0, int(x_min * sx) - pad)
-        y_min = max(0, int(y_min * sy) - pad)
-        x_max = min(w - 1, int(x_max * sx) + pad)
-        y_max = min(h - 1, int(y_max * sy) + pad)
+        x_min = max(0, x_min_o - pad)
+        y_min = max(0, y_min_o - pad)
+        x_max = min(w - 1, x_max_o + pad)
+        y_max = min(h - 1, y_max_o + pad)
 
         print(f"[SAM2] box prompt: ({x_min},{y_min}) -> ({x_max},{y_max})")
 
@@ -324,6 +432,33 @@ def generate_mask_with_sam2(
         print(f"[SAM2] inference failed: {e}")
         traceback.print_exc()
         return drawn_mask, False
+
+
+def _prepare_mask_for_lama(mask_l: Any, dilate_radius: int = 12) -> Any:
+    """
+    把遮罩處理成比較平滑、實心的「色塊」形狀，再送進 LaMa。
+
+    LaMa 對鋸齒狀、細長分支的鏤空遮罩（例如椅子細椅腳、鏤空椅背的精確輪廓）
+    重建品質較差，容易生成模糊、還隱約保留原物件顏色/輪廓的「殘影」。
+    這裡先膨脹填補細小縫隙，再用高斯模糊 + 二值化把邊緣磨平，讓洞變成
+    LaMa 更容易乾淨重建的實心形狀（效果類似形態學的 closing）。
+
+    Args:
+        mask_l: PIL.Image L mode 二值遮罩
+        dilate_radius: 膨脹半徑（像素）
+
+    Returns:
+        處理後的 PIL.Image L mode 遮罩
+    """
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    k = dilate_radius * 2 + 1
+    dilated = mask_l.filter(ImageFilter.MaxFilter(k))
+    smoothed = dilated.filter(ImageFilter.GaussianBlur(radius=dilate_radius / 2))
+    arr = np.array(smoothed)
+    binary = np.where(arr > 60, 255, 0).astype(np.uint8)
+    return Image.fromarray(binary, mode="L")
 
 
 def run_lama_inpainting(
@@ -356,6 +491,7 @@ def run_lama_inpainting(
         mask_l = mask.convert("L")
         if mask_l.size != orig_size:
             mask_l = mask_l.resize(orig_size, Image.NEAREST)
+        mask_l = _prepare_mask_for_lama(mask_l)
 
         result = lama(original, mask_l)
 

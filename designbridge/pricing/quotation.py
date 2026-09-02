@@ -236,7 +236,11 @@ def _process_furniture_item(raw: dict, img: Any) -> tuple[FurnitureItem, bool]:
     return item, matched_kb
 
 
-def build_quotation(image_path: str, req: dict) -> QuotationResultJSON:
+def build_quotation(
+    image_path: str,
+    req: dict,
+    preselected: list[dict] | None = None,
+) -> QuotationResultJSON:
     """
     1. detect_furniture_gemini() → 家具清單 + bbox
     2. 每件家具（平行處理，見 _process_furniture_item）：
@@ -245,8 +249,9 @@ def build_quotation(image_path: str, req: dict) -> QuotationResultJSON:
        c. find_top_k_by_embedding() → top-3 IKEA 候選（Supabase pgvector）
        d. fallback：search_kb()（本地 JSON）
        e. 最終 fallback：LLM 估算
-    3. 計算 total_low / mid / high
-    4. 回傳 QuotationResultJSON
+    3. 併入 preselected（使用者在「家具查詢」頁手動勾選的家具，直接視為已確定候選）
+    4. 計算 total_low / mid / high
+    5. 回傳 QuotationResultJSON
     """
     from PIL import Image
     from designbridge.pricing.furniture_kb import _get_supabase_client, _load_local_kb, _load_embeddings
@@ -283,6 +288,23 @@ def build_quotation(image_path: str, req: dict) -> QuotationResultJSON:
 
     furniture_list: list[FurnitureItem] = [item for item, _ in results]
     kb_match_count = sum(1 for _, matched in results if matched)
+
+    # ── 使用者手動勾選的家具（家具查詢頁）優先併入，視為已確定候選 ──
+    for sel in (preselected or []):
+        furniture_list.insert(0, {
+            "detected_name": sel.get("name") or "家具",
+            "category": sel.get("category") or "",
+            "candidates": [{
+                "id": str(sel.get("id") or ""),
+                "name": sel.get("name") or "",
+                "price": int(sel.get("price") or 0),
+                "purchase_url": sel.get("url") or "",
+                "product_image_url": sel.get("image_url") or "",
+                "similarity": 1.0,
+            }],
+            "selected_index": 0,
+        })
+        kb_match_count += 1
 
     # ── 計算三檔預算（以各品項第 0 候選價格為基準）──
     total_mid = sum(

@@ -273,6 +273,26 @@ def delete_history(task_ids: List[str] = Query(...)):
     return {"deleted": original - len(records)}
 
 
+# ── 家具查詢 ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/furniture/categories")
+def get_furniture_categories():
+    """回傳家具 KB 中所有分類。"""
+    from designbridge.pricing.furniture_kb import list_categories
+    return list_categories()
+
+
+@app.get("/api/furniture")
+def get_furniture(
+    category: str = "",
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+):
+    """瀏覽 / 篩選家具清單（分類 + 價位區間）。"""
+    from designbridge.pricing.furniture_kb import list_furniture
+    return list_furniture(category=category, min_price=min_price, max_price=max_price)
+
+
 @app.get("/api/style-profiles")
 def get_style_profiles():
     # 優先回傳磁碟上已有聚合檔的風格
@@ -442,14 +462,19 @@ async def generate_design(request: DesignRequest):
 class QuotationRequest(BaseModel):
     image_path: str
     structured_requirement: Optional[dict] = None
+    selected_furniture: List[dict] = []
 
 
 @app.post("/api/quotation")
 async def get_quotation(req: QuotationRequest):
-    """手動觸發估價（使用者點「重新估價」按鈕）。"""
+    """手動觸發估價（使用者點「重新估價」按鈕），可帶入使用者在家具查詢頁手動選擇的家具。"""
     from designbridge.pricing.quotation import build_quotation
     try:
-        return build_quotation(req.image_path, req.structured_requirement or {})
+        return build_quotation(
+            req.image_path,
+            req.structured_requirement or {},
+            preselected=req.selected_furniture,
+        )
     except Exception as e:
         import traceback
         traceback.print_exc()

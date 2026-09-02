@@ -66,7 +66,7 @@ def run():
     all_pass = True
 
     for label in test_labels:
-        mask = mask_from_segmentation(seg_path, meta_path, [label], img_size)
+        mask, matched = mask_from_segmentation(seg_path, meta_path, [label], img_size)
         white = sum(1 for p in mask.getdata() if p > 128)
         total = mask.width * mask.height
         ratio = white / total if total else 0

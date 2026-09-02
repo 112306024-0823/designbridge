@@ -15,7 +15,7 @@ dotenv.load_dotenv()  # Allow override from current working directory
 class Config:
     """DesignBridge configuration."""
 
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = os.getenv("DESIGNBRIDGE_GEMINI_MODEL", "gemini-3.6-flash")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
     # Extra keys tried in order if GEMINI_API_KEY fails (comma-separated).
     GEMINI_API_KEYS: str = os.getenv("GEMINI_API_KEYS", "")

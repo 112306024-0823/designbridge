@@ -1,12 +1,45 @@
 <script setup>
 import { computed, ref, reactive, watch } from 'vue'
+import { apiUrl } from '@/config/api'
+import { useFurnitureSelection } from '@/composables/useFurnitureSelection'
 
 const refExpanded = ref(true)
+const { selectedFurniture, selectedCount: furnitureSelectedCount } = useFurnitureSelection()
 
 const props = defineProps({
   result:  { type: Object,  default: null },
   loading: { type: Boolean, default: false },
 })
+
+const emit = defineEmits(['refine', 'quotation-loaded'])
+
+// 家具估價／報價推薦改成使用者按按鈕才觸發（避免每次生圖都額外等 30-40 秒）
+const quotationLoading = ref(false)
+const quotationError = ref('')
+
+async function fetchQuotation() {
+  if (!props.result?.generated_image_path) return
+  quotationLoading.value = true
+  quotationError.value = ''
+  try {
+    const res = await fetch(apiUrl('/api/quotation'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_path: props.result.generated_image_path,
+        structured_requirement: props.result.structured_requirement || null,
+        selected_furniture: selectedFurniture.value,
+      }),
+    })
+    if (!res.ok) throw new Error(`${res.status}`)
+    const data = await res.json()
+    emit('quotation-loaded', data)
+  } catch (e) {
+    quotationError.value = e.message || '估價失敗，請稍後再試'
+  } finally {
+    quotationLoading.value = false
+  }
+}
 
 // 估價候選選擇狀態（每件家具當前選中的候選 index）
 const selectedCandidates = reactive({})
@@ -211,66 +244,86 @@ const styleReferenceImageUrl = computed(() => {
       </div>
 
 
-      <!-- 家具估價 -->
-      <div v-if="result.quotation_result" class="result-section quotation-section">
-        <h3 class="quotation-title">
-          家具估價
-          <span class="ikea-badge">IKEA 台灣</span>
-        </h3>
+      <!-- 家具估價（按鈕觸發，不佔用生圖等待時間） -->
+      <div v-if="result.generated_image_path" class="result-section quotation-section">
+        <div class="quotation-header-row">
+          <h3 class="quotation-title">
+            家具估價
+            <span class="ikea-badge">IKEA 台灣</span>
+          </h3>
+          <div class="quotation-actions">
+            <RouterLink to="/furniture" class="furniture-pick-link">
+              前往家具查詢
+              <span v-if="furnitureSelectedCount" class="fab-badge">{{ furnitureSelectedCount }}</span>
+            </RouterLink>
+            <button
+              class="quotation-btn"
+              :disabled="quotationLoading"
+              @click="fetchQuotation"
+            >{{ quotationLoading ? '估價中…' : (result.quotation_result ? '重新估價' : '取得家具報價') }}</button>
+          </div>
+        </div>
 
-        <!-- 每件偵測到的家具 -->
-        <div
-          v-for="(item, idx) in result.quotation_result.furniture_list"
-          :key="idx"
-          class="furniture-row"
-        >
-          <div class="furniture-label">{{ item.detected_name }}</div>
-          <div class="candidates-row">
-            <div
-              v-for="(c, ci) in item.candidates"
-              :key="ci"
-              :class="['candidate-card', (selectedCandidates[idx] ?? 0) === ci ? 'selected' : '']"
-              @click="selectedCandidates[idx] = ci"
-            >
-              <div class="candidate-img-wrap">
-                <img v-if="c.product_image_url" :src="c.product_image_url" class="candidate-img" />
-                <div v-else class="candidate-img-placeholder">無圖</div>
+        <p v-if="quotationError" class="quotation-error">{{ quotationError }}</p>
+
+        <template v-if="result.quotation_result">
+          <!-- 每件偵測到的家具 -->
+          <div
+            v-for="(item, idx) in result.quotation_result.furniture_list"
+            :key="idx"
+            class="furniture-row"
+          >
+            <div class="furniture-label">{{ item.detected_name }}</div>
+            <div class="candidates-row">
+              <div
+                v-for="(c, ci) in item.candidates"
+                :key="ci"
+                :class="['candidate-card', (selectedCandidates[idx] ?? 0) === ci ? 'selected' : '']"
+                @click="selectedCandidates[idx] = ci"
+              >
+                <div class="candidate-img-wrap">
+                  <img v-if="c.product_image_url" :src="c.product_image_url" class="candidate-img" />
+                  <div v-else class="candidate-img-placeholder">無圖</div>
+                </div>
+                <div class="candidate-name">{{ c.name }}</div>
+                <div class="candidate-price">NT$ {{ c.price.toLocaleString() }}</div>
+                <div v-if="c.similarity > 0" class="candidate-sim">
+                  相似度 {{ (c.similarity * 100).toFixed(0) }}%
+                </div>
+                <a
+                  v-if="c.purchase_url"
+                  :href="c.purchase_url"
+                  target="_blank"
+                  rel="noopener"
+                  class="candidate-buy"
+                  @click.stop
+                >購買</a>
               </div>
-              <div class="candidate-name">{{ c.name }}</div>
-              <div class="candidate-price">NT$ {{ c.price.toLocaleString() }}</div>
-              <div v-if="c.similarity > 0" class="candidate-sim">
-                相似度 {{ (c.similarity * 100).toFixed(0) }}%
-              </div>
-              <a
-                v-if="c.purchase_url"
-                :href="c.purchase_url"
-                target="_blank"
-                rel="noopener"
-                class="candidate-buy"
-                @click.stop
-              >購買</a>
             </div>
           </div>
-        </div>
 
-        <!-- 動態預算 -->
-        <div class="budget-row">
-          <div class="budget-card mid selected-budget">
-            <span class="budget-label">目前選擇預算</span>
-            <span class="budget-val">NT$ {{ computedTotal.toLocaleString() }}</span>
+          <!-- 動態預算 -->
+          <div class="budget-row">
+            <div class="budget-card mid selected-budget">
+              <span class="budget-label">目前選擇預算</span>
+              <span class="budget-val">NT$ {{ computedTotal.toLocaleString() }}</span>
+            </div>
+            <div class="budget-card low">
+              <span class="budget-label">低預算參考</span>
+              <span class="budget-val">NT$ {{ result.quotation_result.total_low.toLocaleString() }}</span>
+            </div>
+            <div class="budget-card high">
+              <span class="budget-label">高規格參考</span>
+              <span class="budget-val">NT$ {{ result.quotation_result.total_high.toLocaleString() }}</span>
+            </div>
           </div>
-          <div class="budget-card low">
-            <span class="budget-label">低預算參考</span>
-            <span class="budget-val">NT$ {{ result.quotation_result.total_low.toLocaleString() }}</span>
-          </div>
-          <div class="budget-card high">
-            <span class="budget-label">高規格參考</span>
-            <span class="budget-val">NT$ {{ result.quotation_result.total_high.toLocaleString() }}</span>
-          </div>
-        </div>
 
-        <p class="quotation-note">
-          * 點選卡片可切換商品，總預算自動更新。{{ result.quotation_result.kb_match_count }}/{{ result.quotation_result.furniture_list.length }} 件成功向量比對 IKEA，其餘為 AI 估算。
+          <p class="quotation-note">
+            * 點選卡片可切換商品，總預算自動更新。{{ result.quotation_result.kb_match_count }}/{{ result.quotation_result.furniture_list.length }} 件成功向量比對 IKEA，其餘為 AI 估算。
+          </p>
+        </template>
+        <p v-else-if="!quotationLoading" class="quotation-hint">
+          點擊「取得家具報價」辨識畫面中的家具並推薦 IKEA 商品（約需 30 秒）。
         </p>
       </div>
 
@@ -569,6 +622,10 @@ const styleReferenceImageUrl = computed(() => {
 
 /* ── Quotation ── */
 .quotation-section { display: flex; flex-direction: column; gap: 1.1rem; }
+.quotation-header-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.6rem; flex-wrap: wrap;
+}
 .quotation-title {
   font-size: 0.85rem; font-weight: 700; color: var(--text-2);
   display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
@@ -578,6 +635,52 @@ const styleReferenceImageUrl = computed(() => {
   background: #0058a3; color: #fff;
   padding: 0.15rem 0.6rem; border-radius: 99px; font-size: 0.7rem; font-weight: 700;
 }
+.quotation-btn {
+  padding: 0.4rem 0.9rem;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.quotation-btn:hover:not(:disabled) { opacity: 0.88; }
+.quotation-btn:disabled { opacity: 0.55; cursor: default; }
+.quotation-actions { display: flex; align-items: center; gap: 0.6rem; }
+.furniture-pick-link {
+  position: relative;
+  padding: 0.4rem 0.9rem;
+  border: 1.5px solid var(--primary-border);
+  border-radius: var(--radius-md);
+  color: var(--primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.furniture-pick-link:hover { background: var(--primary-light); }
+.fab-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #c0392b;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.quotation-error { font-size: 0.78rem; color: #b91c1c; margin: 0; }
+.quotation-hint { font-size: 0.82rem; color: var(--text-3); margin: 0; }
 
 /* Furniture row */
 .furniture-row { display: flex; flex-direction: column; gap: 0.5rem; }

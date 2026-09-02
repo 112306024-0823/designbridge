@@ -45,8 +45,14 @@ def run_startup_warmup() -> None:
 
         _get_text_embedding_model()
 
+    def _warm_sam2() -> None:
+        from designbridge.render.inpaint import _get_sam2_predictor
+
+        _get_sam2_predictor()
+
     _step("Local Chroma vector store (if ready)", _warm_chroma)
     _step("Pipeline CLIP evaluator (transformers)", _warm_clip_eval)
     _step("Text-to-text style embedder (sentence-transformers)", _warm_text_embedder)
+    _step("SAM 2 instance segmentation predictor", _warm_sam2)
 
     print("DesignBridge startup warmup done.", flush=True)

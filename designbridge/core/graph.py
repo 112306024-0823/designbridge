@@ -13,7 +13,6 @@ from designbridge.core.nodes import (
     clip_evaluator_node,
     design_director,
     layout_and_style_agent_stub,
-    quotation_agent,
     requirement_analyzer,
     renderer,
     visual_preprocessing_local,
@@ -52,7 +51,12 @@ def build_graph() -> StateGraph:
     Build DesignBridge workflow:
     START -> requirement_analyzer -> visual_preprocessing -> design_director
       -> (adjuster_agent | layout_and_style_agent) -> renderer
-      -> (clip_evaluator | quotation_agent) -> END
+      -> clip_evaluator -> END
+
+    注意：quotation_agent（家具估價/報價推薦）不在這個自動流程裡執行。
+    它耗時較長（觀測約 30-40 秒），且不影響生成圖片本身，因此改成
+    使用者按下「取得家具報價」按鈕才呼叫獨立的 /api/quotation
+    endpoint（見 api.py），而不是每次 /api/generate 都自動跑一次。
     """
     graph: StateGraph[DesignBridgeState] = StateGraph(DesignBridgeState)
 
@@ -63,7 +67,6 @@ def build_graph() -> StateGraph:
     graph.add_node("layout_and_style_agent", _timed_node("layout_and_style_agent", layout_and_style_agent_stub))
     graph.add_node("renderer", _timed_node("renderer", renderer))
     graph.add_node("clip_evaluator", _timed_node("clip_evaluator", clip_evaluator_node))
-    graph.add_node("quotation_agent", _timed_node("quotation_agent", quotation_agent))
 
     graph.add_edge(START, "requirement_analyzer")
     graph.add_edge("requirement_analyzer", "visual_preprocessing")
@@ -78,13 +81,8 @@ def build_graph() -> StateGraph:
     )
     graph.add_edge("adjuster_agent", "renderer")
     graph.add_edge("layout_and_style_agent", "renderer")
-    # clip_evaluator and quotation_agent both only read `generated_image` and write
-    # disjoint state keys, so they run as independent parallel branches off renderer
-    # instead of a serial chain — cuts wall-clock time to max(branch) instead of sum.
     graph.add_edge("renderer", "clip_evaluator")
-    graph.add_edge("renderer", "quotation_agent")
     graph.add_edge("clip_evaluator", END)
-    graph.add_edge("quotation_agent", END)
 
     return graph
 

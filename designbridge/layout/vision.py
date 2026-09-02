@@ -48,18 +48,21 @@ def _get_device() -> tuple[str, int]:
 @lru_cache(maxsize=1)
 def _load_depth_model(model_name: str) -> Any:
     """Load Depth Anything V2 model and processor once (cached)."""
-    from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+    from designbridge.core.model_lock import MODEL_LOAD_LOCK
 
-    processor = AutoImageProcessor.from_pretrained(model_name, use_fast=False)
-    model = AutoModelForDepthEstimation.from_pretrained(model_name)
+    with MODEL_LOAD_LOCK:
+        from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
-    device, _ = _get_device()
-    if device == "cuda":
-        import torch
+        processor = AutoImageProcessor.from_pretrained(model_name, use_fast=False)
+        model = AutoModelForDepthEstimation.from_pretrained(model_name)
 
-        model = model.to(torch.device("cuda"))
-    model.eval()
-    return processor, model
+        device, _ = _get_device()
+        if device == "cuda":
+            import torch
+
+            model = model.to(torch.device("cuda"))
+        model.eval()
+        return processor, model
 
 
 def run_depth_estimation(image_path: str, *, model_name: str, out_dir: Path) -> tuple[str, Path]:
@@ -106,18 +109,21 @@ def run_depth_estimation(image_path: str, *, model_name: str, out_dir: Path) -> 
 @lru_cache(maxsize=1)
 def _load_upernet(model_name: str) -> Any:
     """Load UPerNet segmentation model and processor once (cached)."""
-    from transformers import AutoImageProcessor, UperNetForSemanticSegmentation
+    from designbridge.core.model_lock import MODEL_LOAD_LOCK
 
-    processor = AutoImageProcessor.from_pretrained(model_name, use_fast=False)
-    model = UperNetForSemanticSegmentation.from_pretrained(model_name)
+    with MODEL_LOAD_LOCK:
+        from transformers import AutoImageProcessor, UperNetForSemanticSegmentation
 
-    device, _ = _get_device()
-    if device == "cuda":
-        import torch
+        processor = AutoImageProcessor.from_pretrained(model_name, use_fast=False)
+        model = UperNetForSemanticSegmentation.from_pretrained(model_name)
 
-        model = model.to(torch.device("cuda"))
-    model.eval()
-    return processor, model
+        device, _ = _get_device()
+        if device == "cuda":
+            import torch
+
+            model = model.to(torch.device("cuda"))
+        model.eval()
+        return processor, model
 
 
 def run_segmentation(
