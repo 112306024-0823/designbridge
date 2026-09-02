@@ -92,6 +92,51 @@ def _build_imagen_prompt_from_requirement(
     return (base_prompt + " " + " ".join(extra_parts)).strip()
 
 
+_FURNITURE_CATEGORY_EN = {
+    "sofa": "sofa",
+    "table": "table",
+    "chair": "chair",
+    "lamp": "lamp",
+    "rug": "rug",
+    "storage": "storage cabinet",
+    "bed": "bed",
+    "desk": "desk",
+    "shelf": "shelf",
+    "cabinet": "cabinet",
+    "curtain": "curtain",
+    "decor": "decor piece",
+}
+
+
+def describe_selected_furniture(items: list[dict[str, Any]]) -> str:
+    """Turn user-picked furniture items into an English prompt directive.
+
+    Ensures the image generator explicitly renders the exact furniture the
+    user selected (via the furniture search/favorites feature), instead of
+    inventing arbitrary pieces.
+    """
+    if not items:
+        return ""
+
+    parts: list[str] = []
+    for item in items:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        category_raw = str(item.get("category") or "").strip().lower()
+        category = _FURNITURE_CATEGORY_EN.get(category_raw, category_raw or "furniture")
+        parts.append(f"{name} ({category})")
+
+    if not parts:
+        return ""
+
+    listed = "; ".join(parts)
+    return (
+        "The design must prominently include these exact user-selected furniture "
+        f"pieces, matching their style, color and form as closely as possible: {listed}."
+    )
+
+
 def _layout_json_to_prompt_text(layout_json: dict[str, Any]) -> str:
     """Convert depth_to_layout JSON into a concise English layout directive for the prompt."""
     analysis = layout_json.get("space_analysis") or {}

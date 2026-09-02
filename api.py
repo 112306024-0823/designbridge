@@ -96,6 +96,7 @@ class DesignRequest(BaseModel):
     family_needs: List[str] = []
     fengshui_rules: List[str] = []
     style_method: str = "ai_analysis"
+    selected_furniture: List[dict] = []  # 使用者勾選的家具，生成時明確融入設計圖
 
 # 2. 延遲編譯 Graph（避免 uvicorn 啟動前長時間阻塞，導致前端連不上）
 _compiled_graph = None
@@ -376,6 +377,8 @@ async def generate_design(request: DesignRequest):
             user_input["fengshui_rules"] = request.fengshui_rules
         if request.style_method:
             user_input["style_method"] = request.style_method
+        if request.selected_furniture:
+            user_input["selected_furniture"] = request.selected_furniture
 
         initial_state = {"user_input": user_input}
 

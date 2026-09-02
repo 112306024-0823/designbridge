@@ -2,6 +2,8 @@
 import { ref } from 'vue'
 import ImageUpload from './ImageUpload.vue'
 import MaskEditor from './MaskEditor.vue'
+import { useFurnitureSelection } from '@/composables/useFurnitureSelection'
+import { mediaUrl } from '@/config/api'
 
 const textPrompt      = defineModel('textPrompt',      { default: '' })
 const editScope       = defineModel('editScope',       { default: 0.6 })
@@ -17,6 +19,8 @@ const styleMethod      = defineModel('styleMethod',      { default: 'ai_analysis
 
 const showMaskEditor = ref(false)
 const showAdvanced   = ref(false)
+
+const { selectedFurniture, remove: removeSelectedFurniture } = useFurnitureSelection()
 
 const FAMILY_OPTIONS = [
   { value: 'children',   label: '有小孩' },
@@ -102,6 +106,34 @@ const emit = defineEmits(['submit', 'mask-ready', 'retry-style-options'])
 
     <!-- design mode -->
     <template v-if="mode === 'design'">
+
+      <!-- 已選家具：使用者從家具查詢/收藏勾選的商品，生成時會明確融入設計圖 -->
+      <div v-if="selectedFurniture.length" class="field">
+        <label class="field-label">
+          已選家具
+          <span class="value-badge">{{ selectedFurniture.length }}</span>
+        </label>
+        <div class="furniture-preview-list">
+          <div v-for="item in selectedFurniture" :key="item.id || item.url || item.name" class="furniture-preview-item">
+            <img
+              v-if="item.image_url"
+              :src="mediaUrl(item.image_url)"
+              :alt="item.name"
+              class="furniture-preview-thumb"
+              @error="$event.target.style.visibility='hidden'"
+            />
+            <div v-else class="furniture-preview-thumb furniture-preview-thumb--empty">🛋️</div>
+            <span class="furniture-preview-name">{{ item.name }}</span>
+            <button
+              type="button"
+              class="furniture-preview-remove"
+              title="移除"
+              @click="removeSelectedFurniture(item)"
+            >×</button>
+          </div>
+        </div>
+        <RouterLink to="/furniture" class="furniture-preview-link">+ 前往查詢更多家具</RouterLink>
+      </div>
 
       <!-- 3. 裝潢風格 -->
       <div class="field">
@@ -498,6 +530,59 @@ select:focus { outline: none; border-color: var(--primary); background: #fffaf5;
   font-weight: 600;
   box-shadow: 0 2px 8px rgba(0,0,0,0.18);
 }
+
+/* Selected furniture preview */
+.furniture-preview-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.furniture-preview-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.5rem;
+  border: 1.5px solid #ddd0c0;
+  border-radius: var(--radius-md);
+  background: rgba(255,250,243,0.75);
+}
+.furniture-preview-thumb {
+  width: 40px; height: 40px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #f0ece4;
+}
+.furniture-preview-thumb--empty {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.1rem;
+}
+.furniture-preview-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.furniture-preview-remove {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.06);
+  color: var(--text-3);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.furniture-preview-remove:hover { background: #f5d6d6; color: #c0392b; }
+.furniture-preview-link {
+  align-self: flex-start;
+  font-size: 0.78rem;
+  color: var(--primary);
+  text-decoration: none;
+  font-weight: 600;
+}
+.furniture-preview-link:hover { text-decoration: underline; }
 
 /* Advanced section */
 .advanced-wrapper { display: flex; flex-direction: column; }

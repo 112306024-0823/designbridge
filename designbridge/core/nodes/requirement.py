@@ -50,6 +50,20 @@ def requirement_analyzer(state: DesignBridgeState) -> dict[str, Any]:
         from designbridge.layout.special_constraints import enrich_requirement
         structured_requirement = enrich_requirement(structured_requirement, family_needs, fengshui_rules)
 
+    # Merge user-selected furniture (from furniture search/favorites) into the
+    # design description so the renderer explicitly includes those exact pieces.
+    selected_furniture = user.get("selected_furniture") or []
+    if selected_furniture:
+        from designbridge.render.render_prompt import describe_selected_furniture
+        furniture_addition = describe_selected_furniture(selected_furniture)
+        if furniture_addition:
+            existing = (structured_requirement.get("design_description") or "").strip()
+            structured_requirement["design_description"] = (
+                f"{existing}. {furniture_addition}" if existing else furniture_addition
+            )
+            print(f"🛋️  已選家具已注入 prompt：{furniture_addition[:120]}")
+        structured_requirement["selected_furniture"] = selected_furniture
+
     # If the user explicitly selected a style from the dropdown, override whatever
     # Gemini / rule-based inferred from the text so the whole pipeline stays consistent.
     explicit_style_id = (user.get("style_profile_id") or "").strip()
