@@ -424,8 +424,125 @@ async def generate_layout(request: LayoutRequest):
             "floor_plan_path": floor_plan_path,
             "floor_plan_url": floor_plan_url,
             "scene_graph": result.get("scene_graph"),
+            "room_w": width,
+            "room_d": depth,
+            "room_type": request.room_type,
         }
 
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ParseFloorPlanRequest(BaseModel):
+    image_path: str                       # 由 /api/upload-image 回傳的本機路徑
+    room_type: str = "living_room"
+    space_size_ping: float = 4.0
+
+
+@app.post("/api/parse-floor-plan")
+async def parse_floor_plan(request: ParseFloorPlanRequest):
+    """Step 1（上傳）：用 Gemini 視覺解析使用者上傳的 2D 平面圖，抽出家具座標，
+    回傳與 /api/generate-layout 相同形狀的結果，讓上傳圖也能走精準的佈局管線。"""
+    import math
+    import uuid as _uuid
+
+    if not Path(request.image_path).is_file():
+        raise HTTPException(status_code=400, detail=f"找不到圖片：{request.image_path}")
+
+    try:
+        from designbridge.layout_agent import parse_floor_plan_image
+
+        total_m2 = request.space_size_ping * 3.306
+        width = round(math.sqrt(total_m2 * 5 / 4), 1)
+        depth = round(math.sqrt(total_m2 * 4 / 5), 1)
+
+        task_id = str(_uuid.uuid4())
+        scene_graph = parse_floor_plan_image(
+            request.image_path, task_id,
+            room_type=request.room_type, room_w=width, room_d=depth,
+        )
+
+        if not scene_graph or not scene_graph.get("furniture_placements"):
+            # Gemini 沒解析出任何家具 → 讓前端退回「原圖當 Kontext 引導」的路徑
+            return {
+                "status": "no_furniture_detected",
+                "task_id": task_id,
+                "furniture_placements": [],
+                "room_w": width,
+                "room_d": depth,
+                "room_type": request.room_type,
+            }
+
+        floor_plan_path = scene_graph.get("floor_plan_path")
+        floor_plan_url = None
+        if floor_plan_path:
+            normalized = str(floor_plan_path).replace("\\", "/")
+            if normalized.startswith("artifacts/"):
+                floor_plan_url = f"http://localhost:8000/{normalized}"
+
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "floor_plan_path": floor_plan_path,
+            "floor_plan_url": floor_plan_url,
+            "scene_graph": scene_graph,
+            "furniture_placements": scene_graph.get("furniture_placements", []),
+            "room_w": width,
+            "room_d": depth,
+            "room_type": request.room_type,
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class FloorPlanRenderRequest(BaseModel):
+    furniture_placements: List[dict]
+    room_w: float = 5.0
+    room_d: float = 4.0
+    room_type: str = "living_room"
+
+
+@app.post("/api/render-floor-plan")
+async def render_floor_plan(request: FloorPlanRenderRequest):
+    """Re-render the 2D floor plan PNG from (edited) furniture placements."""
+    import uuid as _uuid
+    try:
+        from designbridge.layout_agent import FurnitureItem, _generate_floor_plan
+
+        items: list = []
+        for i, p in enumerate(request.furniture_placements):
+            try:
+                items.append(FurnitureItem(
+                    id=str(p.get("id") or f"item_{i}"),
+                    type=str(p.get("type", "default")),
+                    x=float(p.get("x", 0.0)), y=float(p.get("y", 0.0)),
+                    w=float(p.get("w", 0.1)), h=float(p.get("h", 0.1)),
+                    rotation=float(p.get("rotation", 0.0)),
+                ))
+            except (TypeError, ValueError):
+                continue
+
+        task_id = str(_uuid.uuid4())
+        floor_plan_path = _generate_floor_plan(
+            items, task_id, room_type=request.room_type,
+            room_w=request.room_w, room_d=request.room_d,
+        )
+        floor_plan_url = None
+        if floor_plan_path:
+            normalized = str(floor_plan_path).replace("\\", "/")
+            if normalized.startswith("artifacts/"):
+                floor_plan_url = f"http://localhost:8000/{normalized}"
+
+        return {
+            "status": "success",
+            "floor_plan_path": floor_plan_path,
+            "floor_plan_url": floor_plan_url,
+        }
     except Exception as e:
         import traceback
         traceback.print_exc()

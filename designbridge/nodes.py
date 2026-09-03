@@ -36,6 +36,7 @@ from designbridge.render_backends import (
     _render_flux_redux_fal,
     _render_flux_redux_local,
     _render_flux_ipadapter_fal,
+    _render_flux_depth_controlnet_fal,
     _render_flux,
 )
 
@@ -596,6 +597,34 @@ def layout_and_style_agent_stub(state: DesignBridgeState) -> dict[str, Any]:
 
 
 
+# Rich noun phrases so each depth box renders as a recognizable, distinct piece of
+# furniture instead of an abstract block — especially small items (e.g. armchair)
+# that the model otherwise merges into neighbouring furniture.
+_FURNITURE_DESC: dict[str, str] = {
+    "sofa": "a fabric upholstered sofa",
+    "armchair": "a single upholstered accent armchair with armrests",
+    "chair": "a dining chair",
+    "coffee_table": "a low coffee table",
+    "side_table": "a small side table",
+    "nightstand": "a nightstand",
+    "dining_table": "a dining table",
+    "desk": "a desk",
+    "tv_unit": "a TV media console with a wall-mounted flat TV above it",
+    "tv": "a wall-mounted flat TV",
+    "bed": "a bed with headboard",
+    "bunk_bed": "a bunk bed",
+    "wardrobe": "a tall wardrobe",
+    "bookshelf": "a tall bookshelf",
+    "shelf": "a shelving unit",
+    "cabinet": "a storage cabinet",
+    "dresser": "a dresser",
+    "plant": "a potted green plant",
+    "lamp": "a floor lamp",
+    "floor_lamp": "a floor lamp",
+    "rug": "a soft area rug on the floor",
+}
+
+
 def _furniture_to_spatial_text(placements: list[dict]) -> str:
     """Convert normalized furniture positions to precise spatial description for prompt injection.
 
@@ -605,30 +634,40 @@ def _furniture_to_spatial_text(placements: list[dict]) -> str:
     PAD = 0.12
     parts: list[str] = []
     for item in placements[:12]:
-        ftype = item.get("type", "").replace("_", " ")
+        raw = item.get("type", "")
+        desc = _FURNITURE_DESC.get(raw, "a " + raw.replace("_", " "))
         x, y = item.get("x", 0.5), item.get("y", 0.5)
         w, h = item.get("w", 0.1), item.get("h", 0.1)
         cx, cy = x + w / 2, y + h / 2
 
-        # Wall adjacency takes priority over zone description
+        # Always keep the horizontal (left/right) and depth (back/front) zone so the
+        # left-right ordering between items is never lost — even for wall-adjacent
+        # pieces. Wall adjacency is added on top, not instead of, the zone.
+        h_zone = "left" if cx < 0.40 else ("right" if cx > 0.60 else "center")
+        v_zone = "back" if cy < 0.40 else ("front" if cy > 0.60 else "middle")
+
         wall_tags: list[str] = []
         if x <= PAD:
-            wall_tags.append("left wall")
+            wall_tags.append("left")
         if x + w >= 1.0 - PAD:
-            wall_tags.append("right wall")
+            wall_tags.append("right")
         if y <= PAD:
-            wall_tags.append("back wall")
+            wall_tags.append("back")
         if y + h >= 1.0 - PAD:
-            wall_tags.append("front wall")
+            wall_tags.append("front")
+
+        # Base position: horizontal side + depth zone (e.g. "on the right side, back of the room").
+        if h_zone == "center":
+            pos = f"in the center, {v_zone} of the room"
+        else:
+            pos = f"on the {h_zone} side, {v_zone} of the room"
 
         if wall_tags:
-            pos = "against " + " and ".join(wall_tags)
-        else:
-            h_zone = "left side" if cx < 0.38 else ("right side" if cx > 0.62 else "center")
-            v_zone = "back area" if cy < 0.38 else ("front area" if cy > 0.62 else "middle")
-            pos = f"in the {h_zone} {v_zone}"
+            pos += ", against the " + " and ".join(wall_tags) + (
+                " wall" if len(wall_tags) == 1 else " walls"
+            )
 
-        parts.append(f"{ftype} {pos}")
+        parts.append(f"{desc} {pos}")
     return "; ".join(parts)
 
 
@@ -652,7 +691,10 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
     render_suffix = uuid.uuid4().hex[:8]
     out_path = render_dir / f"{task_id}_{render_suffix}.png"
 
-    prompt = _build_imagen_prompt_from_requirement(req, style_params=style_params)
+    _user_text_prompt = ((state.get("user_input") or {}).get("text_prompt") or "").strip()
+    prompt = _build_imagen_prompt_from_requirement(
+        req, style_params=style_params, user_text_prompt=_user_text_prompt,
+    )
 
     # 只有使用者明確要求重新規劃佈局時，才把 layout 結果注入 prompt
     if req.get("hint_layout"):
@@ -805,6 +847,92 @@ def renderer(state: DesignBridgeState) -> dict[str, Any]:
             backend = "flux_redux_local"
             generation_params["model"] = "black-forest-labs/FLUX.1-Redux-dev (local)"
             generation_params["style_reference"] = user_style_reference_local
+
+    # Layout-driven depth ControlNet: project the 2D floor plan into an eye-level
+    # depth map (same viewpoint as the render) and drive a FLUX depth ControlNet so
+    # furniture positions from the 2D plan are actually honored in 3D.
+    # Only in the text→design flow (no uploaded photo / no real depth map).
+    _has_real_depth = bool(depth_path and Path(str(depth_path)).is_file())
+    if (
+        backend == "placeholder"
+        and Config.ENABLE_LAYOUT_CONTROLNET
+        and Config.FAL_KEY
+        and furniture_placements
+        and not _has_real_depth
+    ):
+        layout_depth_path: str | None = None
+        layout_edge_path: str | None = None
+        try:
+            from designbridge.layout_projection import (
+                render_layout_depth_map,
+                render_layout_edge_map,
+            )
+
+            # Prefer the REAL room dims carried from the Step-1 layout (scene_graph);
+            # only fall back to the requirement analyzer's guess when absent. Using the
+            # wrong size distorts the projection's aspect ratio and moves furniture
+            # off-plan.
+            _room = (req.get("space_info") or {}).get("estimated_size") or {}
+            _rw = float(scene_graph_data.get("room_w") or _room.get("width", 4.0) or 4.0)
+            _rd = float(scene_graph_data.get("room_d") or _room.get("depth", 4.0) or 4.0)
+            # Elevated three-quarter "look-at" camera so the floor layout reads clearly.
+            _cam = {
+                "eye_h": Config.LAYOUT_CAM_EYE_H,
+                "setback": Config.LAYOUT_CAM_SETBACK,
+                "target_h": Config.LAYOUT_CAM_TARGET_H,
+                "target_depth_frac": Config.LAYOUT_CAM_TARGET_DEPTH_FRAC,
+                "fov_v_deg": Config.LAYOUT_CAM_FOV,
+            }
+            # Canny of furniture FOOTPRINTS = distance-independent placement without
+            # forcing cuboid shapes; depth of the room shell = 3D structure.
+            layout_edge_path = render_layout_edge_map(
+                furniture_placements, task_id, room_w=_rw, room_d=_rd,
+                img_w=output_width, img_h=output_height,
+                footprints_only=True, cam_kwargs=_cam,
+            )
+            layout_depth_path = render_layout_depth_map(
+                furniture_placements, task_id, room_w=_rw, room_d=_rd,
+                img_w=output_width, img_h=output_height,
+                semantic_shapes=Config.ENABLE_SEMANTIC_SHAPES, cam_kwargs=_cam,
+            )
+        except Exception as e:
+            print(f"⚠️  layout projection failed: {e}")
+
+        if layout_depth_path and Path(layout_depth_path).is_file():
+            controlnet_inputs["layout_depth"] = layout_depth_path
+            if layout_edge_path:
+                controlnet_inputs["layout_footprint_edges"] = layout_edge_path
+            # Add tidiness/quality cues so the model renders clean, well-formed
+            # furniture (no draped clothes, tables keep their legs, etc.). A negative
+            # prompt can't be used — it breaks the ControlNet-Union pipeline on fal.
+            layout_prompt = (
+                "Elevated three-quarter photorealistic interior view. " + prompt +
+                " Clean tidy space, well-proportioned realistic furniture with proper legs, "
+                "nothing draped on the sofa, professional interior design photography, high detail."
+            )
+            if _render_flux_depth_controlnet_fal(
+                layout_prompt,
+                layout_depth_path,
+                out_path,
+                edge_path=layout_edge_path,
+                edge_conditioning_scale=Config.FAL_EDGE_CONDITIONING_SCALE,
+                conditioning_scale=Config.FAL_DEPTH_CONDITIONING_SCALE,
+                depth_control_end=Config.FAL_DEPTH_CONTROL_END,
+                edge_control_end=Config.FAL_EDGE_CONTROL_END,
+                num_steps=Config.FAL_DEPTH_STEPS,
+                guidance_scale=Config.FAL_DEPTH_GUIDANCE,
+                output_size=output_size,
+            ):
+                backend = "flux_depth_controlnet_fal"
+                generation_params["model"] = Config.FAL_DEPTH_CONTROLNET_MODEL
+                generation_params["provider"] = "fal-ai/flux-general"
+                generation_params["layout_edge_conditioning_scale"] = Config.FAL_EDGE_CONDITIONING_SCALE
+                generation_params["layout_depth_conditioning_scale"] = Config.FAL_DEPTH_CONDITIONING_SCALE
+                generation_params["layout_depth_control_end"] = Config.FAL_DEPTH_CONTROL_END
+                generation_params["layout_edge_control_end"] = Config.FAL_EDGE_CONTROL_END
+                generation_params["layout_semantic_shapes"] = Config.ENABLE_SEMANTIC_SHAPES
+                generation_params["layout_control_source"] = "2d_plan_footprint+depth"
+                print("[renderer] 2D plan → footprint canny + elevated depth → FLUX Union render")
 
     # Kontext LoRA via Replicate：depth map 優先，fallback 到 2D floor plan 作為空間結構引導
     _SPATIAL_STRENGTH = {"none": 0.55, "minor": 0.60, "major": 0.75}

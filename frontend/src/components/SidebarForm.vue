@@ -13,14 +13,17 @@ const props = defineProps({
   loading:             { type: Boolean, default: false },
   error:               { type: String,  default: '' },
   styleRefImage:       { type: Object,  required: true },
+  floorPlanUpload:     { type: Object,  required: true },
 })
 
-const emit = defineEmits(['submit-layout', 'submit-3d', 'retry-style-options'])
+const emit = defineEmits(['submit-layout', 'use-uploaded-plan', 'submit-3d', 'retry-style-options'])
 
 // ── Step 1 models ─────────────────────────────────────────────
+const planSource     = defineModel('planSource',     { default: 'generate' })  // 'generate' | 'upload'
 const roomType       = defineModel('roomType',       { default: 'living_room' })
 const spaceSizePing  = defineModel('spaceSizePing',  { default: 4 })
 const furnitureItems = defineModel('furnitureItems', { default: () => [] })
+const furnitureQty   = defineModel('furnitureQty',   { default: () => ({}) })
 const extraPrompt    = defineModel('extraPrompt',    { default: '' })
 const familyNeeds    = defineModel('familyNeeds',    { default: () => [] })
 const fengshuiRules  = defineModel('fengshuiRules',  { default: () => [] })
@@ -77,9 +80,23 @@ const FURNITURE_BY_ROOM = {
 const availableFurniture = computed(() => FURNITURE_BY_ROOM[roomType.value] || [])
 
 function toggleFurniture(value) {
-  furnitureItems.value = furnitureItems.value.includes(value)
-    ? furnitureItems.value.filter(v => v !== value)
-    : [...furnitureItems.value, value]
+  if (furnitureItems.value.includes(value)) {
+    furnitureItems.value = furnitureItems.value.filter(v => v !== value)
+    const q = { ...furnitureQty.value }; delete q[value]; furnitureQty.value = q
+  } else {
+    furnitureItems.value = [...furnitureItems.value, value]
+    furnitureQty.value = { ...furnitureQty.value, [value]: 1 }
+  }
+}
+
+function removeFurniture(value) {
+  furnitureItems.value = furnitureItems.value.filter(v => v !== value)
+  const q = { ...furnitureQty.value }; delete q[value]; furnitureQty.value = q
+}
+
+function qtyOf(value) { return furnitureQty.value[value] || 1 }
+function setQty(value, n) {
+  furnitureQty.value = { ...furnitureQty.value, [value]: Math.max(1, Math.min(20, n)) }
 }
 
 // custom furniture text input
@@ -88,6 +105,7 @@ function addCustomFurniture() {
   const val = customFurnitureInput.value.trim().toLowerCase().replace(/\s+/g, '_')
   if (val && !furnitureItems.value.includes(val)) {
     furnitureItems.value = [...furnitureItems.value, val]
+    furnitureQty.value = { ...furnitureQty.value, [val]: 1 }
   }
   customFurnitureInput.value = ''
 }
@@ -136,6 +154,23 @@ const showAdvanced = ref(false)
     <!-- ══════════ STEP 1: Layout inputs ══════════ -->
     <template v-if="designStep === 1">
 
+      <!-- 平面圖來源 -->
+      <div class="field">
+        <label class="field-label">平面圖來源</label>
+        <div class="chip-group mode-toggle">
+          <button
+            type="button"
+            :class="['chip', { active: planSource === 'generate' }]"
+            @click="planSource = 'generate'"
+          >AI自動生成</button>
+          <button
+            type="button"
+            :class="['chip', { active: planSource === 'upload' }]"
+            @click="planSource = 'upload'"
+          >上傳平面圖</button>
+        </div>
+      </div>
+
       <!-- 房間類型 -->
       <div class="field">
         <label class="field-label">房間類型</label>
@@ -144,7 +179,7 @@ const showAdvanced = ref(false)
             v-for="opt in ROOM_OPTIONS" :key="opt.value"
             type="button"
             :class="['chip', { active: roomType === opt.value }]"
-            @click="roomType = opt.value; furnitureItems = []"
+            @click="roomType = opt.value; furnitureItems = []; furnitureQty = {}"
           >{{ opt.label }}</button>
         </div>
       </div>
@@ -160,8 +195,8 @@ const showAdvanced = ref(false)
         <div class="ping-hint">≈ {{ Math.round(spaceSizePing * 3.3) }} m²</div>
       </div>
 
-      <!-- 預計擺放的東西 -->
-      <div class="field">
+      <!-- 預計擺放的東西 (僅自動生成模式) -->
+      <div v-if="planSource === 'generate'" class="field">
         <label class="field-label">預計擺放的家具</label>
         <div class="chip-group">
           <button
@@ -186,16 +221,45 @@ const showAdvanced = ref(false)
             class="tag"
           >
             {{ item.replace(/_/g, ' ') }}
-            <button type="button" class="tag-remove" @click="furnitureItems = furnitureItems.filter(v => v !== item)">×</button>
+            <span class="qty">
+              <button type="button" class="qty-btn" @click="setQty(item, qtyOf(item) - 1)">−</button>
+              <span class="qty-num">{{ qtyOf(item) }}</span>
+              <button type="button" class="qty-btn" @click="setQty(item, qtyOf(item) + 1)">+</button>
+            </span>
+            <button type="button" class="tag-remove" @click="removeFurniture(item)">×</button>
           </span>
         </div>
       </div>
 
+      <!-- 上傳平面配置圖 (僅上傳模式) -->
+      <div v-else class="field">
+        <label class="field-label">上傳 2D 平面配置圖</label>
+        <ImageUpload
+          label="點擊或拖曳上傳平面圖"
+          icon="📐"
+          hint="上傳 2D 平面配置圖，AI 會依此模擬渲染樣式"
+          :preview="floorPlanUpload.preview"
+          @change="floorPlanUpload.onChange"
+          @remove="floorPlanUpload.remove"
+        />
+      </div>
+
       <!-- Submit -->
       <div class="submit-wrap">
-        <button class="submit-btn" @click="$emit('submit-layout')" :disabled="loading">
+        <button
+          v-if="planSource === 'generate'"
+          class="submit-btn" @click="$emit('submit-layout')" :disabled="loading"
+        >
           <span v-if="loading" class="spinner"></span>
           <span>{{ loading ? '生成中...' : '生成 2D 平面圖' }}</span>
+        </button>
+        <button
+          v-else
+          class="submit-btn step2-btn" @click="$emit('use-uploaded-plan')"
+          :disabled="loading || !floorPlanUpload.preview"
+        >
+          <span v-if="loading" class="spinner"></span>
+          <span>{{ loading ? '渲染中...' : '使用平面圖生成渲染圖' }}</span>
         </button>
         <p v-if="error" class="error-msg">{{ error }}</p>
       </div>
@@ -213,11 +277,11 @@ const showAdvanced = ref(false)
 
       <!-- 其他描述 -->
       <div class="field">
-        <label class="field-label">描述你想要的氛圍 <span class="optional">選填</span></label>
+        <label class="field-label">描述你想要的樣式 <span class="optional">選填</span></label>
         <textarea
           v-model="extraPrompt"
           rows="3"
-          placeholder="例如：喜歡木質感、希望有採光充足的明亮感..."
+          placeholder="例如：木質感、採光充足的明亮感..."
         />
       </div>
 
@@ -402,6 +466,10 @@ input[type='range'] { width: 100%; accent-color: var(--primary); cursor: pointer
   font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.18);
 }
 
+/* ── Plan-source segmented toggle ── */
+.mode-toggle { gap: 0.5rem; }
+.mode-toggle .chip { flex: 1; text-align: center; padding: 0.5rem 0.75rem; }
+
 /* ── Custom furniture input ── */
 .custom-input-row {
   display: flex; gap: 0.4rem; margin-top: 0.25rem;
@@ -437,6 +505,14 @@ input[type='range'] { width: 100%; accent-color: var(--primary); cursor: pointer
   line-height: 1; display: flex; align-items: center;
 }
 .tag-remove:hover { color: #c0392b; }
+.qty { display: inline-flex; align-items: center; gap: 0.15rem; }
+.qty-btn {
+  width: 16px; height: 16px; border-radius: 4px; padding: 0; line-height: 1;
+  border: 1px solid var(--primary-border); background: #fff; color: var(--primary);
+  cursor: pointer; font-size: 0.8rem; display: flex; align-items: center; justify-content: center;
+}
+.qty-btn:hover { background: var(--primary); color: #fff; }
+.qty-num { min-width: 14px; text-align: center; font-weight: 700; font-size: 0.75rem; }
 
 /* ── Textarea ── */
 textarea {

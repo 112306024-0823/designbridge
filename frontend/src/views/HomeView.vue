@@ -5,18 +5,32 @@ import designbridgeLogo from '../../asset/designbridge_logo.png'
 import SidebarForm from '@/components/SidebarForm.vue'
 import ResultPanel from '@/components/ResultPanel.vue'
 import StyleSuggestions from '@/components/StyleSuggestions.vue'
-import { API_BASE, apiUrl } from '@/config/api'
+import LayoutEditor from '@/components/LayoutEditor.vue'
+import { API_BASE, apiUrl, mediaUrl } from '@/config/api'
 
 // ── Two-step state ────────────────────────────────────────────
 const designStep   = ref(1)   // 1 = layout input, 2 = style + 3D
 const floorPlanUrl  = ref('')
 const floorPlanPath = ref('')
 const sceneGraph    = ref(null)
+// Step 1 plan source: 'generate' = AI auto-layout, 'upload' = user supplies a floor plan
+const planSource     = ref('generate')
+const floorPlanUpload = useImageField()
+const uploadedPlanUrl = ref('')   // original uploaded plan, kept for side-by-side reference
+
+// ── Layout editor state ───────────────────────────────────────
+const editPlacements = ref([])   // editable copy of furniture_placements
+const roomW = ref(5.0)
+const roomD = ref(4.0)
+const roomTypeForPlan = ref('living_room')
+const planUpdating = ref(false)
+const editorDirty = ref(false)   // placements changed since last PNG render
 
 // ── Step 1 form values ────────────────────────────────────────
 const roomType       = ref('living_room')
 const spaceSizePing  = ref(4)
 const furnitureItems = ref([])
+const furnitureQty   = ref({})
 const extraPrompt    = ref('')
 const familyNeeds    = ref([])
 const fengshuiRules  = ref([])
@@ -166,7 +180,10 @@ async function handleSubmitLayout() {
       body: JSON.stringify({
         room_type:       roomType.value,
         space_size_ping: spaceSizePing.value,
-        furniture_list:  furnitureItems.value,
+        // expand each furniture type by its chosen quantity, e.g. chair×3
+        furniture_list:  furnitureItems.value.flatMap(
+          t => Array(Math.max(1, furnitureQty.value[t] || 1)).fill(t)
+        ),
         text_prompt:     extraPrompt.value,
         family_needs:    familyNeeds.value,
         fengshui_rules:  fengshuiRules.value,
@@ -178,6 +195,14 @@ async function handleSubmitLayout() {
     floorPlanUrl.value  = data.floor_plan_url || ''
     floorPlanPath.value = data.floor_plan_path || ''
     sceneGraph.value    = data.scene_graph || null
+    // seed the editable layout
+    const placements = (data.scene_graph?.furniture_placements || [])
+      .map((p, i) => ({ id: p.id || `item_${i}`, type: p.type, x: p.x, y: p.y, w: p.w, h: p.h, rotation: p.rotation || 0 }))
+    editPlacements.value = placements
+    roomW.value = data.room_w || 5.0
+    roomD.value = data.room_d || 4.0
+    roomTypeForPlan.value = data.room_type || roomType.value
+    editorDirty.value = false
     designStep.value = 2
     // trigger style candidates search based on extraPrompt
     if (extraPrompt.value.trim()) scheduleSearch()
@@ -188,8 +213,116 @@ async function handleSubmitLayout() {
   }
 }
 
+// ── Step 1 (alt): use an uploaded floor plan directly ─────────
+async function handleUseUploadedPlan() {
+  if (!floorPlanUpload.file) {
+    error.value = '請先上傳平面配置圖'
+    return
+  }
+  const requestId = ++currentRequestId
+  error.value = ''
+  loading.value = true
+  result.value = null
+  try {
+    const path = await uploadFile(floorPlanUpload.file)
+    if (requestId !== currentRequestId) return
+    uploadedPlanUrl.value = mediaUrl(path)
+
+    // Parse the plan with Gemini vision → structured furniture coords, so the upload
+    // drives the SAME accurate layout-projection pipeline (and becomes editable).
+    const res = await fetch(apiUrl('/api/parse-floor-plan'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_path: path,
+        room_type: roomType.value,
+        space_size_ping: spaceSizePing.value,
+      }),
+    })
+    if (!res.ok) throw new Error(`${res.status}`)
+    const data = await res.json()
+    if (requestId !== currentRequestId) return
+
+    const placements = (data.furniture_placements || [])
+      .map((p, i) => ({ id: p.id || `item_${i}`, type: p.type, x: p.x, y: p.y, w: p.w, h: p.h, rotation: p.rotation || 0 }))
+
+    if (placements.length) {
+      // Parsed OK → treat exactly like an AI-generated layout (editable + accurate path)
+      floorPlanPath.value = data.floor_plan_path || path
+      floorPlanUrl.value = data.floor_plan_url || mediaUrl(path)
+      sceneGraph.value = data.scene_graph || null
+      editPlacements.value = placements
+    } else {
+      // Gemini found nothing → fall back to using the raw image as a Kontext guide
+      floorPlanPath.value = path
+      floorPlanUrl.value = mediaUrl(path)
+      sceneGraph.value = null
+      editPlacements.value = []
+    }
+    editorDirty.value = false
+    roomW.value = data.room_w || 5.0
+    roomD.value = data.room_d || 4.0
+    roomTypeForPlan.value = data.room_type || roomType.value
+    designStep.value = 2
+    if (extraPrompt.value.trim()) scheduleSearch()
+  } catch (e) {
+    if (requestId === currentRequestId) error.value = `解析平面圖失敗：${e.message}`
+  } finally {
+    if (requestId === currentRequestId) loading.value = false
+  }
+}
+
+// ── Layout editor ─────────────────────────────────────────────
+function onEditorChange(next) {
+  editPlacements.value = next
+  editorDirty.value = true
+}
+
+async function updateFloorPlan() {
+  if (!editPlacements.value.length) return
+  planUpdating.value = true
+  try {
+    const res = await fetch(apiUrl('/api/render-floor-plan'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        furniture_placements: editPlacements.value,
+        room_w: roomW.value,
+        room_d: roomD.value,
+        room_type: roomTypeForPlan.value,
+      }),
+    })
+    if (!res.ok) throw new Error(`${res.status}`)
+    const data = await res.json()
+    // cache-bust so the <img> reloads
+    floorPlanUrl.value = (data.floor_plan_url || '') + `?t=${Date.now()}`
+    floorPlanPath.value = data.floor_plan_path || floorPlanPath.value
+    // keep the scene graph's embedded floor_plan_path in sync, otherwise the 3D
+    // render would still be guided by the original Step-1 plan (see handleSubmit3D)
+    if (sceneGraph.value && data.floor_plan_path) {
+      sceneGraph.value = { ...sceneGraph.value, floor_plan_path: data.floor_plan_path }
+    }
+    editorDirty.value = false
+  } catch (e) {
+    error.value = `更新平面圖失敗：${e.message}`
+  } finally {
+    planUpdating.value = false
+  }
+}
+
 // ── Step 2: generate 3D render ────────────────────────────────
 async function handleSubmit3D() {
+  // Warn (but don't auto-save) if the layout has unsaved edits — the 3D render
+  // would otherwise be guided by the last-saved floor plan, not the current one.
+  // (Uploaded plans have no editor, so this never applies to them.)
+  if (planSource.value !== 'upload' && editorDirty.value) {
+    const proceed = window.confirm(
+      '你有尚未儲存的家具位置變更。\n\n' +
+      '若直接生成，3D 渲染會使用「上次更新的平面圖」，而非目前編輯器的最新狀態。\n\n' +
+      '建議先點「更新平面圖 PNG」再生成。\n\n要繼續生成嗎？'
+    )
+    if (!proceed) return
+  }
   const requestId = ++currentRequestId
   submitKey.value++
   error.value = ''
@@ -204,6 +337,14 @@ async function handleSubmit3D() {
         style_reference_image_path = confirmedStyle.value.image_url
       }
     }
+
+    // With furniture coords (AI layout OR a parsed upload): fold the edited positions
+    // back into the scene graph so the render follows the accurate layout-projection
+    // path. Without coords (an upload Gemini couldn't parse): send no scene_graph and
+    // let the backend use the raw floor_plan_path as a Kontext structural guide.
+    const editedSceneGraph = editPlacements.value.length
+      ? { ...(sceneGraph.value || {}), furniture_placements: editPlacements.value, floor_plan_path: floorPlanPath.value || sceneGraph.value?.floor_plan_path }
+      : undefined
 
     const res = await fetch(apiUrl('/api/generate'), {
       method: 'POST',
@@ -220,7 +361,7 @@ async function handleSubmit3D() {
         output_aspect:             'auto',
         style_method:              styleMethod.value,
         floor_plan_path:           floorPlanPath.value || undefined,
-        scene_graph:               sceneGraph.value || undefined,
+        scene_graph:               editedSceneGraph,
       }),
     })
     if (!res.ok) throw new Error(`${res.status}`)
@@ -246,6 +387,10 @@ function resetToStep1() {
   floorPlanUrl.value = ''
   floorPlanPath.value = ''
   sceneGraph.value = null
+  editPlacements.value = []
+  editorDirty.value = false
+  floorPlanUpload.remove()
+  uploadedPlanUrl.value = ''
   result.value = null
   error.value = ''
   styleCandidates.value = []
@@ -270,9 +415,12 @@ onMounted(fetchStyleOptions)
         <SidebarForm
           :designStep="designStep"
           :floorPlanUrl="floorPlanUrl"
+          v-model:planSource="planSource"
+          :floorPlanUpload="floorPlanUpload"
           v-model:roomType="roomType"
           v-model:spaceSizePing="spaceSizePing"
           v-model:furnitureItems="furnitureItems"
+          v-model:furnitureQty="furnitureQty"
           v-model:extraPrompt="extraPrompt"
           v-model:familyNeeds="familyNeeds"
           v-model:fengshuiRules="fengshuiRules"
@@ -287,6 +435,7 @@ onMounted(fetchStyleOptions)
           :loading="loading"
           :error="error"
           @submit-layout="handleSubmitLayout"
+          @use-uploaded-plan="handleUseUploadedPlan"
           @submit-3d="handleSubmit3D"
           @retry-style-options="fetchStyleOptions"
         />
@@ -306,8 +455,8 @@ onMounted(fetchStyleOptions)
       <template v-if="designStep === 1">
         <div v-if="loading" class="center-state">
           <div class="loading-ring"><div class="loading-spinner"></div><div class="loading-mark">✦</div></div>
-          <p class="loading-title">生成 2D 平面圖中</p>
-          <p class="loading-sub">AI 計算家具配置，通常約 10 秒</p>
+          <p class="loading-title">{{ planSource === 'upload' ? '上傳平面圖中' : '生成 2D 平面圖中' }}</p>
+          <p class="loading-sub">{{ planSource === 'upload' ? '處理你的平面配置圖' : 'AI 計算家具配置，通常約 10 秒' }}</p>
         </div>
         <div v-else class="placeholder">
           <div class="placeholder-inner">
@@ -331,16 +480,59 @@ onMounted(fetchStyleOptions)
         <!-- 3D result -->
         <ResultPanel v-else-if="result" :key="submitKey" :result="result" :loading="false" />
 
-        <!-- Between step 1 and 2: show floor plan + style suggestions -->
+        <!-- Between step 1 and 2: editable layout + style suggestions -->
         <template v-else>
-          <!-- Floor plan big preview -->
-          <div v-if="floorPlanUrl" class="floor-plan-hero">
+          <!-- Uploaded plan: static confirmation preview, no editor (parse-but-skip-edit) -->
+          <div v-if="planSource === 'upload' && floorPlanUrl" class="floor-plan-hero">
             <div class="fp-hero-label">
-              <span>2D 平面配置圖</span>
+              <span>{{ editPlacements.length ? '已辨識你的平面圖配置' : '上傳的 2D 平面配置圖' }}</span>
+              <button class="back-btn" @click="resetToStep1">← 重新上傳</button>
+            </div>
+            <img :src="floorPlanUrl" :alt="editPlacements.length ? '辨識後的平面配置' : '上傳的平面配置圖'" class="fp-hero-img" />
+
+            <details v-if="editPlacements.length && uploadedPlanUrl" class="fp-png">
+              <summary>對照原始上傳平面圖</summary>
+              <img :src="uploadedPlanUrl" alt="原始上傳平面圖" class="fp-hero-img" />
+            </details>
+
+            <p v-if="editPlacements.length" class="fp-hero-hint">
+              已辨識 {{ editPlacements.length }} 件家具。在左側選擇風格並點「生成 3D 渲染圖」即可
+            </p>
+            <p v-else class="fp-hero-hint">
+              未能自動辨識家具，將以整張平面圖作為結構參考生成 3D。可在左側選擇風格後生成
+            </p>
+          </div>
+
+          <!-- Interactive 2D layout editor (AI-generated layout only) -->
+          <div v-else-if="editPlacements.length || floorPlanUrl" class="floor-plan-hero">
+            <div class="fp-hero-label">
+              <span>2D 平面配置圖（可拖動編輯）</span>
               <button class="back-btn" @click="resetToStep1">← 重新規劃</button>
             </div>
-            <img :src="floorPlanUrl" alt="2D 平面配置圖" class="fp-hero-img" />
-            <p class="fp-hero-hint">在左側選擇風格，點選「生成 3D 渲染圖」</p>
+
+            <LayoutEditor
+              :placements="editPlacements"
+              @update:placements="onEditorChange"
+            />
+
+            <details v-if="uploadedPlanUrl" class="fp-png">
+              <summary>對照原始上傳平面圖</summary>
+              <img :src="uploadedPlanUrl" alt="原始上傳平面圖" class="fp-hero-img" />
+            </details>
+
+            <div class="fp-actions">
+              <button class="fp-update-btn" :disabled="planUpdating" @click="updateFloorPlan">
+                {{ planUpdating ? '更新中…' : '更新平面圖 PNG' }}
+              </button>
+              <span v-if="editorDirty" class="dirty-tag">● 有未儲存的位置變更</span>
+            </div>
+
+            <details v-if="floorPlanUrl" class="fp-png">
+              <summary>檢視平面圖 PNG</summary>
+              <img :src="floorPlanUrl" alt="2D 平面配置圖" class="fp-hero-img" />
+            </details>
+
+            <p class="fp-hero-hint">拖動調整家具位置後，在左側選擇風格並點「生成 3D 渲染圖」</p>
           </div>
 
           <StyleSuggestions
@@ -442,9 +634,21 @@ onMounted(fetchStyleOptions)
 .fp-hero-img {
   width: 100%; border-radius: 12px;
   box-shadow: 0 4px 24px rgba(0,0,0,0.12);
-  border: 1px solid #ddd;
+  border: 1px solid #ddd; margin-top: 0.5rem;
 }
 .fp-hero-hint { font-size: 0.8rem; color: var(--text-3); text-align: center; margin-top: 0.25rem; }
+
+.fp-actions { display: flex; align-items: center; gap: 0.75rem; }
+.fp-update-btn {
+  border: 1.5px solid #8B5E3C; background: #fff; color: #8B5E3C;
+  border-radius: 8px; padding: 0.4rem 0.9rem; font-size: 0.8rem;
+  font-family: inherit; font-weight: 700; cursor: pointer; transition: all 0.15s;
+}
+.fp-update-btn:hover:not(:disabled) { background: #8B5E3C; color: #fff; }
+.fp-update-btn:disabled { opacity: 0.55; cursor: default; }
+.dirty-tag { font-size: 0.74rem; color: #c0392b; font-weight: 600; }
+.fp-png { font-size: 0.8rem; color: var(--text-2); }
+.fp-png summary { cursor: pointer; padding: 0.2rem 0; user-select: none; }
 
 /* ── FAB ── */
 .history-fab {

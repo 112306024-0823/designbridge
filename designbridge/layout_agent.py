@@ -98,6 +98,16 @@ class FurnitureItem:
 
 # ─────────────────────────── Geometry ───────────────────────────
 
+# Flat floor coverings — a layer that furniture is *meant* to sit on top of, so they
+# are excluded from collision/gap resolution (a coffee table on a rug is valid, not a
+# collision). The floor plan and 3D render both draw them as a floor layer beneath.
+_FLOOR_LAYER_TYPES = {"rug", "carpet"}
+
+
+def _is_floor_layer(item: FurnitureItem) -> bool:
+    return item.type in _FLOOR_LAYER_TYPES
+
+
 def _overlaps(a: FurnitureItem, b: FurnitureItem, margin: float = 0.02) -> bool:
     return not (
         a.x + a.w + margin <= b.x
@@ -108,12 +118,17 @@ def _overlaps(a: FurnitureItem, b: FurnitureItem, margin: float = 0.02) -> bool:
 
 
 def _push_apart(items: list[FurnitureItem], iterations: int = 60) -> list[FurnitureItem]:
-    """AABB collision resolution: iteratively push overlapping pairs apart."""
+    """AABB collision resolution: iteratively push overlapping pairs apart.
+
+    Floor-layer items (rugs) are skipped — furniture is allowed to sit on them.
+    """
     for _ in range(iterations):
         moved = False
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
                 a, b = items[i], items[j]
+                if _is_floor_layer(a) or _is_floor_layer(b):
+                    continue
                 if not _overlaps(a, b):
                     continue
                 acx, acy = a.x + a.w / 2, a.y + a.h / 2
@@ -225,12 +240,20 @@ def _apply_hard_constraints(
 
     items = [item for item in items if item.type not in must_remove]
 
-    existing = {item.type for item in items}
-    for ftype in must_add:
-        if ftype not in existing:
-            w, h = FURNITURE_SIZES.get(ftype, FURNITURE_SIZES["default"])
-            items.append(FurnitureItem(f"{ftype}_{len(items)+1}", ftype, 0.72, 0.72, w, h))
-            existing.add(ftype)
+    # Count-aware: must_add may list a type multiple times (e.g. 3 chairs). Add as
+    # many of each type as requested, minus however many the base layout already has.
+    from collections import Counter
+    desired = Counter(must_add)
+    have = Counter(item.type for item in items)
+    for ftype, want in desired.items():
+        w, h = FURNITURE_SIZES.get(ftype, FURNITURE_SIZES["default"])
+        for _ in range(max(0, want - have.get(ftype, 0))):
+            # spawn near centre with a small scatter; _push_apart spreads them out
+            jitter = 0.02 * (len([i for i in items if i.type == ftype]) + 1)
+            items.append(FurnitureItem(
+                f"{ftype}_{len(items)+1}", ftype,
+                min(0.9, 0.6 + jitter), min(0.9, 0.6 + jitter), w, h,
+            ))
 
     return items
 
@@ -300,6 +323,8 @@ def _enforce_semantic_gaps(
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
                 a, b = items[i], items[j]
+                if _is_floor_layer(a) or _is_floor_layer(b):
+                    continue
                 gap = gap_map.get(frozenset({a.type, b.type}))
                 if gap is None or not _overlaps(a, b, margin=gap):
                     continue
@@ -598,6 +623,101 @@ def _call_llm_layout(prompt: str) -> list[FurnitureItem]:
             )
         )
     return items
+
+
+# ───────────────────── Parse an uploaded floor-plan image ─────────────────────
+
+# Vocabulary we constrain Gemini to, so parsed types line up with FURNITURE_SIZES,
+# heights, semantic shapes and floor-plan colors downstream.
+_KNOWN_FURNITURE_TYPES = sorted(k for k in FURNITURE_SIZES if k != "default")
+
+
+def parse_floor_plan_image(
+    image_path: str,
+    task_id: str,
+    room_type: str = "living_room",
+    room_w: float = 5.0,
+    room_d: float = 4.0,
+) -> dict[str, Any] | None:
+    """Read furniture from a user-uploaded 2D floor-plan image via Gemini vision.
+
+    Returns a scene_graph (furniture_placements + a re-rendered floor-plan PNG using
+    the same coordinate system as the AI-generated layouts), so an uploaded plan can
+    drive the SAME accurate layout-projection render path — and be edited in the 2D
+    editor — instead of the weaker "raw image as Kontext guide" fallback.
+
+    Returns ``None`` when parsing fails or finds nothing (caller then falls back).
+    """
+    from designbridge.llm import call_llm
+
+    types_csv = ", ".join(_KNOWN_FURNITURE_TYPES)
+    prompt = (
+        "You are given a 2D top-down interior FLOOR PLAN image. Identify every piece "
+        "of furniture drawn in it and return each one's position as a normalized "
+        "bounding box.\n"
+        "Coordinate system: origin at the TOP-LEFT of the room interior. "
+        "x = 0 is the left wall → 1 is the right wall; y = 0 is the back/top wall → "
+        "1 is the front/bottom wall. (x, y) is the TOP-LEFT corner of the footprint; "
+        "(w, h) are its width and height. All four values are floats in [0, 1].\n"
+        f"Use ONLY these furniture type keywords (map synonyms to the closest one): "
+        f"{types_csv}. Skip any symbol you cannot confidently classify.\n"
+        "Return STRICT JSON only, no prose, no markdown fences:\n"
+        '{"furniture":[{"type":"sofa","x":0.05,"y":0.30,"w":0.30,"h":0.13}]}'
+    )
+
+    try:
+        text = call_llm(prompt, images=[image_path])
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️  Gemini floor-plan parse failed: {e}")
+        return None
+
+    raw = _parse_llm_layout(text)
+    if not raw:
+        print("⚠️  Gemini floor-plan parse returned no furniture")
+        return None
+
+    items: list[FurnitureItem] = []
+    for i, f in enumerate(raw):
+        ftype = str(f.get("type", "default")).lower().replace(" ", "_")
+        if ftype not in FURNITURE_SIZES:
+            ftype = "default"
+        dw, dh = FURNITURE_SIZES.get(ftype, FURNITURE_SIZES["default"])
+        try:
+            x = float(f.get("x", 0.1))
+            y = float(f.get("y", 0.1))
+            w = float(f.get("w", dw) or dw)
+            h = float(f.get("h", dh) or dh)
+        except (TypeError, ValueError):
+            continue
+        items.append(
+            FurnitureItem(
+                id=f"{ftype}_{i + 1}",
+                type=ftype,
+                x=max(0.0, min(0.98, x)),
+                y=max(0.0, min(0.98, y)),
+                w=max(0.02, min(1.0, w)),
+                h=max(0.02, min(1.0, h)),
+                rotation=float(f.get("rotation", 0) or 0),
+            )
+        )
+
+    if not items:
+        return None
+
+    items = _clip_to_room(items)
+    floor_plan_path = _generate_floor_plan(
+        items, task_id, room_type=room_type, room_w=room_w, room_d=room_d
+    )
+    print(f"[parse_floor_plan] Gemini parsed {len(items)} items from uploaded plan")
+
+    return {
+        "furniture_placements": [it.to_dict() for it in items],
+        "layout_prompt": "",
+        "floor_plan_path": floor_plan_path,
+        "room_w": room_w,
+        "room_d": room_d,
+        "source": "uploaded_plan_parsed",
+    }
 
 
 # ───────────────────────── Default Fallback Layouts ───────────────────────────
@@ -1311,6 +1431,7 @@ def run_layout_agent(
             _overlaps(best_items[i], best_items[j])
             for i in range(len(best_items))
             for j in range(i + 1, len(best_items))
+            if not (_is_floor_layer(best_items[i]) or _is_floor_layer(best_items[j]))
         ),
         "wall_anchored": all(
             min(item.x, 1.0 - item.x - item.w, item.y, 1.0 - item.y - item.h) <= _snap_threshold
@@ -1337,6 +1458,11 @@ def run_layout_agent(
         "soft_constraint_scores": scores,
         "weighted_score": best_score,
         "floor_plan_path": floor_plan_path,
+        # Carry the REAL room dimensions used to draw the plan so the Step-2 renderer
+        # projects the layout at the correct aspect ratio (otherwise it falls back to
+        # the requirement analyzer's guessed size and the layout gets distorted).
+        "room_w": _fp_room_w,
+        "room_d": _fp_room_d,
         "feasible": feasible,
         "infeasible_constraints": infeasible_constraints,
     }
