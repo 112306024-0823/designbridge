@@ -46,10 +46,15 @@ def _blob_centroid(placements, item):
 
 
 def _expected_screen_centroid(item, cam):
-    """Project all 8 corners of the item's 3D box and return their screen centroid.
+    """Project the item's 3D box; return its screen centroid and horizontal extent.
 
     A box has real extent, so where it *appears* is the spread of its projected
     corners — not a single footprint point. This mirrors how it rasterizes.
+
+    The extent is returned as well because it, not the centroid, decides whether the
+    blob centroid is comparable: a box straddling a frame edge still has its centroid
+    well inside the image, but the pixels beyond the edge are never drawn, so the
+    visible centroid is pulled inward and no longer tracks the projected one.
     """
     x0, x1 = item["x"] * ROOM_W, (item["x"] + item["w"]) * ROOM_W
     z0 = (1.0 - (item["y"] + item["h"])) * ROOM_D  # near edge
@@ -62,32 +67,38 @@ def _expected_screen_centroid(item, cam):
     cp = cam.to_cam(corners)
     sx = cam.cx + cam.f * cp[:, 0] / cp[:, 2]
     sy = cam.cy - cam.f * cp[:, 1] / cp[:, 2]
-    return float(sx.mean()), float(sy.mean())
+    return float(sx.mean()), float(sy.mean()), float(sx.min()), float(sx.max())
 
 
 def test_horizontal_sweep_is_monotonic_and_matches_projection():
     """Sweeping one item left→right moves its on-screen blob left→right, and the
     blob centroid tracks the independently-projected box centroid."""
     _, cam = _gray([])
-    xs = [0.12, 0.30, 0.48, 0.66]  # inward so the box stays fully in-frame
-    blob_cx, proj_cx = [], []
+    xs = [0.12, 0.30, 0.48, 0.66]
+    blob_cx, proj_cx, in_frame = [], [], []
     for x in xs:
         item = {"type": "coffee_table", "x": x, "y": 0.45, "w": 0.18, "h": 0.16}
         bx, _, _ = _blob_centroid([item], item)
-        px, _ = _expected_screen_centroid(item, cam)
+        px, _, pmin, pmax = _expected_screen_centroid(item, cam)
         blob_cx.append(bx)
         proj_cx.append(px)
-        print(f"[horizontal] layout x={x:.2f} -> blob_x={bx:.0f}, projected_x={px:.0f}")
+        whole = pmin >= 0 and pmax <= IMG
+        in_frame.append(whole)
+        print(
+            f"[horizontal] layout x={x:.2f} -> blob_x={bx:.0f}, projected_x={px:.0f}, "
+            f"span=[{pmin:.0f},{pmax:.0f}]{'' if whole else '  (clipped)'}"
+        )
 
     # 1) Strictly monotonic across the whole width: layout position → screen
     #    position, no reordering.
     assert all(b2 > b1 for b1, b2 in zip(blob_cx, blob_cx[1:])), \
         f"blob not monotonic L→R: {[round(b) for b in blob_cx]}"
-    # 2) Where the box is fully in-frame (projected centroid not clipping an edge),
-    #    the blob centroid matches the projection to ~1% of the image width.
+    # 2) Where the whole box is in-frame, the blob centroid matches the projection to
+    #    ~1% of the image width. Clipped boxes are excluded: their off-screen pixels
+    #    are never rasterized, so the visible centroid legitimately differs.
     matched = 0
-    for x, b, p in zip(xs, blob_cx, proj_cx):
-        if 40 < p < IMG - 40:
+    for x, b, p, whole in zip(xs, blob_cx, proj_cx, in_frame):
+        if whole:
             assert abs(b - p) < IMG * 0.03, f"x={x}: blob {b:.0f} vs projected {p:.0f}"
             matched += 1
     assert matched >= 2, "not enough in-frame samples to validate projection match"
@@ -135,8 +146,8 @@ def test_two_items_keep_relative_order():
     ]
     lx, _, _ = _blob_centroid(items, items[0])  # not exact (both present) but ok for print
     _, cam = _gray([])
-    ex_sofa, _ = _expected_screen_centroid(items[0], cam)
-    ex_chair, _ = _expected_screen_centroid(items[1], cam)
+    ex_sofa, _, _, _ = _expected_screen_centroid(items[0], cam)
+    ex_chair, _, _, _ = _expected_screen_centroid(items[1], cam)
     print(f"[two-items] projected sofa_x={ex_sofa:.0f} < chair_x={ex_chair:.0f}")
     assert ex_sofa < ex_chair, "relative order not preserved in projection"
 

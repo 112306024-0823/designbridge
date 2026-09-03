@@ -94,9 +94,14 @@ class _Camera:
         fwd = target - self.eye
         fwd = fwd / (np.linalg.norm(fwd) + 1e-9)
         world_up = np.array([0.0, 1.0, 0.0])
-        right = np.cross(fwd, world_up)
+        # Screen-right is up x fwd, not fwd x up. The latter yields -X, which makes R a
+        # reflection (det -1) instead of a rotation, silently mirroring the room: layout
+        # x=0 -- the "left wall", drawn on the left of the 2D plan and described as "on
+        # the left side" in the prompt -- would land on the RIGHT of the control image,
+        # so the render contradicts both the plan the user approved and its own prompt.
+        right = np.cross(world_up, fwd)
         right = right / (np.linalg.norm(right) + 1e-9)
-        up = np.cross(right, fwd)
+        up = np.cross(fwd, right)
         self.R = np.stack([right, up, fwd])  # rows [right, up, forward]
 
     def to_cam(self, pts: np.ndarray) -> np.ndarray:
