@@ -2,7 +2,7 @@
 Style Advisor skill script.
 讀取 stdin JSON → 從 style_kb 載入風格 profile → 輸出 style_params 到 stdout。
 
-原始邏輯位於：designbridge/nodes.py::style_agent_stub
+原始邏輯位於：designbridge/nodes.py::layout_and_style_agent_stub
              designbridge/style_apply.py::build_style_params
 """
 import json
@@ -12,7 +12,7 @@ from pathlib import Path
 _project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_project_root))
 
-from designbridge.style_apply import build_style_params
+from designbridge.style.style_apply import build_style_params
 
 
 def main():
@@ -25,7 +25,7 @@ def main():
     if not style_params:
         print(json.dumps({
             "intermediate_outputs": {
-                "style_agent": "no_aggregated_style_profile"
+                "style_agent": "no_style_profile_found"
             }
         }))
         return
@@ -34,7 +34,7 @@ def main():
         "style_params": style_params,
         "intermediate_outputs": {
             "style_agent": {
-                "status": "aggregated_style_loaded",
+                "status": "style_profile_loaded",
                 "style_profile_id": style_params.get("style_profile_id"),
                 "style_profile_name": style_params.get("style_profile_name"),
             }

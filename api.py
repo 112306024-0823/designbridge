@@ -36,7 +36,7 @@ def _save_history(record: dict) -> None:
 
 # 匯入設計引擎
 from designbridge import get_compiled_graph
-from designbridge.style_apply import list_available_style_profiles
+from designbridge.style.style_apply import list_available_style_profiles
 from style_kb.styles import STYLES
 
 
@@ -47,7 +47,7 @@ async def _app_lifespan(_: FastAPI):
 
     def _warmup():
         try:
-            from designbridge.warmup import run_startup_warmup
+            from designbridge.core.warmup import run_startup_warmup
             run_startup_warmup()
         except Exception as e:
             print(f"⚠️ DesignBridge startup warmup failed: {e}")
@@ -87,7 +87,6 @@ class DesignRequest(BaseModel):
     text_prompt: str = ""
     edit_scope: float = 0.6
     style_profile_id: Optional[str] = None
-    style_retrieval_mode: Optional[str] = None 
     initial_image_path: Optional[str] = None
     style_reference_image_path: Optional[str] = None
     no_style_reference: bool = False
@@ -126,15 +125,7 @@ async def upload_image(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, f)
     return {"path": str(dest)}
 
-_embedding_model = None
 _supabase_client = None
-
-def _get_embedding_model():
-    global _embedding_model
-    if _embedding_model is None:
-        from sentence_transformers import SentenceTransformer
-        _embedding_model = SentenceTransformer("clip-ViT-B-32")
-    return _embedding_model
 
 def _get_supabase():
     global _supabase_client
@@ -151,24 +142,22 @@ def search_styles(
     query: str = "",
     style_id: str = "",
     top_k: int = 3,
-    retrieval_mode: str = "text-to-text",
 ):
     """向量搜尋最相似的風格參考圖，回傳多筆候選供使用者選擇。"""
-    from designbridge.style_supabase import _STYLE_PROMPTS
+    from designbridge.style.style_supabase import _STYLE_PROMPTS
     from style_kb.styles import STYLES
     style_name_map = {sid: sname for sid, sname in STYLES}
 
     sid = style_id.strip() or ""
     q = query.strip() or sid or "interior design"
     try:
-        from designbridge.style_supabase import query_style_images_supabase
+        from designbridge.style.style_supabase import query_style_images_supabase
 
         client = _get_supabase()
         results = query_style_images_supabase(
             text_query=q,
             style_id=sid or None,
             top_k=min(top_k, 10),
-            retrieval_mode=retrieval_mode,
         )
         if not results:
             return []
@@ -190,7 +179,9 @@ def search_styles(
             negative_prompt = fallback.get("negative", "")
 
             if style_kb and isinstance(style_kb, dict):
-                description = style_kb.get("description")
+                desc_raw = style_kb.get("description")
+                # v2 schema: {"zh": "...", "en": "..."}；前端顯示用中文版
+                description = desc_raw.get("zh") if isinstance(desc_raw, dict) else desc_raw
                 ai = style_kb.get("ai_params") or {}
                 prompts = ai.get("prompts") or {}
                 positive_prompt = prompts.get("positive") or positive_prompt
@@ -216,19 +207,17 @@ def search_styles(
 def get_style_preview(
     query: str = "",
     style_id: str = "",
-    retrieval_mode: str = "text-to-text",
 ):
     """根據文字語意搜尋最符合的風格參考圖（Supabase pgvector），供前端即時預覽。"""
     sid = style_id.strip() or ""
     q = query.strip() or sid or "interior design"
     try:
-        from designbridge.style_supabase import query_style_images_supabase
+        from designbridge.style.style_supabase import query_style_images_supabase
 
         results = query_style_images_supabase(
             text_query=q,
             style_id=sid or None,
             top_k=1,
-            retrieval_mode=retrieval_mode,
         )
         if not results:
             return {"image_url": None}
@@ -286,6 +275,26 @@ def delete_history(task_ids: List[str] = Query(...)):
     return {"deleted": original - len(records)}
 
 
+# ── 家具查詢 ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/furniture/categories")
+def get_furniture_categories():
+    """回傳家具 KB 中所有分類。"""
+    from designbridge.pricing.furniture_kb import list_categories
+    return list_categories()
+
+
+@app.get("/api/furniture")
+def get_furniture(
+    category: str = "",
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+):
+    """瀏覽 / 篩選家具清單（分類 + 價位區間）。"""
+    from designbridge.pricing.furniture_kb import list_furniture
+    return list_furniture(category=category, min_price=min_price, max_price=max_price)
+
+
 @app.get("/api/style-profiles")
 def get_style_profiles():
     # 優先回傳磁碟上已有聚合檔的風格
@@ -295,7 +304,7 @@ def get_style_profiles():
     # fallback：回傳 STYLES 定義的完整清單
     return [{"style_id": sid, "style_name": sname} for sid, sname in STYLES]
 
-# ── Chat (LiteLLM) ───────────────────────────────────────────────────────────
+# ── Chat (Gemini) ────────────────────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
     role: str          # "user" | "assistant" | "system"
@@ -303,7 +312,6 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
-    model: Optional[str] = None        # 留空則用 Config.LITELLM_MODEL
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     stream: bool = False
@@ -311,19 +319,18 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    """通用 LLM chat endpoint，透過 LiteLLM 支援任意模型。
+    """通用 LLM chat endpoint，透過 Gemini。
 
     - stream=false（預設）：回傳 { "content": "..." }
     - stream=true：Server-Sent Events，每個 chunk 為 data: <text>\\n\\n
     """
-    from designbridge.llm import call_llm, call_llm_stream
-    from designbridge.config import Config
+    from designbridge.render.llm import call_llm, call_llm_stream
+    from designbridge.core.config import Config
 
     history = [{"role": m.role, "content": m.content} for m in request.messages[:-1]]
     last = request.messages[-1]
 
     kwargs = dict(
-        model=request.model or Config.LITELLM_MODEL,
         history=history or None,
         temperature=request.temperature,
         max_tokens=request.max_tokens,
@@ -338,7 +345,7 @@ async def chat(request: ChatRequest):
 
     try:
         content = call_llm(last.content, **kwargs)
-        return {"content": content, "model": request.model or Config.LITELLM_MODEL}
+        return {"content": content, "model": Config.GEMINI_MODEL}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -355,8 +362,6 @@ async def generate_design(request: DesignRequest):
         }
         if request.style_profile_id and request.style_profile_id != "auto":
             user_input["style_profile_id"] = request.style_profile_id
-        if request.style_retrieval_mode:
-            user_input["style_retrieval_mode"] = request.style_retrieval_mode
         if request.initial_image_path:
             user_input["initial_image"] = request.initial_image_path
         if request.style_reference_image_path:
@@ -459,14 +464,19 @@ async def generate_design(request: DesignRequest):
 class QuotationRequest(BaseModel):
     image_path: str
     structured_requirement: Optional[dict] = None
+    selected_furniture: List[dict] = []
 
 
 @app.post("/api/quotation")
 async def get_quotation(req: QuotationRequest):
-    """手動觸發估價（使用者點「重新估價」按鈕）。"""
-    from designbridge.quotation import build_quotation
+    """手動觸發估價（使用者點「重新估價」按鈕），可帶入使用者在家具查詢頁手動選擇的家具。"""
+    from designbridge.pricing.quotation import build_quotation
     try:
-        return build_quotation(req.image_path, req.structured_requirement or {})
+        return build_quotation(
+            req.image_path,
+            req.structured_requirement or {},
+            preselected=req.selected_furniture,
+        )
     except Exception as e:
         import traceback
         traceback.print_exc()

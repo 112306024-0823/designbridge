@@ -7,6 +7,9 @@ import ResultPanel from '@/components/ResultPanel.vue'
 import StyleSuggestions from '@/components/StyleSuggestions.vue'
 import RefineCanvas from '@/components/RefineCanvas.vue'
 import { API_BASE, apiUrl, mediaUrl } from '@/config/api'
+import { useFurnitureSelection } from '@/composables/useFurnitureSelection'
+
+const { selectedCount: furnitureSelectedCount } = useFurnitureSelection()
 
 const textPrompt = ref('')
 const editScope = ref(0.6)
@@ -32,7 +35,6 @@ const manualMaskPath = ref('')   // 手繪遮罩上傳後的伺服器路徑
 const brushSize      = ref(32)
 const drawMode       = ref('draw')
 const refineCanvasRef = ref(null)
-const styleRetrievalMode = ref('text-to-text')
 
 // 模式：'design'（整體設計） | 'refine'（細部微調）
 const mode = ref('design')
@@ -76,7 +78,7 @@ async function fetchStyleCandidates() {
   candidatesLoading.value = true
   try {
     const res = await fetch(
-      apiUrl(`/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=10&retrieval_mode=${encodeURIComponent(styleRetrievalMode.value)}`)
+      apiUrl(`/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=10`)
     )
     if (res.ok) {
       const data = await res.json()
@@ -88,9 +90,10 @@ async function fetchStyleCandidates() {
       matchedStylePreview.value = sorted[0]
         ? { image_url: sorted[0].image_url, style_name: sorted[0].style_name, similarity: sorted[0].similarity }
         : null
-      if (confirmedStyle.value && !sorted.find(c => c.image_url === confirmedStyle.value.image_url)) {
-        confirmedStyle.value = null
-      }
+      // 預設框住相似度最高的那張，使用者可再改；已選且仍在清單中則保留
+      const keep = confirmedStyle.value
+        && sorted.find(c => c.image_url === confirmedStyle.value.image_url)
+      confirmedStyle.value = keep || sorted[0] || null
     }
   } catch {}
   finally {
@@ -247,7 +250,6 @@ async function handleSubmit() {
         refine_mode: mode.value === 'refine',
         output_aspect: outputAspect.value,
         mask_image_path: manualMaskPath.value || undefined,
-        style_retrieval_mode: styleRetrievalMode.value,
         family_needs: familyNeeds.value,
         fengshui_rules: fengshuiRules.value,
         style_method: styleMethod.value,
@@ -280,15 +282,14 @@ function handleClearConfirmedStyle() {
   confirmedStyle.value = null
 }
 
-function handleChangeRetrievalMode(nextMode) {
-  if (nextMode === styleRetrievalMode.value) return
-  styleRetrievalMode.value = nextMode
-  fetchStyleCandidates()
-}
-
 // ResultPanel 的「細部微調」按鈕觸發：切換模式並鎖定當前生圖為基底
 function handleRefine() {
   mode.value = 'refine'
+}
+
+// ResultPanel 按下「取得家具報價／重新估價」後，把結果併回 result
+function handleQuotationLoaded(data) {
+  if (result.value) result.value.quotation_result = data
 }
 
 // refine 模式送出：從 RefineCanvas 取得遮罩後送 API
@@ -397,6 +398,20 @@ onMounted(fetchStyleOptions)
       </div>
     </aside>
 
+    <RouterLink to="/furniture" class="history-fab furniture-fab" title="家具查詢">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 9h18M5 9v10a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-2h8v2a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1V9M5 9V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/>
+      </svg>
+      <span v-if="furnitureSelectedCount" class="fab-badge">{{ furnitureSelectedCount }}</span>
+    </RouterLink>
+
+    <RouterLink to="/cart" class="history-fab favorite-fab" title="我的收藏">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+      </svg>
+      <span v-if="furnitureSelectedCount" class="fab-badge">{{ furnitureSelectedCount }}</span>
+    </RouterLink>
+
     <RouterLink to="/history" class="history-fab" title="歷史紀錄">
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10"/>
@@ -440,13 +455,11 @@ onMounted(fetchStyleOptions)
           :candidates="styleCandidates"
           :confirmed="confirmedStyle"
           :loading="candidatesLoading"
-          :retrieval-mode="styleRetrievalMode"
           :api-base="API_BASE"
           @confirm="handleConfirmStyle"
           @clear="handleClearConfirmedStyle"
-          @change-mode="handleChangeRetrievalMode"
         />
-        <ResultPanel v-else :key="submitKey" :result="result" :loading="loading" @refine="handleRefine" />
+        <ResultPanel v-else :key="submitKey" :result="result" :loading="loading" @refine="handleRefine" @quotation-loaded="handleQuotationLoaded" />
       </template>
     </main>
   </div>
@@ -615,6 +628,30 @@ onMounted(fetchStyleOptions)
   background: rgba(255, 248, 240, 1);
   box-shadow: 0 4px 16px rgba(139, 94, 60, 0.35);
   transform: scale(1.08);
+}
+
+.furniture-fab {
+  right: 7rem;
+}
+.favorite-fab {
+  right: 4.25rem;
+}
+.fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #c0392b;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 .logo-tagline {
