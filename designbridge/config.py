@@ -76,11 +76,35 @@ class Config:
     KONTEXT_PROVIDER: str = os.getenv("DESIGNBRIDGE_KONTEXT_PROVIDER", "fal-ai")
 
     # Depth conditioning backend for re-planned layouts (uses the scene-graph projected depth):
-    #   "kontext"    → Kontext depth-fusion LoRA (loose reference depth, current default)
+    #   "auto"       → controlnet when FAL_KEY is set, otherwise kontext (default)
+    #   "kontext"    → Kontext depth-fusion LoRA (loose reference depth)
     #   "controlnet" → true FLUX depth ControlNet via fal.ai (stronger geometric control; needs FAL_KEY)
-    LAYOUT_DEPTH_CONTROL_BACKEND: str = os.getenv("DESIGNBRIDGE_LAYOUT_DEPTH_CONTROL_BACKEND", "kontext")
+    LAYOUT_DEPTH_CONTROL_BACKEND: str = os.getenv("DESIGNBRIDGE_LAYOUT_DEPTH_CONTROL_BACKEND", "auto")
     DEPTH_CONTROLNET_MODEL: str = os.getenv(
         "DESIGNBRIDGE_DEPTH_CONTROLNET_MODEL", "Shakker-Labs/FLUX.1-dev-ControlNet-Depth"
+    )
+
+    # Second ControlNet carrying object boundaries, stacked on top of depth.
+    # Depth alone has no hard edges to offer: harmonic hole-filling smooths the wall and
+    # ceiling seams, and low furniture barely separates from the floor it stands on — so
+    # the model is free to invent where one surface ends, which reads as soft, drifting
+    # geometry. The segmentation map has exactly that information as label
+    # discontinuities. FLUX has no public segmentation ControlNet (Union-Pro-2.0 covers
+    # canny / soft edge / depth / pose / gray only), so the seg map is converted to an
+    # exact boundary image and fed to a canny ControlNet, which takes the same white-on-
+    # black line input. Point EDGE_CONTROLNET_MODEL at a real seg ControlNet if one lands.
+    ENABLE_EDGE_CONTROL: bool = os.getenv(
+        "DESIGNBRIDGE_ENABLE_EDGE_CONTROL", "true"
+    ).lower() in ("1", "true", "yes")
+    EDGE_CONTROLNET_MODEL: str = os.getenv(
+        "DESIGNBRIDGE_EDGE_CONTROLNET_MODEL", "InstantX/FLUX.1-dev-Controlnet-Canny"
+    )
+    # Union-style ControlNets need an explicit mode index; standalone ones must omit it.
+    EDGE_CONTROLNET_MODE: str = os.getenv("DESIGNBRIDGE_EDGE_CONTROLNET_MODE", "")
+    # Kept well below the depth scale: boundaries should sharpen the geometry depth
+    # already implies, not override it.
+    EDGE_CONDITIONING_SCALE: float = float(
+        os.getenv("DESIGNBRIDGE_EDGE_CONDITIONING_SCALE", "0.45")
     )
 
     # Local vision preprocessing (Depth + UPerNet segmentation)
@@ -89,22 +113,72 @@ class Config:
     ENABLE_SEGMENTATION: bool = True
 
     # Depth estimation: Depth Anything V2 (via HuggingFace Transformers).
-    # Options: Small (24.8M) | Base (97.5M) | Large (335M, default)
-    DEPTH_MODEL: str = "depth-anything/Depth-Anything-V2-Large-hf"
+    # Options: Small (24.8M) | Base (97.5M) | Large (335M)
+    #
+    # Small is the default because nothing downstream reads fine depth detail: the floor
+    # and ceiling are fitted as *planes*, and the far-wall distance is a robust
+    # percentile. Measured against Large on the sample interiors, the far-wall junction
+    # (which sets where furniture lands) agreed to within 4px, while inference dropped
+    # from 16.7s to 2.3s on CPU. Raise to Base or Large if a GPU is available.
+    DEPTH_MODEL: str = os.getenv(
+        "DESIGNBRIDGE_DEPTH_MODEL", "depth-anything/Depth-Anything-V2-Small-hf"
+    )
     # Semantic segmentation (UPerNet). Example checkpoint on HuggingFace.
-    SEGMENTATION_MODEL: str = "openmmlab/upernet-convnext-small"
+    SEGMENTATION_MODEL: str = os.getenv(
+        "DESIGNBRIDGE_SEGMENTATION_MODEL", "openmmlab/upernet-convnext-small"
+    )
+
+    # Cap the long edge of the depth / segmentation artifacts. Both models already
+    # downscale internally (depth to ~518, UPerNet to 512), so a larger artifact buys no
+    # extra detail — it only makes everything reading them slower: the plane fits, the
+    # harmonic hole-filling, the boundary extraction. Phone photos are routinely 4000px.
+    # 0 disables the cap.
+    VISION_MAX_EDGE: int = int(os.getenv("DESIGNBRIDGE_VISION_MAX_EDGE", "1280"))
+    # Run depth and segmentation concurrently. Measured 35% faster end-to-end on CPU even
+    # with both competing for the same threads, since neither saturates them alone.
+    VISION_PARALLEL: bool = os.getenv(
+        "DESIGNBRIDGE_VISION_PARALLEL", "true"
+    ).lower() in ("1", "true", "yes")
+    # Reuse artifacts when the same photo is processed again (content-addressed).
+    VISION_CACHE: bool = os.getenv(
+        "DESIGNBRIDGE_VISION_CACHE", "true"
+    ).lower() in ("1", "true", "yes")
 
     # Where to write artifacts (depth/segmentation outputs)
     ARTIFACTS_DIR: str = os.getenv("DESIGNBRIDGE_ARTIFACTS_DIR", "artifacts")
 
     # Layout agent
     LAYOUT_MAX_ITER: int = int(os.getenv("DESIGNBRIDGE_LAYOUT_MAX_ITER", "3"))
+    # Candidate nudges the geometric optimizer evaluates after the LLM's initial plan.
+    # Each is a handful of float ops over ~8 boxes, so a couple thousand cost milliseconds
+    # — far cheaper and far more effective than another LLM round trip.
+    LAYOUT_OPTIMIZER_STEPS: int = int(
+        os.getenv("DESIGNBRIDGE_LAYOUT_OPTIMIZER_STEPS", "2000")
+    )
+    # Re-enable the old "score the plan, ask the LLM again" loop on top of the optimizer.
+    # Off by default: it costs one round trip per iteration and the feedback it sends is
+    # five scalars with no indication of which piece is at fault.
+    LAYOUT_LLM_REFINE: bool = os.getenv(
+        "DESIGNBRIDGE_LAYOUT_LLM_REFINE", "false"
+    ).lower() in ("1", "true", "yes")
     # Project scene-graph furniture boxes into a perspective depth map for ControlNet.
     # When true and the user re-plans layout, this projected depth overrides the
     # input-photo depth so the precise coordinates actually control the render.
     ENABLE_LAYOUT_DEPTH_PROJECTION: bool = os.getenv(
         "DESIGNBRIDGE_ENABLE_LAYOUT_DEPTH_PROJECTION", "true"
     ).lower() in ("1", "true", "yes")
+    # Anchor the projected depth to the uploaded photo's own floor plane (homography from
+    # depth + segmentation) instead of a synthetic camera over an empty box. This is what
+    # keeps the render's camera angle, room proportions and architecture matching the photo.
+    LAYOUT_PHOTO_ANCHORED_DEPTH: bool = os.getenv(
+        "DESIGNBRIDGE_LAYOUT_PHOTO_ANCHORED_DEPTH", "true"
+    ).lower() in ("1", "true", "yes")
+    # Assumed camera height for photo-anchored projection; only affects furniture heights.
+    LAYOUT_CAMERA_EYE_HEIGHT: float = float(
+        os.getenv("DESIGNBRIDGE_LAYOUT_CAMERA_EYE_HEIGHT", "1.5")
+    )
+
+    # Synthetic-camera fallback (no photo, or floor geometry unsolvable).
     # Calibrated against FLUX Kontext renders: pitch=-16 framed the room far better
     # than -6/-8 (more floor visible, furniture distribution matched the depth boxes).
     LAYOUT_PROJECTION_HFOV: float = float(os.getenv("DESIGNBRIDGE_LAYOUT_PROJECTION_HFOV", "65.0"))

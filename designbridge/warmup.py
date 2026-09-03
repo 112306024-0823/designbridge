@@ -52,9 +52,26 @@ def run_startup_warmup() -> None:
 
         _get_text_embedding_model()
 
+    def _warm_vision() -> None:
+        """Depth + segmentation checkpoints.
+
+        By far the largest cold cost in the pipeline — constructing these two took ~155s
+        on the CPU-only ARM box this was measured on, all of it charged to whoever
+        uploaded the first photo. Loading them here moves it to boot, where nobody is
+        waiting on a spinner.
+        """
+        from designbridge.config import Config
+        from designbridge.vision import _load_depth_model, _load_upernet
+
+        if Config.ENABLE_DEPTH:
+            _load_depth_model(Config.DEPTH_MODEL)
+        if Config.ENABLE_SEGMENTATION:
+            _load_upernet(Config.SEGMENTATION_MODEL)
+
     _step("Supabase style CLIP embedder (sentence-transformers)", _warm_supabase_clip)
     _step("Local Chroma vector store (if ready)", _warm_chroma)
     _step("Pipeline CLIP evaluator (transformers)", _warm_clip_eval)
+    _step("Depth + segmentation models (transformers)", _warm_vision)
 
     if mode == "full":
         _step("Text-to-text style embedder (sentence-transformers)", _warm_text_embedder)

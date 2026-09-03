@@ -400,6 +400,7 @@ def _render_flux_controlnet_depth_fal(
     num_steps: int = 28,
     guidance_scale: float = 3.5,
     output_size: tuple[int, int] = (1024, 1024),
+    extra_controls: list[dict] | None = None,
 ) -> bool:
     """Generate image via fal.ai FLUX-general + a true depth ControlNet.
 
@@ -408,6 +409,12 @@ def _render_flux_controlnet_depth_fal(
     scene-graph projected depth actually constrains furniture placement in the render.
 
     conditioning_scale: 0.0 = ignore depth, ~1.0 = strongly follow depth geometry.
+
+    extra_controls: further ControlNets stacked on the same call, each
+    `{"path", "image_path", "scale", "mode"}` (`mode` only for union-style models).
+    Used to add the segmentation-derived boundary condition, which supplies the hard
+    edges depth cannot. A failure to upload one of these is not fatal — the render
+    proceeds on whatever conditions did upload.
     """
     fal_key = Config.FAL_KEY
     if not fal_key:
@@ -440,18 +447,42 @@ def _render_flux_controlnet_depth_fal(
 
         print(f"[controlnet] model: {Config.DEPTH_CONTROLNET_MODEL}  scale: {conditioning_scale}")
 
+        controlnets: list[dict] = [
+            {
+                "path": Config.DEPTH_CONTROLNET_MODEL,
+                "control_image_url": depth_url,
+                "conditioning_scale": conditioning_scale,
+            }
+        ]
+
+        for control in extra_controls or []:
+            image_path = str(control.get("image_path") or "")
+            path = str(control.get("path") or "")
+            if not image_path or not path or not Path(image_path).is_file():
+                continue
+            try:
+                with open(image_path, "rb") as f:
+                    control_url = fal_client.upload(f.read(), content_type="image/png")
+            except Exception as e:
+                print(f"⚠️  條件圖上傳失敗（{Path(image_path).name}: {e}），略過該 ControlNet")
+                continue
+            entry: dict = {
+                "path": path,
+                "control_image_url": control_url,
+                "conditioning_scale": float(control.get("scale", 0.5)),
+            }
+            mode = control.get("mode")
+            if mode not in (None, ""):
+                entry["control_mode"] = int(mode)
+            controlnets.append(entry)
+            print(f"[controlnet] + {path}  scale: {entry['conditioning_scale']}")
+
         arguments: dict = {
             "prompt": prompt.strip(),
             "num_inference_steps": num_steps,
             "guidance_scale": guidance_scale,
             "image_size": image_size,
-            "controlnets": [
-                {
-                    "path": Config.DEPTH_CONTROLNET_MODEL,
-                    "control_image_url": depth_url,
-                    "conditioning_scale": conditioning_scale,
-                }
-            ],
+            "controlnets": controlnets,
         }
 
         result = fal_client.subscribe(
