@@ -34,7 +34,7 @@ torch 2.10.0+cpu   ← 沒有 CUDA，兩個視覺模型都跑在 8 執行緒 CPU
 問題不在次數，在**回饋內容**：
 
 ```python
-# prompts.py — LAYOUT_REFINEMENT_PROMPT 送給 LLM 的全部內容
+# core/prompts.py — LAYOUT_REFINEMENT_PROMPT 送給 LLM 的全部內容
 目前佈局的軟性評分如下（0 = 差，1 = 佳）：
 - 動線 (circulation): 0.42
 - 平衡 (balance): 0.61
@@ -65,7 +65,7 @@ _settle()      →  重新釘住 must_move、重跑 enforcer
 高斯擾動位置、目標函數變好才接受。目標函數 = 加權軟性分數 − 重疊面積與越界的懲罰。
 
 ```python
-# layout_agent.py
+# layout/layout_agent.py
 sigma = 0.18 * (1.0 - step / steps) + 0.01   # 由粗到細
 ```
 
@@ -131,12 +131,12 @@ def _movable_indices(items, constraints, photo_anchored):
 
 ### 3.2 warmup 預載（−144s）
 
-`warmup.py` 原本只預載 CLIP 與 embedder，**完全沒碰視覺模型**，
+`core/warmup.py` 原本只預載 CLIP 與 embedder，**完全沒碰視覺模型**，
 所以那 144 秒全部記在第一個上傳照片的使用者頭上。
 
 ```python
 def _warm_vision() -> None:
-    from designbridge.vision import _load_depth_model, _load_upernet
+    from designbridge.layout.vision import _load_depth_model, _load_upernet
     if Config.ENABLE_DEPTH:
         _load_depth_model(Config.DEPTH_MODEL)
     if Config.ENABLE_SEGMENTATION:
@@ -277,15 +277,27 @@ _UNDERLAY_TYPES = frozenset({"rug", "carpet", "mat", "floor_mat", "runner"})
 
 | 檔案 | 改動 |
 |---|---|
-| `designbridge/vision.py` | 新增 `_load_image()`（解析度上限）、`_cache_key()`；`run_depth_estimation` / `run_segmentation` 加 `max_edge` 參數；`run_visual_preprocessing` 改寫為內容定址快取 + `ThreadPoolExecutor` 並行 |
-| `designbridge/warmup.py` | 新增 `_warm_vision()` 步驟，預載深度與分割模型 |
-| `designbridge/nodes.py` | `visual_preprocessing_local` 傳入 `max_edge` / `parallel` / `use_cache` |
-| `designbridge/layout_agent.py` | 新增 `_layout_objective()` / `_movable_indices()` / `_optimize_positions()`；`run_layout_agent` 的迭代迴圈改為 `_settle` + 優化器 + 「絕不比原本差」；`FurnitureItem` 加 `pinned` 欄位；`_overlaps` 與採光評分排除 underlay；`_push_apart` 迴圈內裁切 |
-| `designbridge/config.py` | 深度/分割模型改為可由環境變數覆寫；新增視覺與優化器相關設定（見第 7 節） |
+| `designbridge/layout/vision.py` | 新增 `_load_image()`（解析度上限）、`_cache_key()`；`run_depth_estimation` / `run_segmentation` 加 `max_edge` 參數；`run_visual_preprocessing` 改寫為內容定址快取 + `ThreadPoolExecutor` 並行 |
+| `designbridge/core/warmup.py` | 新增 `_warm_vision()` 步驟，預載深度與分割模型 |
+| `designbridge/core/nodes/visual_preprocessing.py` | `visual_preprocessing_local` 傳入 `max_edge` / `parallel` / `use_cache` |
+| `designbridge/core/nodes/requirement.py` | `space_info` 門窗正規化（`_opening_to_box` / `_normalize_space_info`） |
+| `designbridge/core/nodes/renderer.py` | 條件圖尺寸對齊（`_fit_condition_image`）、分割邊界條件（`_seg_to_edge_condition`）、多 ControlNet 疊加 |
+| `designbridge/render/render_backends.py` | `_render_flux_controlnet_depth_fal` 支援 `extra_controls` 多條件堆疊 |
+| `designbridge/layout/layout_agent.py` | 新增 `_layout_objective()` / `_movable_indices()` / `_optimize_positions()`；`run_layout_agent` 的迭代迴圈改為 `_settle` + 優化器 + 「絕不比原本差」；`FurnitureItem` 加 `pinned` 欄位；`_overlaps` 與採光評分排除 underlay；`_push_apart` 迴圈內裁切 |
+| `designbridge/core/config.py` | 深度/分割模型改為可由環境變數覆寫；新增視覺與優化器相關設定（見第 7 節） |
+
+> **關於路徑**：本文路徑已對齊上游的目錄重構（`designbridge/` 拆成
+> `core/` `layout/` `render/` `style/` `pricing/` 子套件，舊的 `nodes.py`
+> 拆成 `core/nodes/` 底下 8 個節點檔）。照片錨定投影用到的兩個模組也一併歸位：
+>
+> ```
+> designbridge/photo_geometry.py   → designbridge/layout/photo_geometry.py
+> designbridge/instance_select.py  → designbridge/layout/instance_select.py
+> ```
 
 ---
 
-## 7. 新增設定（`config.py`）
+## 7. 新增設定（`designbridge/core/config.py`）
 
 ```python
 # 視覺預處理
@@ -324,7 +336,7 @@ LAYOUT_LLM_REFINE      = False       # DESIGNBRIDGE_LAYOUT_LLM_REFINE
 python -u -c "
 import time, torch; from pathlib import Path
 torch.set_num_threads(8)
-from designbridge.vision import run_depth_estimation, run_segmentation
+from designbridge.layout.vision import run_depth_estimation, run_segmentation
 img='test/室內.jpg'; out=Path('artifacts/_bench'); out.mkdir(parents=True, exist_ok=True)
 for tag, fn, kw in [('depth', run_depth_estimation, dict(model_name='depth-anything/Depth-Anything-V2-Large-hf')),
                     ('seg',   run_segmentation,     dict(model_name='openmmlab/upernet-convnext-small'))]:
@@ -336,8 +348,8 @@ for tag, fn, kw in [('depth', run_depth_estimation, dict(model_name='depth-anyth
 # （用相同 segmentation，只變動 depth）
 python -u -c "
 import numpy as np; from pathlib import Path
-from designbridge.vision import run_depth_estimation, run_segmentation
-from designbridge.photo_geometry import resolve_floor_geometry
+from designbridge.layout.vision import run_depth_estimation, run_segmentation
+from designbridge.layout.photo_geometry import resolve_floor_geometry
 img='test/室內.jpg'; out=Path('artifacts/_bench')
 seg, meta, _ = run_segmentation(img, model_name='openmmlab/upernet-convnext-small', out_dir=out)
 for tag, m in [('Large','depth-anything/Depth-Anything-V2-Large-hf'),
@@ -351,7 +363,7 @@ for tag, m in [('Large','depth-anything/Depth-Anything-V2-Large-hf'),
 # 優化器
 python -u -c "
 import time
-from designbridge.layout_agent import FurnitureItem, _optimize_positions, _score_soft_constraints, _weighted_score
+from designbridge.layout.layout_agent import FurnitureItem, _optimize_positions, _score_soft_constraints, _weighted_score
 space={'estimated_size':{'width':5.0,'depth':4.0},'windows':[],'doors':[]}
 items=[FurnitureItem('sofa_1','sofa',0.05,0.55,0.30,0.13),
        FurnitureItem('coffee_table_1','coffee_table',0.10,0.45,0.15,0.10),
