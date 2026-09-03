@@ -5,11 +5,10 @@ const props = defineProps({
   candidates:  { type: Array,  default: () => [] },  // [{ style_id, style_name, image_url, similarity, description }]
   confirmed:   { type: Object, default: null },       // 使用者選中的那筆
   loading:     { type: Boolean, default: false },
-  retrievalMode: { type: String, default: 'text-to-text' },
   apiBase: { type: String, default: 'http://localhost:8000' },
 })
 
-const emit = defineEmits(['confirm', 'clear', 'change-mode'])
+const emit = defineEmits(['confirm', 'clear'])
 
 const topCandidates = computed(() => {
   const list = Array.isArray(props.candidates) ? props.candidates : []
@@ -41,30 +40,8 @@ function normalizeImageUrl(rawUrl) {
     <div class="header">
       <div class="header-top">
         <h2>AI 推薦風格參考</h2>
-        <div class="mode-switch" role="group" aria-label="retrieval mode">
-          <button
-            type="button"
-            class="mode-btn"
-            :class="{ active: retrievalMode === 'text-to-image' }"
-            @click="emit('change-mode', 'text-to-image')"
-          >
-            圖像比對
-          </button>
-          <button
-            type="button"
-            class="mode-btn"
-            :class="{ active: retrievalMode === 'text-to-text' }"
-            @click="emit('change-mode', 'text-to-text')"
-          >
-            文字比對
-          </button>
-        </div>
       </div>
       <p class="subtitle">根據你的文字描述，找到以下相似風格圖片，選擇一張套用其風格參數</p>
-      <p class="mode-caption">
-        目前模式：
-        <strong>{{ retrievalMode === 'text-to-text' ? '文字比對（style_kb）' : '圖像比對（向量圖庫）' }}</strong>
-      </p>
       <p v-if="!loading && topCandidates.length >= 6" class="swipe-hint">提示：目前顯示前 6 張相似風格參考</p>
     </div>
 
@@ -157,61 +134,8 @@ function normalizeImageUrl(rawUrl) {
   margin-bottom: 0.2rem;
 }
 
-.mode-caption {
-  margin: 0;
-  font-size: 0.76rem;
-  color: #a07850;
-}
-
-.mode-caption strong {
-  color: #8B5E3C;
-  font-weight: 700;
-}
-
 .header-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.8rem;
   margin-bottom: 0.3rem;
-}
-
-.mode-switch {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid #d4b89a;
-  border-radius: 999px;
-  background: rgba(255, 248, 240, 0.92);
-  padding: 0.2rem;
-  gap: 0.15rem;
-  box-shadow: inset 0 0 0 1px rgba(255, 248, 240, 0.65);
-}
-
-.mode-btn {
-  border: 1px solid transparent;
-  background: transparent;
-  color: #8B5E3C;
-  font-size: 0.74rem;
-  font-weight: 700;
-  line-height: 1;
-  min-width: 72px;
-  height: 30px;
-  padding: 0 0.72rem;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: all 0.16s ease;
-}
-
-.mode-btn:hover {
-  color: #714c2e;
-  background: rgba(139, 94, 60, 0.1);
-}
-
-.mode-btn.active {
-  background: linear-gradient(135deg, #8B5E3C 0%, #b07845 100%);
-  color: #fff;
-  border-color: rgba(139, 94, 60, 0.35);
-  box-shadow: 0 3px 10px rgba(139, 94, 60, 0.28);
 }
 
 /* Grid */
@@ -405,7 +329,6 @@ function normalizeImageUrl(rawUrl) {
 }
 
 @media (max-width: 520px) {
-  .header-top { flex-direction: column; align-items: flex-start; }
   .rail { grid-template-columns: 1fr; }
 }
 </style>

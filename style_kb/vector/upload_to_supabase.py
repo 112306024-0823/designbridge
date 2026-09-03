@@ -2,9 +2,9 @@
 """Upload style images + meta to Supabase Storage & style_images table.
 
 Usage (from project root):
-    python -m style_kb.upload_to_supabase              # dry run
-    python -m style_kb.upload_to_supabase --upload     # actually upload
-    python -m style_kb.upload_to_supabase --upload --limit 100  # default 100/style
+    python -m style_kb.upload_to_supabase                    # dry run（預覽全部）
+    python -m style_kb.upload_to_supabase --upload           # 上傳各風格資料夾內全部圖片
+    python -m style_kb.upload_to_supabase --upload --limit N  # 可選：每風格最多 N 張（試跑用）
 """
 
 from __future__ import annotations
@@ -24,8 +24,9 @@ SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 BUCKET = "style-images"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
-IMAGES_DIR = Path(__file__).resolve().parent / "images"
-OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
+_STYLE_KB_ROOT = Path(__file__).resolve().parent.parent
+IMAGES_DIR = _STYLE_KB_ROOT / "images"
+OUTPUTS_DIR = _STYLE_KB_ROOT / "outputs"
 
 
 def get_client():
@@ -51,14 +52,16 @@ def already_uploaded(client, style_id: str) -> set[str]:
     return {row["image_path"] for row in res.data}
 
 
-def upload_style(client, style_id: str, limit: int, dry_run: bool) -> int:
+def upload_style(client, style_id: str, limit: int | None, dry_run: bool) -> int:
     style_dir = IMAGES_DIR / style_id
     out_dir = OUTPUTS_DIR / style_id
 
     images = sorted([
         p for p in style_dir.iterdir()
         if p.suffix.lower() in IMAGE_EXTS
-    ])[:limit]
+    ])
+    if limit is not None:
+        images = images[:limit]
 
     uploaded_paths = set() if dry_run else already_uploaded(client, style_id)
     count = 0
@@ -85,27 +88,32 @@ def upload_style(client, style_id: str, limit: int, dry_run: bool) -> int:
             count += 1
             continue
 
-        # Upload image
+        # Upload image（檔案已存在 Storage 時跳過，繼續寫 DB row）
         with open(img_path, "rb") as f:
             mime = "image/jpeg" if img_path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
-            client.storage.from_(BUCKET).upload(
-                path=storage_path,
-                file=f,
-                file_options={"content-type": mime, "upsert": "false"},
-            )
+            try:
+                client.storage.from_(BUCKET).upload(
+                    path=storage_path,
+                    file=f,
+                    file_options={"content-type": mime, "upsert": "false"},
+                )
+            except Exception as e:
+                if "Duplicate" in str(e) or "already exists" in str(e) or "409" in str(e):
+                    pass  # 檔案已在 Storage，繼續補 DB row
+                else:
+                    raise
 
-        # Insert row
+        # Insert row（style_kb 留空，交給 fill_style_kb_from_supabase.py 之後批次補上）
         client.table("style_images").insert({
             "style_id": style_id,
             "image_path": storage_path,
             "image_url": image_url,
             "source_meta": source_meta,
-            "style_kb": style_kb,
         }).execute()
 
         count += 1
         if count % 10 == 0:
-            print(f"  [{style_id}] {count}/{min(limit, len(images))}...")
+            print(f"  [{style_id}] {count}/{len(images)}...")
 
     return count
 
@@ -113,7 +121,13 @@ def upload_style(client, style_id: str, limit: int, dry_run: bool) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--upload", action="store_true", help="Actually upload (default: dry run)")
-    parser.add_argument("--limit", type=int, default=100, help="Max images per style")
+    parser.add_argument("--style", type=str, default=None, help="只上傳指定風格資料夾，例如 industrial")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Max images per style (default: upload all local images)",
+    )
     args = parser.parse_args()
 
     dry_run = not args.upload
@@ -127,14 +141,15 @@ def main() -> None:
     if not dry_run:
         ensure_bucket(client)
 
-    styles = [d.name for d in sorted(IMAGES_DIR.iterdir()) if d.is_dir()]
+    all_styles = [d.name for d in sorted(IMAGES_DIR.iterdir()) if d.is_dir()]
+    styles = [args.style] if args.style else all_styles
     total = 0
 
     for style_id in styles:
         style_dir = IMAGES_DIR / style_id
         available = len([p for p in style_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS])
-        will_upload = min(args.limit, available)
-        print(f"\n📁 {style_id} ({available} 張，上傳 {will_upload} 張)")
+        will_upload = available if args.limit is None else min(args.limit, available)
+        print(f"\n📁 {style_id} ({available} 張，{'上傳全部' if args.limit is None else f'上傳 {will_upload} 張'})")
         n = upload_style(client, style_id, args.limit, dry_run)
         print(f"   {'會上傳' if dry_run else '已上傳'} {n} 張")
         total += n

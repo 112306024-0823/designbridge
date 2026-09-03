@@ -6,7 +6,11 @@ import SidebarForm from '@/components/SidebarForm.vue'
 import ResultPanel from '@/components/ResultPanel.vue'
 import StyleSuggestions from '@/components/StyleSuggestions.vue'
 import LayoutEditor from '@/components/LayoutEditor.vue'
+import RefineCanvas from '@/components/RefineCanvas.vue'
 import { API_BASE, apiUrl, mediaUrl } from '@/config/api'
+import { useFurnitureSelection } from '@/composables/useFurnitureSelection'
+
+const { selectedCount: furnitureSelectedCount } = useFurnitureSelection()
 
 // ── Two-step state ────────────────────────────────────────────
 const designStep   = ref(1)   // 1 = layout input, 2 = style + 3D
@@ -59,7 +63,23 @@ const loading = ref(false)
 const error   = ref('')
 let currentRequestId = 0
 const submitKey = ref(0)
-const styleRetrievalMode = ref('text-to-text')
+
+// ── Refine 模式（細部編輯）─────────────────────────────────────
+// 與兩段式 design 流程正交：design 產生圖，refine 在該圖上做局部重繪。
+const mode = ref('design')              // 'design' | 'refine'
+const spaceImage      = useImageField() // refine 模式可直接上傳一張要修的圖
+const lastGeneratedImage = ref(null)    // { path, url } — design 流程產出的最新一張
+const manualMaskPath  = ref('')         // 手繪遮罩上傳後的伺服器路徑
+const outputAspect    = ref('auto')
+const brushSize       = ref(32)
+const drawMode        = ref('draw')
+const refineCanvasRef = ref(null)
+const editScope       = ref(0.6)
+const textPrompt      = ref('')
+
+const baseImagePreview = computed(() =>
+  lastGeneratedImage.value?.url || spaceImage.preview || null
+)
 
 // Show StyleSuggestions only in step 2 before 3D result
 const showSuggestions = computed(() =>
@@ -84,7 +104,7 @@ async function fetchStyleCandidates() {
   candidatesLoading.value = true
   try {
     const res = await fetch(
-      apiUrl(`/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=10&retrieval_mode=${encodeURIComponent(styleRetrievalMode.value)}`)
+      apiUrl(`/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=10`)
     )
     if (res.ok) {
       const data = await res.json()
@@ -94,6 +114,10 @@ async function fetchStyleCandidates() {
       matchedStylePreview.value = sorted[0]
         ? { image_url: sorted[0].image_url, style_name: sorted[0].style_name, similarity: sorted[0].similarity }
         : null
+      // 預設框住相似度最高的那張，使用者可再改；已選且仍在清單中則保留
+      const keep = confirmedStyle.value
+        && sorted.find(c => c.image_url === confirmedStyle.value.image_url)
+      confirmedStyle.value = keep || sorted[0] || null
     }
   } catch {}
   finally { candidatesLoading.value = false; candidatesSearched.value = true }
@@ -366,7 +390,16 @@ async function handleSubmit3D() {
     })
     if (!res.ok) throw new Error(`${res.status}`)
     const data = await res.json()
-    if (requestId === currentRequestId) result.value = data
+    if (requestId === currentRequestId) {
+      result.value = data
+      // 記下這張圖，讓 refine 模式可以直接在它上面做局部重繪
+      if (data.generated_image_path) {
+        lastGeneratedImage.value = {
+          path: data.generated_image_path,
+          url: data.generated_image_url || null,
+        }
+      }
+    }
   } catch (e) {
     if (requestId === currentRequestId) error.value = e.message
   } finally {
@@ -376,12 +409,6 @@ async function handleSubmit3D() {
 
 function handleConfirmStyle(candidate) { confirmedStyle.value = candidate }
 function handleClearConfirmedStyle()   { confirmedStyle.value = null }
-function handleChangeRetrievalMode(nextMode) {
-  if (nextMode === styleRetrievalMode.value) return
-  styleRetrievalMode.value = nextMode
-  fetchStyleCandidates()
-}
-
 function resetToStep1() {
   designStep.value = 1
   floorPlanUrl.value = ''
@@ -399,6 +426,70 @@ function resetToStep1() {
   matchedStylePreview.value = null
 }
 
+// ResultPanel 的「細部微調」按鈕：切到 refine 模式，以當前生圖為基底
+function handleRefine() {
+  mode.value = 'refine'
+}
+
+// ResultPanel 按下「取得家具報價／重新估價」後，把結果併回 result
+function handleQuotationLoaded(data) {
+  if (result.value) result.value.quotation_result = data
+}
+
+async function handleMaskReady(blob) {
+  const file = new File([blob], 'mask.png', { type: 'image/png' })
+  manualMaskPath.value = await uploadFile(file)
+}
+
+// refine 送出：從 RefineCanvas 取得遮罩後送 API
+async function handleRefineSubmit() {
+  if (!textPrompt.value.trim()) { error.value = '請輸入調整需求'; return }
+  const requestId = ++currentRequestId
+  error.value = ''
+  result.value = null
+  loading.value = true
+  try {
+    let mask_image_path
+    const maskBlob = await refineCanvasRef.value?.getMaskBlob()
+    if (maskBlob) {
+      mask_image_path = await uploadFile(new File([maskBlob], 'mask.png', { type: 'image/png' }))
+      manualMaskPath.value = mask_image_path
+    }
+
+    const initial_image_path = lastGeneratedImage.value?.path
+      || (spaceImage.file ? await uploadFile(spaceImage.file) : undefined)
+
+    const res = await fetch(apiUrl('/api/generate'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text_prompt: textPrompt.value,
+        edit_scope: editScope.value,
+        initial_image_path,
+        no_style_reference: true,
+        refine_mode: true,
+        output_aspect: outputAspect.value,
+        mask_image_path,
+      }),
+    })
+    if (!res.ok) throw new Error(`${res.status}`)
+    const data = await res.json()
+    if (requestId === currentRequestId) {
+      result.value = data
+      if (data.generated_image_path) {
+        lastGeneratedImage.value = {
+          path: data.generated_image_path,
+          url: data.generated_image_url || null,
+        }
+      }
+    }
+  } catch (e) {
+    if (requestId === currentRequestId) error.value = e.message
+  } finally {
+    if (requestId === currentRequestId) loading.value = false
+  }
+}
+
 onMounted(fetchStyleOptions)
 </script>
 
@@ -409,10 +500,33 @@ onMounted(fetchStyleOptions)
         <div class="logo">
           <img :src="designbridgeLogo" alt="DesignBridge" class="logo-img" />
         </div>
+
+        <div class="mode-tabs">
+          <button
+            :class="['mode-tab', { active: mode === 'design' }]"
+            @click="mode = 'design'"
+          >
+            裝潢圖生成
+          </button>
+          <button
+            :class="['mode-tab', { active: mode === 'refine' }]"
+            @click="mode = 'refine'"
+          >
+            細部編輯
+          </button>
+        </div>
       </div>
 
       <div class="sidebar-body">
         <SidebarForm
+          v-model:mode="mode"
+          v-model:textPrompt="textPrompt"
+          v-model:brushSize="brushSize"
+          v-model:drawMode="drawMode"
+          :spaceImage="spaceImage"
+          :baseImagePreview="baseImagePreview"
+          @submit="handleRefineSubmit"
+          @mask-ready="handleMaskReady"
           :designStep="designStep"
           :floorPlanUrl="floorPlanUrl"
           v-model:planSource="planSource"
@@ -442,6 +556,20 @@ onMounted(fetchStyleOptions)
       </div>
     </aside>
 
+    <RouterLink to="/furniture" class="history-fab furniture-fab" title="家具查詢">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 9h18M5 9v10a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-2h8v2a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1V9M5 9V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/>
+      </svg>
+      <span v-if="furnitureSelectedCount" class="fab-badge">{{ furnitureSelectedCount }}</span>
+    </RouterLink>
+
+    <RouterLink to="/cart" class="history-fab favorite-fab" title="我的收藏">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+      </svg>
+      <span v-if="furnitureSelectedCount" class="fab-badge">{{ furnitureSelectedCount }}</span>
+    </RouterLink>
+
     <RouterLink to="/history" class="history-fab" title="歷史紀錄">
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -451,8 +579,42 @@ onMounted(fetchStyleOptions)
 
     <main class="content">
 
+      <!-- ═══ refine 模式：在已生成的圖上局部重繪 ═══ -->
+      <template v-if="mode === 'refine'">
+        <div v-if="!baseImagePreview" class="placeholder">
+          <div class="placeholder-inner">
+            <div class="placeholder-icon">🖌️</div>
+            <h2>細部編輯</h2>
+            <p>先在「裝潢圖生成」產生一張設計圖，或在左側上傳一張空間圖，就能塗抹想修改的區域做局部重繪</p>
+          </div>
+        </div>
+
+        <div v-else-if="loading" class="center-state">
+          <div class="loading-ring"><div class="loading-spinner"></div><div class="loading-mark">✦</div></div>
+          <p class="loading-title">套用微調中</p>
+          <p class="loading-sub">AI 只重繪你塗抹的區域，其餘保持不變</p>
+        </div>
+
+        <div v-else-if="result?.generated_image_url" class="refine-result">
+          <div class="refine-result-header">
+            <span class="refine-result-label">生成結果</span>
+            <button class="refine-continue-btn" @click="result = null">繼續編輯</button>
+          </div>
+          <img :src="result.generated_image_url" class="refine-result-img" alt="生成結果" />
+        </div>
+
+        <RefineCanvas
+          v-else
+          ref="refineCanvasRef"
+          :imageUrl="baseImagePreview"
+          :brushSize="brushSize"
+          :drawMode="drawMode"
+          class="refine-canvas-area"
+        />
+      </template>
+
       <!-- Step 1: empty / loading -->
-      <template v-if="designStep === 1">
+      <template v-else-if="designStep === 1">
         <div v-if="loading" class="center-state">
           <div class="loading-ring"><div class="loading-spinner"></div><div class="loading-mark">✦</div></div>
           <p class="loading-title">{{ planSource === 'upload' ? '上傳平面圖中' : '生成 2D 平面圖中' }}</p>
@@ -478,7 +640,8 @@ onMounted(fetchStyleOptions)
         </div>
 
         <!-- 3D result -->
-        <ResultPanel v-else-if="result" :key="submitKey" :result="result" :loading="false" />
+        <ResultPanel v-else-if="result" :key="submitKey" :result="result" :loading="false"
+          @refine="handleRefine" @quotation-loaded="handleQuotationLoaded" />
 
         <!-- Between step 1 and 2: editable layout + style suggestions -->
         <template v-else>
@@ -540,11 +703,9 @@ onMounted(fetchStyleOptions)
             :candidates="styleCandidates"
             :confirmed="confirmedStyle"
             :loading="candidatesLoading"
-            :retrieval-mode="styleRetrievalMode"
             :api-base="API_BASE"
             @confirm="handleConfirmStyle"
             @clear="handleClearConfirmedStyle"
-            @change-mode="handleChangeRetrievalMode"
           />
         </template>
 
@@ -555,6 +716,133 @@ onMounted(fetchStyleOptions)
 </template>
 
 <style scoped>
+
+/* ── 模式分頁（裝潢圖生成 / 細部編輯）── */
+.mode-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.mode-tab {
+  flex: 1;
+  padding: 0.6rem 0;
+  border: 2px solid #d8d8d8;
+  border-radius: 12px;
+  background: transparent;
+  color: #444;
+  font-size: 0.88rem;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+.mode-tab:hover:not(.active) {
+  background: #f5f5f5;
+  border-color: #bbb;
+}
+.mode-tab.active {
+  background: linear-gradient(135deg, #8B5E3C 0%, #b07845 100%);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(139, 94, 60, 0.35);
+}
+
+/* ── 家具查詢 / 我的收藏 FAB ── */
+.furniture-fab {
+  right: 7rem;
+}
+.favorite-fab {
+  right: 4.25rem;
+}
+.fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #c0392b;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+/* ── refine 模式畫布與結果 ── */
+.refine-canvas-area {
+  width: 100%;
+  height: 100%;
+  flex: 1;
+}
+
+/* 生成中 */
+.refine-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  color: #8B5E3C;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.refine-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(139, 94, 60, 0.2);
+  border-top-color: #8B5E3C;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 生成結果 */
+.refine-result {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+.refine-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 720px;
+}
+.refine-result-label {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #5c3d24;
+}
+.refine-continue-btn {
+  padding: 0.4rem 1rem;
+  border: 1.5px solid #999;
+  border-radius: 8px;
+  background: transparent;
+  color: #444;
+  font-size: 0.82rem;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.refine-continue-btn:hover { background: #f0f0f0; border-color: #666; }
+.refine-result-img {
+  width: 100%;
+  max-width: 720px;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  object-fit: contain;
+}
 .page {
   display: flex; min-height: 100vh;
   background:

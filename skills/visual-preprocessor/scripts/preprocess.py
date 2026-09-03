@@ -11,8 +11,8 @@ from pathlib import Path
 _project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_project_root))
 
-from designbridge.config import Config
-from designbridge.vision import run_visual_preprocessing
+from designbridge.core.config import Config
+from designbridge.layout.vision import run_visual_preprocessing
 
 
 def main():

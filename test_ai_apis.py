@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Smoke test: `call_llm` (LiteLLM → Gemini → Grok) + HF whoami.
+"""Smoke test: `call_llm` (Gemini) + HF whoami.
 
   python test_ai_apis.py
-  python test_ai_apis.py --grok    # 只測 Grok（GROK_API_KEY 或 XAI_API_KEY）
   python test_ai_apis.py [--llm-only | --hf-only]
 """
 
@@ -19,48 +18,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from designbridge.config import Config
+from designbridge.core.config import Config
 
 
 def _any_llm_key() -> bool:
-    return bool(
-        os.getenv("LITELLM_API_KEY")
-        or os.getenv("GROK_API_KEY")
-        or os.getenv("GEMINI_API_KEY")
-    )
-
-
-def test_grok() -> bool:
-    """Call xAI Grok directly (same as llm.py step 3), key from GROK_API_KEY."""
-    key = (os.getenv("GROK_API_KEY") or "").strip()
-    if not key:
-        print("Grok: no GROK_API_KEY")
-        return False
-    try:
-        from openai import OpenAI
-    except ImportError:
-        print("Grok: need openai (pip install openai)")
-        return False
-    model = Config.XAI_MODEL
-    try:
-        client = OpenAI(api_key=key, base_url=Config.XAI_BASE_URL)
-        r = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "Reply with one word: OK."},
-            ],
-        )
-        text = (r.choices[0].message.content or "").strip()
-        print(f"Grok ({model}): {text[:300] or '(empty)'}")
-        return bool(text)
-    except Exception as e: 
-        print(f"Grok: FAIL — {e}")
-        return False
+    return bool(Config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY"))
 
 
 def test_llm() -> bool:
-    from designbridge.llm import call_llm
+    from designbridge.render.llm import call_llm
 
     out = call_llm(
         'Reply with one word: OK',
@@ -96,21 +62,17 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--llm-only", action="store_true")
     p.add_argument("--hf-only", action="store_true")
-    p.add_argument("--grok", action="store_true", help="Only test Grok API (GROK_API_KEY or XAI_API_KEY).")
     args = p.parse_args()
 
-    if sum(bool(x) for x in (args.llm_only, args.hf_only, args.grok)) > 1:
+    if args.llm_only and args.hf_only:
         sys.exit(2)
-
-    if args.grok:
-        sys.exit(0 if test_grok() else 1)
 
     if args.hf_only:
         sys.exit(0 if test_hf() else 1)
 
     if args.llm_only:
         if not _any_llm_key():
-            print("LLM: no key (LITELLM / GEMINI / GROK_API_KEY)")
+            print("LLM: no key (GEMINI_API_KEY)")
             sys.exit(1)
         try:
             ok = test_llm()

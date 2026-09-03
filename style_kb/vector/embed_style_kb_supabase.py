@@ -25,66 +25,13 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Any
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
-def _compose_style_kb_text(row: dict[str, Any]) -> str:
-    """Mirror backend composition logic for style_kb search text."""
-    style_kb = row.get("style_kb") or {}
-    source_meta = row.get("source_meta") or {}
-    parts: list[str] = []
-
-    style_info = style_kb.get("style_info") if isinstance(style_kb, dict) else {}
-    if isinstance(style_info, dict):
-        name = style_info.get("name")
-        if name:
-            parts.append(str(name))
-        tags = style_info.get("tags")
-        if isinstance(tags, list):
-            parts.append(" ".join(str(t) for t in tags if t))
-
-    desc = style_kb.get("description") if isinstance(style_kb, dict) else None
-    if desc:
-        parts.append(str(desc))
-
-    visual = style_kb.get("visual_elements") if isinstance(style_kb, dict) else {}
-    if isinstance(visual, dict):
-        mats = visual.get("materials")
-        if isinstance(mats, list):
-            for m in mats:
-                if isinstance(m, dict):
-                    parts.append(
-                        " ".join(
-                            str(m.get(k, "")).strip()
-                            for k in ("type", "finish", "target")
-                            if m.get(k)
-                        )
-                    )
-        lighting = visual.get("lighting")
-        if isinstance(lighting, dict):
-            if lighting.get("type"):
-                parts.append(str(lighting["type"]))
-            if lighting.get("color_temp"):
-                parts.append(f"{lighting['color_temp']}K")
-
-    ai = style_kb.get("ai_params") if isinstance(style_kb, dict) else {}
-    if isinstance(ai, dict):
-        prompts = ai.get("prompts")
-        if isinstance(prompts, dict) and prompts.get("positive"):
-            parts.append(str(prompts["positive"]))
-
-    if source_meta.get("style"):
-        parts.append(str(source_meta["style"]))
-    if source_meta.get("kind"):
-        parts.append(str(source_meta["kind"]))
-    if row.get("style_id"):
-        parts.append(str(row["style_id"]))
-
-    return " ".join(p.replace("\n", " ").strip() for p in parts if p and str(p).strip())
+from designbridge.style.style_supabase import _compose_style_kb_text
 
 
 def _encode_query_text(text: str, model_name: str) -> str:
@@ -123,14 +70,23 @@ def main() -> None:
     client = create_client(supabase_url, service_role_key)
     model = SentenceTransformer(model_name)
 
-    q = client.table("style_images").select("id,style_id,image_url,source_meta,style_kb,style_kb_embedding")
-    q = q.not_.is_("style_kb", "null")
-    if not args.reset:
-        q = q.is_("style_kb_embedding", "null")
-    if args.style:
-        q = q.eq("style_id", args.style)
-
-    rows = q.execute().data or []
+    # PostgREST 單次查詢預設上限 1000 筆，用 .range() 分頁抓到全部（不然超過 1000 筆的表
+    # 永遠只會處理到前 1000 筆，跟 fill_style_kb_from_supabase.py 的 fetch_null_rows() 同一套模式）。
+    PAGE = 1000
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        q = client.table("style_images").select("id,style_id,image_url,source_meta,style_kb,style_kb_embedding")
+        q = q.not_.is_("style_kb", "null")
+        if not args.reset:
+            q = q.is_("style_kb_embedding", "null")
+        if args.style:
+            q = q.eq("style_id", args.style)
+        batch = q.range(offset, offset + PAGE - 1).execute().data or []
+        rows.extend(batch)
+        if len(batch) < PAGE:
+            break
+        offset += PAGE
     print(f"待處理：{len(rows)} 筆")
     if not rows:
         return

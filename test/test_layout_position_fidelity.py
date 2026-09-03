@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
-from designbridge.layout_projection import (
+from designbridge.layout.layout_projection import (
     _Camera,
     _build_scene,
     _rasterize,

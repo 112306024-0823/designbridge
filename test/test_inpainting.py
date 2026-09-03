@@ -40,8 +40,8 @@ def main():
 
     # --- 檢查模型快取 ---
     print("[1/4] 檢查模型快取...")
-    from designbridge.config import Config
-    from designbridge.inpaint import _is_inpaint_model_cached, _get_inpaint_pipeline, fallback_center_mask, run_inpainting
+    from designbridge.core.config import Config
+    from designbridge.render.inpaint import _is_inpaint_model_cached, _get_inpaint_pipeline, fallback_center_mask, run_inpainting
 
     if not _is_inpaint_model_cached():
         print(f"[WARN] 模型尚未完整快取：{Config.INPAINT_MODEL}")

@@ -16,7 +16,7 @@ from pathlib import Path
 # 讓 Python 找得到 designbridge 套件
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from designbridge.inpaint import mask_from_segmentation, fallback_center_mask
+from designbridge.render.inpaint import mask_from_segmentation, fallback_center_mask
 
 # ── 設定：改成你要測試的 task_id ────────────────────────────────────────────────
 VISION_DIR = Path(__file__).resolve().parent.parent / "artifacts" / "vision"
@@ -66,7 +66,7 @@ def run():
     all_pass = True
 
     for label in test_labels:
-        mask = mask_from_segmentation(seg_path, meta_path, [label], img_size)
+        mask, matched = mask_from_segmentation(seg_path, meta_path, [label], img_size)
         white = sum(1 for p in mask.getdata() if p > 128)
         total = mask.width * mask.height
         ratio = white / total if total else 0

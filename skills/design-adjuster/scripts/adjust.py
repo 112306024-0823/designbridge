@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 _project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_project_root))
 
-from designbridge.config import Config
-from designbridge.inpaint import (
+from designbridge.core.config import Config
+from designbridge.render.inpaint import (
     mask_from_segmentation,
     fallback_center_mask,
     build_inpaint_prompt,
@@ -54,8 +54,8 @@ def main():
     img_size = original_img.size
 
     if seg_path and seg_meta and Path(str(seg_path)).is_file() and Path(str(seg_meta)).is_file():
-        mask = mask_from_segmentation(str(seg_path), str(seg_meta), target_labels, img_size)
-        mask_source = "segmentation"
+        mask, seg_matched = mask_from_segmentation(str(seg_path), str(seg_meta), target_labels, img_size)
+        mask_source = f"segmentation({'+'.join(seg_matched[:3])})" if seg_matched else "fallback_center"
     else:
         mask = fallback_center_mask(img_size)
         mask_source = "fallback_center"

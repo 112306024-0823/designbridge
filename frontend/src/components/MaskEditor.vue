@@ -56,7 +56,7 @@ function paint(e) {
     ctx.fillStyle = 'rgba(0,0,0,1)'
   } else {
     ctx.globalCompositeOperation = 'source-over'
-    ctx.fillStyle = 'rgba(255, 60, 60, 0.55)'
+    ctx.fillStyle = 'rgba(255, 60, 60, 0.20)'
   }
   ctx.beginPath()
   ctx.arc(x, y, brushSize.value / 2, 0, Math.PI * 2)

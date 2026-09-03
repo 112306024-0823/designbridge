@@ -22,7 +22,8 @@ from PIL import Image
 
 from style_kb.styles import STYLES
 
-IMAGES_DIR = Path(__file__).resolve().parent / "images"
+_STYLE_KB_ROOT = Path(__file__).resolve().parent.parent
+IMAGES_DIR = _STYLE_KB_ROOT / "images"
 
 # 最低品質要求
 MIN_WIDTH = 1024

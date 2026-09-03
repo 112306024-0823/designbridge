@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Sort raw 100interior images into style_kb/images/<style_id>/ based on meta JSON.
 
+Reads `style` from each `*_meta.json` (e.g. 現代風 → modern) and copies image + meta.
+
 Usage (from project root):
-    python -m style_kb.sort_raw_images              # dry run
-    python -m style_kb.sort_raw_images --copy       # actually copy files
-    python -m style_kb.sort_raw_images --copy --limit 50  # cap per style (default 50)
+    python -m style_kb.collection.sort_raw_images
+    python -m style_kb.collection.sort_raw_images --copy
+    python -m style_kb.collection.sort_raw_images --copy --limit 0   # all styles, no cap
 """
 
 from __future__ import annotations
@@ -34,12 +36,26 @@ STYLE_MAP = {
     "新古典": "neoclassic",
     "鄉村風": "country",
     "鄉村": "country",
+    "其他": "other",
+    "混搭風": "other",
+    "中式風": "other",
 }
+
+FALLBACK_STYLE_ID = "other"
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
-RAW_DIR = Path(__file__).resolve().parent / "raw" / "100interior"
-IMAGES_DIR = Path(__file__).resolve().parent / "images"
+_STYLE_KB_ROOT = Path(__file__).resolve().parent.parent
+RAW_DIR = _STYLE_KB_ROOT / "raw" / "100interior_images"
+IMAGES_DIR = _STYLE_KB_ROOT / "images"
+
+
+def resolve_style_id(style_zh: str) -> str:
+    """Map meta style label to style_id; unknown labels go to ``other``."""
+    label = (style_zh or "").strip()
+    if not label:
+        return FALLBACK_STYLE_ID
+    return STYLE_MAP.get(label, FALLBACK_STYLE_ID)
 
 
 def move_and_sort(raw_dir: Path = RAW_DIR, limit: int = 0) -> None:
@@ -48,7 +64,7 @@ def move_and_sort(raw_dir: Path = RAW_DIR, limit: int = 0) -> None:
     from collections import defaultdict
 
     existing_counts: dict[str, int] = {}
-    for style_id in set(STYLE_MAP.values()):
+    for style_id in set(STYLE_MAP.values()) | {FALLBACK_STYLE_ID}:
         folder = IMAGES_DIR / style_id
         folder.mkdir(parents=True, exist_ok=True)
         existing_counts[style_id] = len([p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXTS])
@@ -66,11 +82,9 @@ def move_and_sort(raw_dir: Path = RAW_DIR, limit: int = 0) -> None:
 
         meta = json.load(open(meta_path, encoding="utf-8"))
         style_zh = meta.get("style", "").strip()
-        style_id = STYLE_MAP.get(style_zh)
-
-        if not style_id:
-            skipped_styles[style_zh] = skipped_styles.get(style_zh, 0) + 1
-            continue
+        style_id = resolve_style_id(style_zh)
+        if style_id == FALLBACK_STYLE_ID and style_zh and style_zh not in STYLE_MAP:
+            skipped_styles[style_zh] += 1
 
         dest_folder = IMAGES_DIR / style_id
         dest_path = dest_folder / img_path.name
@@ -98,18 +112,17 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=50, help="Max images per style (0 = unlimited)")
     parser.add_argument(
         "--raw-dir",
-        default="style_kb/raw/100interior",
-        help="Root raw directory to scan recursively",
+        default=str(RAW_DIR),
+        help="Raw image directory (flat or nested)",
     )
     args = parser.parse_args()
 
-    base = Path(__file__).resolve().parent
-    raw_dir = Path(args.raw_dir) if Path(args.raw_dir).is_absolute() else base.parent / args.raw_dir
-    images_dir = base / "images"
+    raw_dir = Path(args.raw_dir)
+    images_dir = IMAGES_DIR
 
     # Count existing images per style
     existing_counts: dict[str, int] = {}
-    for style_id in STYLE_MAP.values():
+    for style_id in set(STYLE_MAP.values()) | {FALLBACK_STYLE_ID}:
         folder = images_dir / style_id
         folder.mkdir(parents=True, exist_ok=True)
         existing_counts[style_id] = len([
@@ -118,7 +131,7 @@ def main() -> None:
 
     copy_counts: dict[str, int] = defaultdict(int)
     skip_counts: dict[str, int] = defaultdict(int)
-    skipped_styles: dict[str, int] = defaultdict(int)
+    other_sources: dict[str, int] = defaultdict(int)
 
     image_files = [
         p for p in raw_dir.rglob("*")
@@ -133,11 +146,9 @@ def main() -> None:
 
         meta = json.load(open(meta_path, encoding="utf-8"))
         style_zh = meta.get("style", "").strip()
-        style_id = STYLE_MAP.get(style_zh)
-
-        if not style_id:
-            skipped_styles[style_zh] += 1
-            continue
+        style_id = resolve_style_id(style_zh)
+        if style_id == FALLBACK_STYLE_ID and style_zh:
+            other_sources[style_zh] += 1
 
         dest_folder = images_dir / style_id
         dest_path = dest_folder / img_path.name
@@ -155,6 +166,7 @@ def main() -> None:
 
         if args.copy:
             shutil.copy2(img_path, dest_path)
+            shutil.copy2(meta_path, dest_folder / meta_path.name)
         copy_counts[style_id] += 1
 
     mode = "Copied" if args.copy else "Would copy (dry run)"
@@ -168,10 +180,10 @@ def main() -> None:
         if ex or cp:
             print(f"{style_id:<15} {ex:>8} {cp:>6} {sk:>8}")
 
-    if skipped_styles:
-        print(f"\nSkipped styles (no mapping):")
-        for s, n in sorted(skipped_styles.items(), key=lambda x: -x[1]):
-            print(f"  {n:>5}  {s}")
+    if other_sources:
+        print(f"\nRouted to other ({FALLBACK_STYLE_ID}):")
+        for s, n in sorted(other_sources.items(), key=lambda x: -x[1]):
+            print(f"  {n:>5}  {s or '(empty)'}")
 
     total_new = sum(copy_counts.values())
     print(f"\n{mode}: {total_new} images total")

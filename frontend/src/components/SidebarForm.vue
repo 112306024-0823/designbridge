@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import ImageUpload from './ImageUpload.vue'
+import MaskEditor from './MaskEditor.vue'
 
 // ── Step control ──────────────────────────────────────────────
 const props = defineProps({
@@ -14,9 +15,23 @@ const props = defineProps({
   error:               { type: String,  default: '' },
   styleRefImage:       { type: Object,  required: true },
   floorPlanUpload:     { type: Object,  required: true },
+  // ── refine 模式（細部編輯）專用 ──
+  spaceImage:          { type: Object,  default: null },
+  baseImagePreview:    { type: String,  default: null },
 })
 
-const emit = defineEmits(['submit-layout', 'use-uploaded-plan', 'submit-3d', 'retry-style-options'])
+const emit = defineEmits([
+  'submit-layout', 'use-uploaded-plan', 'submit-3d', 'retry-style-options',
+  'submit', 'mask-ready',
+])
+
+// ── 模式：'design'（兩段式裝潢圖生成） | 'refine'（對已生成圖細部編輯）──
+const mode      = defineModel('mode',      { default: 'design' })
+const textPrompt = defineModel('textPrompt', { default: '' })
+const brushSize  = defineModel('brushSize',  { default: 32 })
+const drawMode   = defineModel('drawMode',   { default: 'draw' })
+
+const showMaskEditor = ref(false)
 
 // ── Step 1 models ─────────────────────────────────────────────
 const planSource     = defineModel('planSource',     { default: 'generate' })  // 'generate' | 'upload'
@@ -137,6 +152,54 @@ const showAdvanced = ref(false)
 
 <template>
   <div class="form">
+
+    <!-- ═══ refine 模式：對已生成的圖做細部編輯 ═══════════════ -->
+    <template v-if="mode === 'refine'">
+
+      <div class="field">
+        <label class="field-label">微調需求</label>
+        <textarea
+          v-model="textPrompt"
+          rows="4"
+          placeholder="例如：把沙發換成藍色布藝款式、窗簾改為白色薄紗"
+        />
+      </div>
+
+      <div class="field">
+        <label class="field-label">空間圖片</label>
+        <ImageUpload
+          v-if="spaceImage"
+          label="點擊或拖曳上傳"
+          icon="📷"
+          :preview="spaceImage.preview"
+          @change="spaceImage.onChange"
+          @remove="spaceImage.remove"
+        />
+        <div class="brush-toolbar">
+          <span class="brush-title">塗抹想修改的區域</span>
+          <div class="brush-btns">
+            <button :class="['brush-tool', { active: drawMode === 'draw' }]"  type="button" @click="drawMode = 'draw'">畫筆</button>
+            <button :class="['brush-tool', { active: drawMode === 'erase' }]" type="button" @click="drawMode = 'erase'">橡皮擦</button>
+          </div>
+          <label class="brush-size-label">
+            筆刷 {{ brushSize }}px
+            <input type="range" v-model.number="brushSize" min="5" max="120" step="5" class="brush-range" />
+          </label>
+        </div>
+      </div>
+
+      <div class="submit-wrap">
+        <button class="submit-btn" @click="$emit('submit')" :disabled="loading">
+          <span v-if="loading" class="spinner"></span>
+          <span>{{ loading ? 'AI 生成中...' : '套用微調' }}</span>
+        </button>
+        <p v-if="error" class="error-msg">{{ error }}</p>
+      </div>
+
+    </template>
+
+    <!-- ═══ design 模式：兩段式（2D 平面圖 → 風格 → 3D）═══════ -->
+    <template v-else>
 
     <!-- ─── Step indicator ───────────────────────────────── -->
     <div class="step-indicator">
@@ -372,8 +435,6 @@ const showAdvanced = ref(false)
               AI 依描述自動選取：<strong>{{ matchedStylePreview.style_name }}</strong>
               <span class="score">{{ (matchedStylePreview.similarity * 100).toFixed(0) }}%</span>
             </div>
-            <img :src="`http://localhost:8000${matchedStylePreview.image_url}`" alt="風格參考圖"
-              @error="$event.target.style.display='none'" />
           </div>
         </template>
         <div v-else class="no-style-hint">純文字 prompt 生圖，不套用風格參考圖</div>
@@ -390,10 +451,56 @@ const showAdvanced = ref(false)
 
     </template>
 
+    </template>
+
   </div>
+
+  <!-- 遮罩編輯器 Modal（refine 模式） -->
+  <MaskEditor
+    v-if="showMaskEditor"
+    :imageUrl="baseImagePreview"
+    @confirm="blob => { $emit('mask-ready', blob); showMaskEditor = false }"
+    @cancel="showMaskEditor = false"
+  />
 </template>
 
 <style scoped>
+
+/* ── refine 模式：遮罩筆刷工具列 ── */
+.brush-title { font-size: 0.8rem; font-weight: 700; color: #444; }
+.brush-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  background: rgba(0,0,0,0.03);
+  border: 1.5px solid #ddd;
+  border-radius: var(--radius-md);
+}
+.brush-btns { display: flex; gap: 0.4rem; }
+.brush-tool {
+  flex: 1;
+  padding: 0.35rem 0;
+  border: 1.5px solid #ccc;
+  border-radius: 8px;
+  background: #fff;
+  color: #555;
+  font-size: 0.8rem;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.brush-tool.active { background: #1c1c1e; color: #fff; border-color: #1c1c1e; }
+.brush-size-label {
+  font-size: 0.75rem;
+  color: #555;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.brush-range { width: 120px; accent-color: #1c1c1e; cursor: pointer; }
 .form { display: flex; flex-direction: column; gap: 1.25rem; min-height: 100%; }
 
 /* ── Step indicator ── */
@@ -604,13 +711,16 @@ select:focus { outline: none; border-color: var(--primary); }
 .style-method-group { margin-top: 0.25rem; }
 .style-method-group label { padding: 0.45rem 0.75rem; }
 
-/* ── Matched preview ── */
-.matched-preview { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.15rem; }
-.matched-preview img { width: 100%; max-height: 160px; object-fit: cover;
-  border-radius: var(--radius-md); border: 1.5px solid var(--primary-border); }
-.matched-label { font-size: 0.75rem; color: var(--primary); display: flex; align-items: center; gap: 0.4rem; }
-.score { background: var(--primary-light); color: var(--primary);
-  padding: 0.05rem 0.4rem; border-radius: 99px; font-size: 0.7rem; font-weight: 600; }
+/* Matched preview */
+.matched-preview { margin-top: 0.15rem; }
+.matched-label {
+  font-size: 0.75rem; color: var(--primary);
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+}
+.score {
+  background: var(--primary-light); color: var(--primary);
+  padding: 0.05rem 0.4rem; border-radius: 99px; font-size: 0.7rem; font-weight: 600;
+}
 
 /* ── Submit ── */
 .submit-wrap {
