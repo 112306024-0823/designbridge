@@ -5,7 +5,24 @@ import { useFurnitureSelection } from '@/composables/useFurnitureSelection'
 
 const refExpanded = ref(true)
 const rawExpanded = ref(false)
-const { selectedFurniture, selectedCount: furnitureSelectedCount } = useFurnitureSelection()
+const {
+  selectedFurniture,
+  selectedCount: furnitureSelectedCount,
+  toggle: toggleFurnitureFavorite,
+  isSelected: isFurnitureFavorited,
+} = useFurnitureSelection()
+
+function candidateToFavoriteItem(item, c) {
+  return {
+    id: c.id || c.purchase_url || `${item.detected_name}__${c.name}`,
+    name: c.name,
+    category: item.category,
+    price: c.price,
+    currency: 'TWD',
+    url: c.purchase_url,
+    image_url: c.product_image_url,
+  }
+}
 
 const props = defineProps({
   result:  { type: Object,  default: null },
@@ -299,21 +316,30 @@ const styleReferenceImageUrl = computed(() => {
               >
                 <div class="candidate-img-wrap">
                   <img v-if="c.product_image_url" :src="c.product_image_url" class="candidate-img" />
-                  <div v-else class="candidate-img-placeholder">無圖</div>
+                  <div v-else class="candidate-img-placeholder">資料庫沒有該項商品</div>
                 </div>
                 <div class="candidate-name">{{ c.name }}</div>
                 <div class="candidate-price">NT$ {{ c.price.toLocaleString() }}</div>
                 <div v-if="c.similarity > 0" class="candidate-sim">
                   相似度 {{ (c.similarity * 100).toFixed(0) }}%
                 </div>
-                <a
-                  v-if="c.purchase_url"
-                  :href="c.purchase_url"
-                  target="_blank"
-                  rel="noopener"
-                  class="candidate-buy"
-                  @click.stop
-                >購買</a>
+                <div class="candidate-actions">
+                  <a
+                    v-if="c.purchase_url"
+                    :href="c.purchase_url"
+                    target="_blank"
+                    rel="noopener"
+                    class="candidate-buy"
+                    @click.stop
+                  >商品詳情</a>
+                  <button
+                    type="button"
+                    class="candidate-fav"
+                    :class="{ active: isFurnitureFavorited(candidateToFavoriteItem(item, c)) }"
+                    :title="isFurnitureFavorited(candidateToFavoriteItem(item, c)) ? '取消收藏' : '加入收藏'"
+                    @click.stop="toggleFurnitureFavorite(candidateToFavoriteItem(item, c))"
+                  >{{ isFurnitureFavorited(candidateToFavoriteItem(item, c)) ? '★' : '☆' }}</button>
+                </div>
               </div>
             </div>
           </div>
@@ -323,14 +349,6 @@ const styleReferenceImageUrl = computed(() => {
             <div class="budget-card mid selected-budget">
               <span class="budget-label">目前選擇預算</span>
               <span class="budget-val">NT$ {{ computedTotal.toLocaleString() }}</span>
-            </div>
-            <div class="budget-card low">
-              <span class="budget-label">低預算參考</span>
-              <span class="budget-val">NT$ {{ result.quotation_result.total_low.toLocaleString() }}</span>
-            </div>
-            <div class="budget-card high">
-              <span class="budget-label">高規格參考</span>
-              <span class="budget-val">NT$ {{ result.quotation_result.total_high.toLocaleString() }}</span>
             </div>
           </div>
 
@@ -759,15 +777,43 @@ const styleReferenceImageUrl = computed(() => {
   display: flex; align-items: center; justify-content: center;
 }
 .candidate-img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.candidate-img-placeholder { font-size: 0.65rem; color: var(--text-4); }
+.candidate-img-placeholder { font-size: 0.65rem; color: var(--text-4); text-align: center; padding: 0 0.4rem; line-height: 1.4; }
 .candidate-name { font-size: 0.72rem; color: var(--text-2); line-height: 1.3; }
 .candidate-price { font-size: 0.82rem; font-weight: 800; color: var(--text-1); }
 .candidate-sim { font-size: 0.65rem; color: var(--text-3); }
+.candidate-actions {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
 .candidate-buy {
   font-size: 0.72rem; font-weight: 700; color: #0058a3;
-  text-decoration: none; margin-top: auto;
+  text-decoration: none;
 }
 .candidate-buy:hover { text-decoration: underline; }
+.candidate-fav {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  border: 1.5px solid #e0d8cc;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--text-4);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.candidate-fav:hover { border-color: var(--primary-border); color: var(--primary); }
+.candidate-fav.active {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+}
 
 /* Budget */
 .budget-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }

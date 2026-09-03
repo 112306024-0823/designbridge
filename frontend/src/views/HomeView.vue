@@ -9,7 +9,7 @@ import RefineCanvas from '@/components/RefineCanvas.vue'
 import { API_BASE, apiUrl, mediaUrl } from '@/config/api'
 import { useFurnitureSelection } from '@/composables/useFurnitureSelection'
 
-const { selectedFurniture, selectedCount: furnitureSelectedCount } = useFurnitureSelection()
+const { selectedCount: furnitureSelectedCount } = useFurnitureSelection()
 
 const textPrompt = ref('')
 const editScope = ref(0.6)
@@ -253,7 +253,6 @@ async function handleSubmit() {
         family_needs: familyNeeds.value,
         fengshui_rules: fengshuiRules.value,
         style_method: styleMethod.value,
-        selected_furniture: mode.value === 'design' ? selectedFurniture.value : [],
       }),
     })
     if (!res.ok) throw new Error(`${res.status}`)

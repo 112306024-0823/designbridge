@@ -30,7 +30,6 @@ class UserInput(TypedDict):
     style_reference_image: NotRequired[str]  # optional style reference image path
     family_needs: NotRequired[list[str]]   # e.g. ["children", "wheelchair", "pets"]
     fengshui_rules: NotRequired[list[str]] # e.g. ["bed_not_facing_door", ...]
-    selected_furniture: NotRequired[list[dict[str, Any]]]  # user-picked furniture items to render into the design
 
 
 class DesignBridgeState(TypedDict):
