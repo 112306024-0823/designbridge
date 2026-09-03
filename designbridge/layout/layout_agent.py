@@ -141,7 +141,7 @@ def _push_apart(items: list[FurnitureItem], iterations: int = 60) -> list[Furnit
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
                 a, b = items[i], items[j]
-                if _is_underlay_type(a) or _is_underlay_type(b):
+                if _is_underlay_type(a.type) or _is_underlay_type(b.type):
                     continue
                 if not _overlaps(a, b):
                     continue
@@ -630,7 +630,7 @@ def _enforce_semantic_gaps(
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
                 a, b = items[i], items[j]
-                if _is_underlay_type(a) or _is_underlay_type(b):
+                if _is_underlay_type(a.type) or _is_underlay_type(b.type):
                     continue
                 gap = gap_map.get(frozenset({a.type, b.type}))
                 if gap is None or not _overlaps(a, b, margin=gap):
@@ -2113,7 +2113,7 @@ def run_layout_agent(
             _overlaps(best_items[i], best_items[j])
             for i in range(len(best_items))
             for j in range(i + 1, len(best_items))
-            if not (_is_underlay_type(best_items[i]) or _is_underlay_type(best_items[j]))
+            if not (_is_underlay_type(best_items[i].type) or _is_underlay_type(best_items[j].type))
         ),
         "wall_anchored": all(
             min(item.x, 1.0 - item.x - item.w, item.y, 1.0 - item.y - item.h) <= _snap_threshold
