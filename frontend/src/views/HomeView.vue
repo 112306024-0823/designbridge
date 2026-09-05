@@ -725,7 +725,7 @@ onMounted(fetchStyleOptions)
           <!-- Interactive 2D/3D layout editor (AI-generated layout only) -->
           <div v-else-if="editPlacements.length || floorPlanUrl" class="floor-plan-hero">
             <div class="fp-hero-label">
-              <span>{{ layoutViewMode === '3d' ? '3D 佈局預覽（可拖動編輯）' : '2D 平面配置圖（可拖動編輯）' }}</span>
+              <span>{{ layoutViewMode === '3d' ? '3D 佈局預覽' : '2D 平面配置圖' }}</span>
               <div class="fp-hero-actions">
                 <div class="view-toggle" v-if="editPlacements.length">
                   <button :class="{ active: layoutViewMode === '2d' }" @click="layoutViewMode = '2d'">2D</button>
@@ -989,21 +989,21 @@ onMounted(fetchStyleOptions)
 }
 .fp-hero-label {
   display: flex; align-items: center; justify-content: space-between;
-  font-size: 1.05rem; font-weight: 700; color: var(--text-2);
+  font-size: 1.35rem; font-weight: 700; color: var(--text-2);
 }
 .back-btn {
   background: none; border: 1.5px solid #ccc; border-radius: 8px;
-  padding: 0.3rem 0.8rem; font-size: 0.78rem; font-family: inherit;
+  padding: 0.5rem 1.2rem; font-size: 1.1rem; font-weight: 600; font-family: inherit;
   color: #666; cursor: pointer; transition: all 0.15s;
 }
 .back-btn:hover { border-color: #999; color: #333; }
-.fp-hero-actions { display: flex; align-items: center; gap: 0.6rem; }
+.fp-hero-actions { display: flex; align-items: center; gap: 0.9rem; }
 .view-toggle {
   display: flex; border: 1.5px solid #ccc; border-radius: 8px; overflow: hidden;
 }
 .view-toggle button {
-  background: none; border: none; padding: 0.35rem 0.85rem;
-  font-size: 0.95rem; font-weight: 600; font-family: inherit; color: #666; cursor: pointer;
+  background: none; border: none; padding: 0.45rem 1rem;
+  font-size: 1.1rem; font-weight: 600; font-family: inherit; color: #666; cursor: pointer;
 }
 .view-toggle button + button { border-left: 1.5px solid #ccc; }
 .view-toggle button.active { background: #8B5E3C; color: #fff; }

@@ -159,12 +159,6 @@ const styleReferenceImageUrl = computed(() => {
         </div>
       </div>
 
-      <!-- 2D 平面圖 -->
-      <div v-if="result.floor_plan_url" class="card card-floorplan">
-        <h3 class="card-title">2D 平面配置圖</h3>
-        <img :src="result.floor_plan_url" alt="2D 平面配置圖" class="floor-plan-img" />
-      </div>
-
       <!-- 生成圖 + 風格參考圖 -->
       <div
         v-if="result.generated_image_path || styleReferenceImageUrl"
@@ -681,16 +675,6 @@ const styleReferenceImageUrl = computed(() => {
   line-height: 1.65;
   margin: 0;
 }
-
-.card-floorplan { border-color: #c5d8c0; background: rgba(240, 250, 240, 0.82); }
-.floor-plan-img {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  border-radius: var(--radius-md);
-  border: 1px solid #c5d8c0;
-}
-
 
 .json-details { margin-top: 0.5rem; }
 .json-details summary { cursor: pointer; font-size: 0.78rem; color: var(--primary); font-weight: 600; user-select: none; padding: 0.25rem 0; }
