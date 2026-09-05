@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, watch, computed, defineAsyncComponent } from 'vue'
 import { useImageField } from '@/composables/useImageField'
 import designbridgeLogo from '../../asset/designbridge_logo.png'
 import SidebarForm from '@/components/SidebarForm.vue'
@@ -9,6 +9,9 @@ import LayoutEditor from '@/components/LayoutEditor.vue'
 import RefineCanvas from '@/components/RefineCanvas.vue'
 import { API_BASE, apiUrl, mediaUrl } from '@/config/api'
 import { useFurnitureSelection } from '@/composables/useFurnitureSelection'
+
+// three.js 是重依賴（~700KB），非同步載入，只有切到 3D 檢視時才下載
+const LayoutPreview3D = defineAsyncComponent(() => import('@/components/LayoutPreview3D.vue'))
 
 const { selectedCount: furnitureSelectedCount } = useFurnitureSelection()
 
@@ -27,12 +30,18 @@ const editPlacements = ref([])   // editable copy of furniture_placements
 const roomW = ref(5.0)
 const roomD = ref(4.0)
 const roomTypeForPlan = ref('living_room')
-const planUpdating = ref(false)
-const editorDirty = ref(false)   // placements changed since last PNG render
+const layoutViewMode = ref('2d')        // '2d' | '3d' — toggle for the editable layout view
+const layoutRenderConfig = ref(null)    // furniture heights/colors/camera for the 3D preview
+// LayoutPreview3D wants { furniture_placements } — same shape as scene_graph — so both
+// views (2D drag editor, 3D drag preview) read/write the one editPlacements array.
+const editSceneGraph = computed(() => ({ furniture_placements: editPlacements.value }))
+const editSpaceInfo = computed(() => ({ estimated_size: { width: roomW.value, depth: roomD.value } }))
 
 // ── Step 1 form values ────────────────────────────────────────
 const roomType       = ref('living_room')
 const spaceSizePing  = ref(4)
+const customRoomW    = ref(null)   // 公尺，null = 用坪數估算（Step 1「自訂長寬」欄位）
+const customRoomD    = ref(null)
 const furnitureItems = ref([])
 const furnitureQty   = ref({})
 const extraPrompt    = ref('')
@@ -56,6 +65,10 @@ const candidatesLoading  = ref(false)
 const candidatesSearched = ref(false)
 const confirmedStyle     = ref(null)
 const matchedStylePreview = ref(null)
+// 完整候選池（後端一次多給幾張）跟目前顯示的那一頁；「下一輪」在池子裡輪替，不必重打 API
+// （向量搜尋是決定性的，同樣的查詢字重打結果不會變）。
+const STYLE_PAGE_SIZE = 10
+const styleCandidatePool = ref([])
 
 // ── Result / loading ──────────────────────────────────────────
 const result  = ref(null)
@@ -89,11 +102,17 @@ const showSuggestions = computed(() =>
 )
 
 // ── Style search ──────────────────────────────────────────────
+// 房型中文標籤，Step 1 沒填「額外需求」、Step 2 也還沒選風格時，拿房型當查詢字，
+// 不然風格推薦區塊在最常見的操作路徑（只選房型+家具、不打字）下永遠不會出現。
+const ROOM_TYPE_LABEL = { living_room: '客廳', bedroom: '臥室', kitchen: '廚房', study: '書房' }
 let searchTimer = null
-async function fetchStyleCandidates() {
+// anchorSelected：手動按「找相似風格」且已經選了一張卡時，改以那張卡的風格為準去找更多
+// 同類型候選，並把選中的那張釘住留在清單裡——而不是照目前文字描述重查一次、把選擇沖掉。
+async function fetchStyleCandidates({ anchorSelected = false } = {}) {
   if (styleRefImage.file) return
-  const q = extraPrompt.value.trim()
-  const sid = selectedStyle.value !== 'auto' ? selectedStyle.value : ''
+  const anchor = anchorSelected ? confirmedStyle.value : null
+  const q = anchor ? '' : (extraPrompt.value.trim() || ROOM_TYPE_LABEL[roomTypeForPlan.value] || '')
+  const sid = anchor ? anchor.style_id : (selectedStyle.value !== 'auto' ? selectedStyle.value : '')
   if (!q && !sid) {
     styleCandidates.value = []
     candidatesSearched.value = false
@@ -102,37 +121,61 @@ async function fetchStyleCandidates() {
     return
   }
   candidatesLoading.value = true
+  // 使用者沒寫風格描述、也沒手動選風格時，q 只是房型中文字的通用 fallback，讓後端
+  // 每個風格各挑一張，而不是全域 top_k 集中命中一兩種風格。
+  const diverse = !anchor && !extraPrompt.value.trim() && !sid
   try {
     const res = await fetch(
-      apiUrl(`/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=10`)
+      apiUrl(`/api/style-search?query=${encodeURIComponent(q)}&style_id=${encodeURIComponent(sid)}&top_k=24${diverse ? '&diverse=true' : ''}`)
     )
     if (res.ok) {
       const data = await res.json()
-      const sorted = (Array.isArray(data) ? data : [])
-        .slice().sort((a, b) => Number(b?.similarity ?? 0) - Number(a?.similarity ?? 0)).slice(0, 10)
+      let pool = (Array.isArray(data) ? data : [])
+        .slice().sort((a, b) => Number(b?.similarity ?? 0) - Number(a?.similarity ?? 0))
+      if (anchor) {
+        pool = [anchor, ...pool.filter((c) => c.image_url !== anchor.image_url)]
+      }
+      styleCandidatePool.value = pool
+      const sorted = pool.slice(0, STYLE_PAGE_SIZE)
       styleCandidates.value = sorted
       matchedStylePreview.value = sorted[0]
         ? { image_url: sorted[0].image_url, style_name: sorted[0].style_name, similarity: sorted[0].similarity }
         : null
-      // 預設框住相似度最高的那張，使用者可再改；已選且仍在清單中則保留
+      // 只有使用者實際輸入了什麼（打了描述、選了風格、或自己點過卡片）才預設框住最高分那張；
+      // 純房型 fallback 的 diverse 查詢不算「使用者的選擇」，不要自動選。已選且仍在清單中則保留。
       const keep = confirmedStyle.value
         && sorted.find(c => c.image_url === confirmedStyle.value.image_url)
-      confirmedStyle.value = keep || sorted[0] || null
+      confirmedStyle.value = keep || (!diverse && sorted[0]) || null
     }
   } catch {}
   finally { candidatesLoading.value = false; candidatesSearched.value = true }
 }
 
+// 「下一輪」：沒選卡片時按的那顆按鈕。池子裡輪一頁出來顯示，不打 API（同樣的查詢字重打
+// 結果不會變，輪換池子裡已經多要來的候選才會看到真的不一樣的圖）。
+function showNextRound() {
+  const pool = styleCandidatePool.value
+  if (pool.length <= STYLE_PAGE_SIZE) return
+  const rotated = [...pool.slice(STYLE_PAGE_SIZE), ...pool.slice(0, STYLE_PAGE_SIZE)]
+  styleCandidatePool.value = rotated
+  styleCandidates.value = rotated.slice(0, STYLE_PAGE_SIZE)
+}
+
 function scheduleSearch() {
   clearTimeout(searchTimer)
   styleCandidates.value = []
+  styleCandidatePool.value = []
   candidatesSearched.value = false
   confirmedStyle.value = null
   matchedStylePreview.value = null
   searchTimer = setTimeout(fetchStyleCandidates, 600)
 }
 
-watch([selectedStyle], () => { if (designStep.value === 2) scheduleSearch() })
+// skip 模式（直接生成）沒有 designStep=2 的過場，AI 推薦風格要在 Step 1 就即時查
+watch([selectedStyle, extraPrompt], () => {
+  if (designStep.value === 2 || planSource.value === 'skip') scheduleSearch()
+})
+watch(planSource, (v) => { if (v === 'skip' && designStep.value === 1) scheduleSearch() })
 watch(() => styleRefImage.file, (f) => {
   if (f) { clearTimeout(searchTimer); styleCandidates.value = []; candidatesSearched.value = false }
   else styleMethod.value = 'ai_analysis'
@@ -204,6 +247,8 @@ async function handleSubmitLayout() {
       body: JSON.stringify({
         room_type:       roomType.value,
         space_size_ping: spaceSizePing.value,
+        room_w:          customRoomW.value || undefined,
+        room_d:          customRoomD.value || undefined,
         // expand each furniture type by its chosen quantity, e.g. chair×3
         furniture_list:  furnitureItems.value.flatMap(
           t => Array(Math.max(1, furnitureQty.value[t] || 1)).fill(t)
@@ -219,6 +264,7 @@ async function handleSubmitLayout() {
     floorPlanUrl.value  = data.floor_plan_url || ''
     floorPlanPath.value = data.floor_plan_path || ''
     sceneGraph.value    = data.scene_graph || null
+    layoutRenderConfig.value = data.layout_render_config || null
     // seed the editable layout
     const placements = (data.scene_graph?.furniture_placements || [])
       .map((p, i) => ({ id: p.id || `item_${i}`, type: p.type, x: p.x, y: p.y, w: p.w, h: p.h, rotation: p.rotation || 0 }))
@@ -226,10 +272,9 @@ async function handleSubmitLayout() {
     roomW.value = data.room_w || 5.0
     roomD.value = data.room_d || 4.0
     roomTypeForPlan.value = data.room_type || roomType.value
-    editorDirty.value = false
     designStep.value = 2
-    // trigger style candidates search based on extraPrompt
-    if (extraPrompt.value.trim()) scheduleSearch()
+    // 進 Step 2 就查風格推薦——即使沒打額外需求，fetchStyleCandidates 也會退回用房型當查詢字
+    scheduleSearch()
   } catch (e) {
     if (requestId === currentRequestId) error.value = e.message
   } finally {
@@ -261,6 +306,8 @@ async function handleUseUploadedPlan() {
         image_path: path,
         room_type: roomType.value,
         space_size_ping: spaceSizePing.value,
+        room_w: customRoomW.value || undefined,
+        room_d: customRoomD.value || undefined,
       }),
     })
     if (!res.ok) throw new Error(`${res.status}`)
@@ -275,6 +322,7 @@ async function handleUseUploadedPlan() {
       floorPlanPath.value = data.floor_plan_path || path
       floorPlanUrl.value = data.floor_plan_url || mediaUrl(path)
       sceneGraph.value = data.scene_graph || null
+      layoutRenderConfig.value = data.layout_render_config || null
       editPlacements.value = placements
     } else {
       // Gemini found nothing → fall back to using the raw image as a Kontext guide
@@ -283,7 +331,6 @@ async function handleUseUploadedPlan() {
       sceneGraph.value = null
       editPlacements.value = []
     }
-    editorDirty.value = false
     roomW.value = data.room_w || 5.0
     roomD.value = data.room_d || 4.0
     roomTypeForPlan.value = data.room_type || roomType.value
@@ -297,14 +344,20 @@ async function handleUseUploadedPlan() {
 }
 
 // ── Layout editor ─────────────────────────────────────────────
+// 拖動/加/刪/轉家具都是 local state，畫面已經即時反應；平面圖 PNG 快照的重繪走 debounce
+// 自動觸發（跟 scheduleSearch 同一招），使用者不用再手動按「更新平面圖」。
+let floorPlanUpdateTimer = null
 function onEditorChange(next) {
   editPlacements.value = next
-  editorDirty.value = true
+  clearTimeout(floorPlanUpdateTimer)
+  floorPlanUpdateTimer = setTimeout(() => {
+    floorPlanUpdateTimer = null
+    updateFloorPlan()
+  }, 500)
 }
 
 async function updateFloorPlan() {
   if (!editPlacements.value.length) return
-  planUpdating.value = true
   try {
     const res = await fetch(apiUrl('/api/render-floor-plan'), {
       method: 'POST',
@@ -326,26 +379,22 @@ async function updateFloorPlan() {
     if (sceneGraph.value && data.floor_plan_path) {
       sceneGraph.value = { ...sceneGraph.value, floor_plan_path: data.floor_plan_path }
     }
-    editorDirty.value = false
   } catch (e) {
     error.value = `更新平面圖失敗：${e.message}`
-  } finally {
-    planUpdating.value = false
   }
 }
 
 // ── Step 2: generate 3D render ────────────────────────────────
 async function handleSubmit3D() {
-  // Warn (but don't auto-save) if the layout has unsaved edits — the 3D render
-  // would otherwise be guided by the last-saved floor plan, not the current one.
-  // (Uploaded plans have no editor, so this never applies to them.)
-  if (planSource.value !== 'upload' && editorDirty.value) {
-    const proceed = window.confirm(
-      '你有尚未儲存的家具位置變更。\n\n' +
-      '若直接生成，3D 渲染會使用「上次更新的平面圖」，而非目前編輯器的最新狀態。\n\n' +
-      '建議先點「更新平面圖 PNG」再生成。\n\n要繼續生成嗎？'
-    )
-    if (!proceed) return
+  // skip 模式（直接生成）在 Step 1 就直接送出，designStep 還沒切過；切到 2 才能
+  // 用到既有的 loading/ResultPanel 顯示邏輯（那些只在 designStep===2 的模板裡）。
+  designStep.value = 2
+  // 把還沒觸發的平面圖自動更新（debounce 中）補跑完，3D 渲染才不會用到過期的 PNG。
+  // （上傳平面圖沒有編輯器，這裡永遠不會有 pending timer。）
+  if (floorPlanUpdateTimer) {
+    clearTimeout(floorPlanUpdateTimer)
+    floorPlanUpdateTimer = null
+    await updateFloorPlan()
   }
   const requestId = ++currentRequestId
   submitKey.value++
@@ -382,7 +431,7 @@ async function handleSubmit3D() {
         style_reference_image_path,
         no_style_reference:        noStyleReference.value,
         refine_mode:               false,
-        output_aspect:             'auto',
+        output_aspect:             outputAspect.value,
         style_method:              styleMethod.value,
         floor_plan_path:           floorPlanPath.value || undefined,
         scene_graph:               editedSceneGraph,
@@ -415,12 +464,16 @@ function resetToStep1() {
   floorPlanPath.value = ''
   sceneGraph.value = null
   editPlacements.value = []
-  editorDirty.value = false
+  clearTimeout(floorPlanUpdateTimer)
+  floorPlanUpdateTimer = null
+  layoutViewMode.value = '2d'
+  layoutRenderConfig.value = null
   floorPlanUpload.remove()
   uploadedPlanUrl.value = ''
   result.value = null
   error.value = ''
   styleCandidates.value = []
+  styleCandidatePool.value = []
   candidatesSearched.value = false
   confirmedStyle.value = null
   matchedStylePreview.value = null
@@ -533,6 +586,9 @@ onMounted(fetchStyleOptions)
           :floorPlanUpload="floorPlanUpload"
           v-model:roomType="roomType"
           v-model:spaceSizePing="spaceSizePing"
+          v-model:customRoomW="customRoomW"
+          v-model:customRoomD="customRoomD"
+          v-model:outputAspect="outputAspect"
           v-model:furnitureItems="furnitureItems"
           v-model:furnitureQty="furnitureQty"
           v-model:extraPrompt="extraPrompt"
@@ -666,16 +722,35 @@ onMounted(fetchStyleOptions)
             </p>
           </div>
 
-          <!-- Interactive 2D layout editor (AI-generated layout only) -->
+          <!-- Interactive 2D/3D layout editor (AI-generated layout only) -->
           <div v-else-if="editPlacements.length || floorPlanUrl" class="floor-plan-hero">
             <div class="fp-hero-label">
-              <span>2D 平面配置圖（可拖動編輯）</span>
-              <button class="back-btn" @click="resetToStep1">← 重新規劃</button>
+              <span>{{ layoutViewMode === '3d' ? '3D 佈局預覽（可拖動編輯）' : '2D 平面配置圖（可拖動編輯）' }}</span>
+              <div class="fp-hero-actions">
+                <div class="view-toggle" v-if="editPlacements.length">
+                  <button :class="{ active: layoutViewMode === '2d' }" @click="layoutViewMode = '2d'">2D</button>
+                  <button :class="{ active: layoutViewMode === '3d' }" @click="layoutViewMode = '3d'">3D</button>
+                </div>
+                <button class="back-btn" @click="resetToStep1">← 重新規劃</button>
+              </div>
             </div>
 
             <LayoutEditor
+              v-if="layoutViewMode === '2d'"
               :placements="editPlacements"
+              v-model:room-w="roomW"
+              v-model:room-d="roomD"
+              :room-type="roomTypeForPlan"
               @update:placements="onEditorChange"
+              @room-size-changed="onEditorChange(editPlacements)"
+            />
+            <LayoutPreview3D
+              v-else
+              :scene-graph="editSceneGraph"
+              :render-config="layoutRenderConfig"
+              :space-info="editSpaceInfo"
+              editable
+              @layout-changed="onEditorChange"
             />
 
             <details v-if="uploadedPlanUrl" class="fp-png">
@@ -683,19 +758,21 @@ onMounted(fetchStyleOptions)
               <img :src="uploadedPlanUrl" alt="原始上傳平面圖" class="fp-hero-img" />
             </details>
 
-            <div class="fp-actions">
-              <button class="fp-update-btn" :disabled="planUpdating" @click="updateFloorPlan">
-                {{ planUpdating ? '更新中…' : '更新平面圖 PNG' }}
-              </button>
-              <span v-if="editorDirty" class="dirty-tag">● 有未儲存的位置變更</span>
-            </div>
-
             <details v-if="floorPlanUrl" class="fp-png">
               <summary>檢視平面圖 PNG</summary>
               <img :src="floorPlanUrl" alt="2D 平面配置圖" class="fp-hero-img" />
             </details>
 
             <p class="fp-hero-hint">拖動調整家具位置後，在左側選擇風格並點「生成 3D 渲染圖」</p>
+          </div>
+
+          <!-- Skip 模式：沒有平面圖也沒有家具座標，只給一個回上一步的入口 -->
+          <div v-else-if="planSource === 'skip'" class="floor-plan-hero">
+            <div class="fp-hero-label">
+              <span>不使用平面圖</span>
+              <button class="back-btn" @click="resetToStep1">← 重新規劃</button>
+            </div>
+            <p class="fp-hero-hint">已跳過家具排版，直接依你填的描述與風格生成效果圖</p>
           </div>
 
           <StyleSuggestions
@@ -706,6 +783,7 @@ onMounted(fetchStyleOptions)
             :api-base="API_BASE"
             @confirm="handleConfirmStyle"
             @clear="handleClearConfirmedStyle"
+            @search="confirmedStyle ? fetchStyleCandidates({ anchorSelected: true }) : showNextRound()"
           />
         </template>
 
@@ -907,11 +985,11 @@ onMounted(fetchStyleOptions)
 /* ── Floor plan hero ── */
 .floor-plan-hero {
   display: flex; flex-direction: column; gap: 0.75rem;
-  max-width: 640px; width: 100%; margin: 0 auto;
+  max-width: 1300px; width: 100%; margin: 0 auto;
 }
 .fp-hero-label {
   display: flex; align-items: center; justify-content: space-between;
-  font-size: 0.85rem; font-weight: 700; color: var(--text-2);
+  font-size: 1.05rem; font-weight: 700; color: var(--text-2);
 }
 .back-btn {
   background: none; border: 1.5px solid #ccc; border-radius: 8px;
@@ -919,6 +997,16 @@ onMounted(fetchStyleOptions)
   color: #666; cursor: pointer; transition: all 0.15s;
 }
 .back-btn:hover { border-color: #999; color: #333; }
+.fp-hero-actions { display: flex; align-items: center; gap: 0.6rem; }
+.view-toggle {
+  display: flex; border: 1.5px solid #ccc; border-radius: 8px; overflow: hidden;
+}
+.view-toggle button {
+  background: none; border: none; padding: 0.35rem 0.85rem;
+  font-size: 0.95rem; font-weight: 600; font-family: inherit; color: #666; cursor: pointer;
+}
+.view-toggle button + button { border-left: 1.5px solid #ccc; }
+.view-toggle button.active { background: #8B5E3C; color: #fff; }
 .fp-hero-img {
   width: 100%; border-radius: 12px;
   box-shadow: 0 4px 24px rgba(0,0,0,0.12);
@@ -926,15 +1014,6 @@ onMounted(fetchStyleOptions)
 }
 .fp-hero-hint { font-size: 0.8rem; color: var(--text-3); text-align: center; margin-top: 0.25rem; }
 
-.fp-actions { display: flex; align-items: center; gap: 0.75rem; }
-.fp-update-btn {
-  border: 1.5px solid #8B5E3C; background: #fff; color: #8B5E3C;
-  border-radius: 8px; padding: 0.4rem 0.9rem; font-size: 0.8rem;
-  font-family: inherit; font-weight: 700; cursor: pointer; transition: all 0.15s;
-}
-.fp-update-btn:hover:not(:disabled) { background: #8B5E3C; color: #fff; }
-.fp-update-btn:disabled { opacity: 0.55; cursor: default; }
-.dirty-tag { font-size: 0.74rem; color: #c0392b; font-weight: 600; }
 .fp-png { font-size: 0.8rem; color: var(--text-2); }
 .fp-png summary { cursor: pointer; padding: 0.2rem 0; user-select: none; }
 

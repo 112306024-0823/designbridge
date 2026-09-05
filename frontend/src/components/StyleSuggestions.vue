@@ -289,10 +289,7 @@ function toggleInfo(c, evt) {
   transition: all 0.2s;
   display: flex;
   flex-direction: column;
-  /* 一次看到 5 張：5 張卡片 + 4 個 gap 剛好塞滿可視寬度，第 6 張以後靠左右箭頭捲動 */
-  flex: 0 0 calc((100% - 4 * 1.05rem) / 5);
-  width: calc((100% - 4 * 1.05rem) / 5);
-  min-width: 150px;
+  flex: 0 0 clamp(150px, 20%, 280px);
   scroll-snap-align: start;
 }
 .card:hover {

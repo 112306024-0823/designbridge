@@ -1,7 +1,9 @@
 <script setup>
 import { ref, computed } from 'vue'
+import { Icon } from '@iconify/vue'
 import ImageUpload from './ImageUpload.vue'
 import MaskEditor from './MaskEditor.vue'
+import { ROOM_OPTIONS, FURNITURE_BY_ROOM, furnitureIcon } from '@/config/furniture'
 
 // ── Step control ──────────────────────────────────────────────
 const props = defineProps({
@@ -37,11 +39,34 @@ const showMaskEditor = ref(false)
 const planSource     = defineModel('planSource',     { default: 'generate' })  // 'generate' | 'upload'
 const roomType       = defineModel('roomType',       { default: 'living_room' })
 const spaceSizePing  = defineModel('spaceSizePing',  { default: 4 })
+const customRoomW    = defineModel('customRoomW',    { default: null })   // 公尺，null = 用坪數估算
+const customRoomD    = defineModel('customRoomD',    { default: null })
+const outputAspect   = defineModel('outputAspect',   { default: 'auto' })
+
+// 面積（坪數換算）固定，改任一邊就用面積反推另一邊——每次修改都重算，不是只填一次。
+// 用 @input 直接算，不用 watch：兩個 watch 互相盯著對方欄位很容易繞出回圈，
+// @input 只在使用者真的動到那個欄位時觸發一次，天生沒有回圈問題。
+function recalcRoomSide(filled, other) {
+  if (!filled) return
+  const totalM2 = spaceSizePing.value * 3.306
+  other.value = Math.round((totalM2 / filled) * 10) / 10
+}
+function onCustomRoomWInput() { recalcRoomSide(customRoomW.value, customRoomD) }
+function onCustomRoomDInput() { recalcRoomSide(customRoomD.value, customRoomW) }
 const furnitureItems = defineModel('furnitureItems', { default: () => [] })
 const furnitureQty   = defineModel('furnitureQty',   { default: () => ({}) })
 const extraPrompt    = defineModel('extraPrompt',    { default: '' })
 const familyNeeds    = defineModel('familyNeeds',    { default: () => [] })
 const fengshuiRules  = defineModel('fengshuiRules',  { default: () => [] })
+
+const ASPECT_OPTIONS = [
+  { value: 'auto', label: '自動' },
+  { value: '1:1',  label: '1:1 正方形' },
+  { value: '4:3',  label: '4:3 橫式' },
+  { value: '3:4',  label: '3:4 直式' },
+  { value: '16:9', label: '16:9 寬螢幕' },
+  { value: '9:16', label: '9:16 直式寬螢幕' },
+]
 
 // ── Step 2 models ─────────────────────────────────────────────
 const selectedStyle    = defineModel('selectedStyle',    { default: 'auto' })
@@ -49,49 +74,6 @@ const noStyleReference = defineModel('noStyleReference', { default: false })
 const styleMethod      = defineModel('styleMethod',      { default: 'ai_analysis' })
 
 // ── Furniture options per room type ───────────────────────────
-const ROOM_OPTIONS = [
-  { value: 'living_room', label: '客廳' },
-  { value: 'bedroom',     label: '臥室' },
-  { value: 'kitchen',     label: '廚房 / 餐廳' },
-  { value: 'study',       label: '書房' },
-]
-
-const FURNITURE_BY_ROOM = {
-  living_room: [
-    { value: 'sofa',          label: '沙發' },
-    { value: 'coffee_table',  label: '茶几' },
-    { value: 'tv_unit',       label: '電視櫃' },
-    { value: 'armchair',      label: '扶手椅' },
-    { value: 'rug',           label: '地毯' },
-    { value: 'plant',         label: '植物' },
-    { value: 'bookshelf',     label: '書架' },
-    { value: 'side_table',    label: '邊桌' },
-  ],
-  bedroom: [
-    { value: 'bed',           label: '床' },
-    { value: 'wardrobe',      label: '衣櫃' },
-    { value: 'nightstand',    label: '床頭柜' },
-    { value: 'desk',          label: '書桌' },
-    { value: 'dresser',       label: '梳妝台' },
-    { value: 'armchair',      label: '扶手椅' },
-    { value: 'lamp',          label: '燈' },
-  ],
-  kitchen: [
-    { value: 'dining_table',  label: '餐桌' },
-    { value: 'chair',         label: '餐椅' },
-    { value: 'cabinet',       label: '櫥櫃' },
-    { value: 'shelf',         label: '層架' },
-  ],
-  study: [
-    { value: 'desk',          label: '書桌' },
-    { value: 'chair',         label: '椅子' },
-    { value: 'bookshelf',     label: '書架' },
-    { value: 'armchair',      label: '扶手椅' },
-    { value: 'side_table',    label: '邊桌' },
-    { value: 'lamp',          label: '燈' },
-  ],
-}
-
 const availableFurniture = computed(() => FURNITURE_BY_ROOM[roomType.value] || [])
 
 function toggleFurniture(value) {
@@ -231,6 +213,11 @@ const showAdvanced = ref(false)
             :class="['chip', { active: planSource === 'upload' }]"
             @click="planSource = 'upload'"
           >上傳平面圖</button>
+          <button
+            type="button"
+            :class="['chip', { active: planSource === 'skip' }]"
+            @click="planSource = 'skip'"
+          >直接生成</button>
         </div>
       </div>
 
@@ -253,21 +240,42 @@ const showAdvanced = ref(false)
           空間坪數
           <span class="value-badge">{{ spaceSizePing }} 坪</span>
         </label>
-        <input type="range" v-model.number="spaceSizePing" min="1" max="7" step="1" />
-        <div class="range-hint"><span>1 坪</span><span>7 坪</span></div>
+        <input type="range" v-model.number="spaceSizePing" min="1" max="20" step="1" />
+        <div class="range-hint"><span>1 坪</span><span>20 坪</span></div>
         <div class="ping-hint">≈ {{ Math.round(spaceSizePing * 3.3) }} m²</div>
+      </div>
+
+      <!-- 自訂長寬（可選，留空就用坪數估算；填一邊會依坪數自動算另一邊） -->
+      <div class="field">
+        <label class="field-label">自訂長寬（公尺，可留空）</label>
+        <div class="custom-input-row">
+          <input type="number" v-model.number="customRoomW" min="1" step="0.1" placeholder="長度（自動）" @input="onCustomRoomWInput" />
+          <input type="number" v-model.number="customRoomD" min="1" step="0.1" placeholder="寬度（自動）" @input="onCustomRoomDInput" />
+        </div>
+        <div class="ping-hint">填一邊，另一邊會依上面的坪數自動算</div>
+      </div>
+
+      <!-- 輸出圖片長寬比 -->
+      <div class="field">
+        <label class="field-label">輸出圖片長寬比</label>
+        <select v-model="outputAspect">
+          <option v-for="opt in ASPECT_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
       </div>
 
       <!-- 預計擺放的東西 (僅自動生成模式) -->
       <div v-if="planSource === 'generate'" class="field">
         <label class="field-label">預計擺放的家具</label>
-        <div class="chip-group">
+        <div class="furniture-grid">
           <button
             v-for="opt in availableFurniture" :key="opt.value"
             type="button"
-            :class="['chip', { active: furnitureItems.includes(opt.value) }]"
+            :class="['furniture-box', { active: furnitureItems.includes(opt.value) }]"
             @click="toggleFurniture(opt.value)"
-          >{{ opt.label }}</button>
+          >
+            <Icon :icon="furnitureIcon(opt.value)" class="furniture-box-icon" />
+            <span class="furniture-box-label">{{ opt.label }}</span>
+          </button>
         </div>
         <!-- Custom input -->
         <div class="custom-input-row">
@@ -295,7 +303,7 @@ const showAdvanced = ref(false)
       </div>
 
       <!-- 上傳平面配置圖 (僅上傳模式) -->
-      <div v-else class="field">
+      <div v-else-if="planSource === 'upload'" class="field">
         <label class="field-label">上傳 2D 平面配置圖</label>
         <ImageUpload
           label="點擊或拖曳上傳平面圖"
@@ -307,6 +315,28 @@ const showAdvanced = ref(false)
         />
       </div>
 
+      <!-- 不排家具模式：不需要平面圖也不需要指定家具，直接在此填描述、看 AI 推薦風格 -->
+      <template v-else>
+        <div class="field">
+          <label class="field-label">描述你想要的樣式 <span class="optional">選填</span></label>
+          <textarea
+            v-model="extraPrompt"
+            rows="3"
+            placeholder="例如：木質感、採光充足的明亮感..."
+          />
+        </div>
+        <div v-if="matchedStylePreview?.image_url" class="field">
+          <label class="field-label">AI 推薦風格</label>
+          <div class="matched-preview-img">
+            <img :src="matchedStylePreview.image_url" alt="AI 推薦風格參考圖" />
+            <div class="matched-label">
+              <strong>{{ matchedStylePreview.style_name }}</strong>
+              <span class="score">{{ (matchedStylePreview.similarity * 100).toFixed(0) }}%</span>
+            </div>
+          </div>
+        </div>
+      </template>
+
       <!-- Submit -->
       <div class="submit-wrap">
         <button
@@ -317,12 +347,19 @@ const showAdvanced = ref(false)
           <span>{{ loading ? '生成中...' : '生成 2D 平面圖' }}</span>
         </button>
         <button
-          v-else
+          v-else-if="planSource === 'upload'"
           class="submit-btn step2-btn" @click="$emit('use-uploaded-plan')"
           :disabled="loading || !floorPlanUpload.preview"
         >
           <span v-if="loading" class="spinner"></span>
           <span>{{ loading ? '渲染中...' : '使用平面圖生成渲染圖' }}</span>
+        </button>
+        <button
+          v-else
+          class="submit-btn step2-btn" @click="$emit('submit-3d')" :disabled="loading"
+        >
+          <span v-if="loading" class="spinner"></span>
+          <span>{{ loading ? '生成中...' : '生成渲染圖' }}</span>
         </button>
         <p v-if="error" class="error-msg">{{ error }}</p>
       </div>
@@ -573,6 +610,28 @@ input[type='range'] { width: 100%; accent-color: var(--primary); cursor: pointer
   font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.18);
 }
 
+/* ── Furniture picker: square boxes (icon + label) ── */
+.furniture-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 0.5rem;
+}
+.furniture-box {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.35rem; padding: 0.65rem 0.4rem;
+  border: 1.5px solid #d0d0d0; border-radius: 10px;
+  background: #fff; color: #555; cursor: pointer;
+  font-size: 0.72rem; font-family: inherit; font-weight: 500;
+  transition: all 0.15s;
+}
+.furniture-box:hover { border-color: #999; color: #222; }
+.furniture-box.active {
+  border-color: #1c1c1e; background: #1c1c1e; color: #fff;
+  font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+}
+.furniture-box-icon { font-size: 1.35rem; }
+.furniture-box-label { line-height: 1.2; text-align: center; }
+
 /* ── Plan-source segmented toggle ── */
 .mode-toggle { gap: 0.5rem; }
 .mode-toggle .chip { flex: 1; text-align: center; padding: 0.5rem 0.75rem; }
@@ -721,6 +780,19 @@ select:focus { outline: none; border-color: var(--primary); }
   background: var(--primary-light); color: var(--primary);
   padding: 0.05rem 0.4rem; border-radius: 99px; font-size: 0.7rem; font-weight: 600;
 }
+
+/* Matched preview with thumbnail (skip 模式) */
+.matched-preview-img {
+  display: flex; flex-direction: column; gap: 0.4rem;
+  border: 1.5px solid #ddd0c0; border-radius: var(--radius-md);
+  padding: 0.6rem; background: rgba(255,250,243,0.65);
+}
+.matched-preview-img img {
+  width: 100%; max-height: 160px; object-fit: cover;
+  border-radius: var(--radius-sm);
+}
+.matched-preview-img .matched-label { color: var(--text-2); }
+.matched-preview-img .matched-label strong { color: var(--primary); }
 
 /* ── Submit ── */
 .submit-wrap {
