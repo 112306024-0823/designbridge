@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -35,8 +36,47 @@ FURNITURE_SIZES: dict[str, tuple[float, float]] = {
     "cabinet": (0.14, 0.07),
     "dresser": (0.14, 0.09),
     "shelf": (0.10, 0.05),
+    "cat_tree": (0.06, 0.06),
+    "dog_bed": (0.10, 0.08),
+    "litter_box": (0.07, 0.06),
     "default": (0.12, 0.10),
 }
+
+# The layout LLM freely names furniture ("dog_bed_in_a_corner", "tv_stand", "couch").
+# Collapse everything to the controlled vocabulary above so we don't get duplicate pieces
+# and unknown types rendering as identical mystery boxes.
+_FTYPE_ALIASES: dict[str, str] = {
+    "couch": "sofa", "settee": "sofa", "sectional": "sofa", "sectional_sofa": "sofa",
+    "tv_stand": "tv_unit", "tv_console": "tv_unit", "media_console": "tv_unit",
+    "media_unit": "tv_unit", "television": "tv", "tv_cabinet": "tv_unit",
+    "centre_table": "coffee_table", "center_table": "coffee_table", "cocktail_table": "coffee_table",
+    "end_table": "side_table", "accent_table": "side_table",
+    "book_shelf": "bookshelf", "bookcase": "bookshelf", "shelving": "shelf", "shelves": "shelf",
+    "closet": "wardrobe", "armoire": "wardrobe",
+    "chest_of_drawers": "dresser", "drawers": "dresser", "chest": "dresser",
+    "potted_plant": "plant", "houseplant": "plant", "indoor_plant": "plant",
+    "floor_lamp": "lamp", "standing_lamp": "lamp", "table_lamp": "lamp",
+    "area_rug": "rug", "carpet": "rug",
+    "cat_tower": "cat_tree", "cat_condo": "cat_tree", "scratching_post": "cat_tree", "cat_climber": "cat_tree",
+    "dog_crate": "dog_bed", "pet_bed": "dog_bed", "dog_house": "dog_bed", "dog_kennel": "dog_bed",
+    "litter_tray": "litter_box", "cat_litter": "litter_box", "litter_pan": "litter_box",
+}
+
+
+def _normalize_ftype(raw: str) -> str:
+    """Map a free-form furniture label to a known type, or 'default' if nothing matches."""
+    t = re.sub(r"[^a-z_]", "", str(raw).lower().strip().replace(" ", "_").replace("-", "_"))
+    t = re.sub(r"_+", "_", t).strip("_")
+    if t in FURNITURE_SIZES:
+        return t
+    if t in _FTYPE_ALIASES:
+        return _FTYPE_ALIASES[t]
+    # positional suffixes etc: "dog_bed_in_a_corner" contains "dog_bed".
+    # Longest key first so "dog_bed" wins over "bed", "coffee_table" over "table".
+    for known in sorted((*FURNITURE_SIZES, *_FTYPE_ALIASES), key=len, reverse=True):
+        if known != "default" and known in t:
+            return _FTYPE_ALIASES.get(known, known)
+    return "default"
 
 FURNITURE_COLORS: dict[str, tuple[int, int, int]] = {
     "sofa": (100, 149, 237),
@@ -61,6 +101,9 @@ FURNITURE_COLORS: dict[str, tuple[int, int, int]] = {
     "cabinet": (130, 100, 70),
     "lamp": (255, 220, 100),
     "plant": (80, 160, 80),
+    "cat_tree": (170, 140, 110),
+    "dog_bed": (200, 170, 140),
+    "litter_box": (190, 190, 200),
     "default": (150, 200, 150),
 }
 
@@ -70,6 +113,15 @@ SOFT_WEIGHTS = {
     "focal_point": 0.20,
     "natural_light": 0.10,
     "ergonomics": 0.10,
+}
+
+# Only big wall-anchored pieces get projected into the ControlNet depth map. Small items
+# (rug/plant/lamp/side_table) just become box-noise on the floor — the rug's flat box
+# even renders as a stray rectangle outline — and their exact spot doesn't matter, so
+# leave them for the diffusion model to place freely.
+_DEPTH_ANCHOR_TYPES = {
+    "sofa", "loveseat", "bed", "bunk_bed", "dining_table",
+    "tv_unit", "tv", "wardrobe", "desk", "bookshelf",
 }
 
 
@@ -217,16 +269,18 @@ def _apply_hard_constraints(
     items: list[FurnitureItem], constraints: dict
 ) -> list[FurnitureItem]:
     must_remove = {
-        s.lower().replace(" ", "_") for s in (constraints.get("must_remove") or [])
+        _normalize_ftype(s) for s in (constraints.get("must_remove") or [])
     }
     must_add = [
-        s.lower().replace(" ", "_") for s in (constraints.get("must_add") or [])
+        _normalize_ftype(s) for s in (constraints.get("must_add") or [])
     ]
 
     items = [item for item in items if item.type not in must_remove]
 
     existing = {item.type for item in items}
     for ftype in must_add:
+        if ftype == "default":
+            continue  # unmappable must_add label — skip rather than inject a mystery box
         if ftype not in existing:
             w, h = FURNITURE_SIZES.get(ftype, FURNITURE_SIZES["default"])
             items.append(FurnitureItem(f"{ftype}_{len(items)+1}", ftype, 0.72, 0.72, w, h))
@@ -584,14 +638,22 @@ def _call_llm_layout(prompt: str) -> list[FurnitureItem]:
 
     items: list[FurnitureItem] = []
     for f in furniture_list:
-        ftype = str(f.get("type", "default")).lower().replace(" ", "_")
+        ftype = _normalize_ftype(f.get("type", "default"))
+        if ftype == "default":
+            print(f"[layout_agent] skip unknown furniture type: {f.get('type')!r}")
+            continue
+        x = max(0.0, min(0.95, float(f.get("x", 0.1))))
+        y = max(0.0, min(0.95, float(f.get("y", 0.1))))
+        # LLM 常把同一件家具用不同名字列兩次（"sofa" + "sofa_against_wall"）— 同型別、位置相近就去重
+        if any(d.type == ftype and abs(d.x - x) < 0.06 and abs(d.y - y) < 0.06 for d in items):
+            continue
         dw, dh = FURNITURE_SIZES.get(ftype, FURNITURE_SIZES["default"])
         items.append(
             FurnitureItem(
                 id=str(f.get("id", f"{ftype}_{len(items)+1}")),
                 type=ftype,
-                x=max(0.0, min(0.95, float(f.get("x", 0.1)))),
-                y=max(0.0, min(0.95, float(f.get("y", 0.1)))),
+                x=x,
+                y=y,
                 w=float(f.get("w", dw)),
                 h=float(f.get("h", dh)),
                 rotation=float(f.get("rotation", 0)),
@@ -694,8 +756,9 @@ def _generate_projected_depth(
         out_dir = Path(Config.ARTIFACTS_DIR) / "layout"
         depth_out = out_dir / f"{task_id}_projected_depth.png"
         seg_out = out_dir / f"{task_id}_projected_seg.png"
+        anchor_items = [i for i in items if i.type in _DEPTH_ANCHOR_TYPES] or items
         res = project_scene_graph_to_depth(
-            [item.to_dict() for item in items],
+            [item.to_dict() for item in anchor_items],
             space_info,
             depth_out,
             image_size=image_size,
