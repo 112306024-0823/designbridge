@@ -83,6 +83,24 @@ const extraSelected = computed(
   () => furnitureItems.value.filter(v => !availableFurniture.value.some(o => o.value === v)),
 )
 
+/**
+ * 由坪數推得的房間長寬，鏡射 api.py generate_layout 的算法（1 坪 = 3.306 m²，
+ * 長寬比 5:4）。填了自訂長寬就顯示自訂值——讓使用者看得到「4 坪」實際會變成
+ * 多大的房間，而不是只有一個抽象數字。
+ */
+const derivedSize = computed(() => {
+  if (customRoomW.value && customRoomD.value) {
+    return { w: customRoomW.value, d: customRoomD.value, custom: true }
+  }
+  const totalM2 = (spaceSizePing.value || 0) * 3.306
+  if (totalM2 <= 0) return null
+  return {
+    w: Math.round(Math.sqrt(totalM2 * 5 / 4) * 10) / 10,
+    d: Math.round(Math.sqrt(totalM2 * 4 / 5) * 10) / 10,
+    custom: false,
+  }
+})
+
 /* ── 坪數 ↔ 自訂長寬連動（沿用舊 SidebarForm 的 @input 做法，避免兩個 watch 互咬）── */
 function recalcRoomSide(filled, other) {
   if (!filled) return
@@ -138,25 +156,28 @@ function submit() {
             :class="['db-chip', 'db-chip--lg', { 'is-active': roomType === opt.value }]"
             @click="pickRoom(opt.value)"
           >{{ opt.label }}</button>
-        </div>
 
-        <div class="custom-slot">
+          <!-- 虛線＋「＋」讓它看起來是「可以新增」而不是「已停用」。
+               設計稿把自訂畫成淡灰色，實測看起來就是一顆按不動的按鈕。 -->
           <button
             v-if="!showCustomRoom"
             type="button"
-            class="db-chip db-chip--lg is-ghost"
+            class="add-chip add-chip--lg"
             @click="showCustomRoom = true"
-          >自訂</button>
-          <div v-else class="custom-row">
-            <input
-              v-model="customRoomInput"
-              class="db-input"
-              placeholder="例如：和室、更衣室"
-              @keydown.enter.prevent="applyCustomRoom"
-              @keydown.esc="showCustomRoom = false"
-            />
-            <button type="button" class="add-btn" @click="applyCustomRoom">✓</button>
-          </div>
+          >＋ 自訂</button>
+        </div>
+
+        <div v-if="showCustomRoom" class="custom-row">
+          <input
+            v-model="customRoomInput"
+            class="db-input"
+            placeholder="例如：和室、更衣室"
+            autofocus
+            @keydown.enter.prevent="applyCustomRoom"
+            @keydown.esc="showCustomRoom = false"
+          />
+          <button type="button" class="add-btn" title="加入" @click="applyCustomRoom">✓</button>
+          <button type="button" class="cancel-btn" title="取消" @click="showCustomRoom = false">✕</button>
         </div>
       </section>
 
@@ -181,18 +202,20 @@ function submit() {
           <button
             v-if="!showCustomFurniture"
             type="button"
-            class="db-chip furniture-chip is-ghost"
+            class="add-chip"
             @click="showCustomFurniture = true"
-          >自訂</button>
+          >＋ 自訂</button>
           <div v-else class="custom-row">
             <input
               v-model="customFurnitureInput"
               class="db-input"
               placeholder="家具名稱（英文）"
+              autofocus
               @keydown.enter.prevent="addCustomFurniture"
               @keydown.esc="showCustomFurniture = false"
             />
-            <button type="button" class="add-btn" @click="addCustomFurniture">＋</button>
+            <button type="button" class="add-btn" title="加入" @click="addCustomFurniture">✓</button>
+            <button type="button" class="cancel-btn" title="取消" @click="showCustomFurniture = false">✕</button>
           </div>
 
           <!-- 自訂加進來的項目也要能看到／取消 -->
@@ -224,16 +247,12 @@ function submit() {
         </div>
         <p class="ping-hint">≈ {{ Math.round((spaceSizePing || 0) * 3.3) }} m²</p>
 
-        <!-- 不排家具模式沒有家具欄，把描述放這裡才不會整卡空一半 -->
-        <div v-if="isSkip" class="skip-desc">
-          <label class="field-label" for="skip-prompt">描述你想要的樣式</label>
-          <textarea
-            id="skip-prompt"
-            v-model="extraPrompt"
-            class="db-textarea"
-            rows="4"
-            placeholder="例如：木質感、採光充足的明亮感…"
-          />
+        <div v-if="derivedSize" class="size-readout">
+          <span class="readout-label">{{ derivedSize.custom ? '自訂長寬' : '換算約' }}</span>
+          <span class="readout-val">{{ derivedSize.w }} × {{ derivedSize.d }} <small>公尺</small></span>
+          <span v-if="!derivedSize.custom" class="readout-note">
+            可在進階設定自訂長寬
+          </span>
         </div>
       </section>
     </div>
@@ -324,32 +343,51 @@ function submit() {
 
 .columns {
   display: grid;
-  grid-template-columns: 1.15fr 1fr 1fr;
-  gap: clamp(1.25rem, 3vw, 3rem);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(1.5rem, 3vw, 3rem);
   padding-bottom: 1.5rem;
 }
-.columns.two-col { grid-template-columns: 1fr 1.2fr; }
+/* 不排家具時只有兩欄。等寬 + 各自置中，右邊才不會空掉一大塊 */
+.columns.two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
-.col { min-width: 0; }
-.col-size { display: flex; flex-direction: column; }
+/* 欄與欄之間拉一條淡分隔線，三塊資訊才不會糊成一片 */
+.col + .col { border-left: 1px solid #f0f0f0; padding-left: clamp(1.5rem, 3vw, 3rem); }
+.col { min-width: 0; display: flex; flex-direction: column; align-items: center; }
 
-/* 空間類型：設計稿是 2 欄 */
+/* 標題下方一道短的主色線，當作欄位的分組記號 */
+.col :deep(.db-col-title),
+.col .db-col-title { position: relative; padding-bottom: 0.7rem; }
+.col .db-col-title::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 34px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--db-accent);
+  transform: translateX(-50%);
+}
+
+/* 空間類型：設計稿是 2 欄。chip 不再拉滿整欄——拉滿會變成一排「列」，
+   看起來像清單而不是可以複選/單選的標籤。 */
 .room-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.9rem 1.1rem;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 300px;
 }
-.room-grid .db-chip { width: 100%; }
-
-.custom-slot { margin-top: 0.9rem; }
-.custom-slot .db-chip { width: calc(50% - 0.55rem); }
+.room-grid .db-chip { width: 100%; padding-inline: 0.5rem; }
 
 /* 家具：設計稿是單欄直排 */
 .furniture-list {
   display: flex;
   flex-direction: column;
-  gap: 0.65rem;
+  gap: 0.6rem;
   align-items: stretch;
+  width: 100%;
+  max-width: 260px;
 }
 .furniture-chip {
   justify-content: flex-start;
@@ -366,23 +404,51 @@ function submit() {
   opacity: 0.9;
 }
 
-/* 設計稿把「自訂」畫成淡色（未啟用）樣子 */
-.is-ghost { color: var(--db-muted); }
-.is-ghost:hover { color: var(--db-text-soft); }
+/* 「＋ 自訂」：虛線外框 = 這格還是空的、可以自己填，不是被停用 */
+.add-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.55rem 1rem;
+  border: 2px dashed #cfcfcf;
+  border-radius: var(--db-radius-chip);
+  background: none;
+  color: var(--db-text-soft);
+  font-family: var(--db-font-display);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 1.05rem;
+  cursor: pointer;
+  transition: border-color 0.16s, color 0.16s, background 0.16s;
+}
+.add-chip--lg { font-size: 1.25rem; padding: 0.65rem 1rem; }
+.add-chip:hover {
+  border-color: var(--db-accent);
+  color: var(--db-text);
+  background: #fbfaf6;
+}
 
-.custom-row { display: flex; gap: 0.4rem; }
+.custom-row {
+  display: flex;
+  gap: 0.4rem;
+  width: 100%;
+  max-width: 300px;
+  margin-top: 0.75rem;
+}
 .custom-row .db-input { min-width: 0; }
-.add-btn {
+.add-btn,
+.cancel-btn {
   flex-shrink: 0;
-  width: 42px;
+  width: 40px;
   border: none;
   border-radius: 6px;
-  background: var(--db-accent);
-  color: var(--db-on-accent);
   font-size: 1rem;
   cursor: pointer;
 }
+.add-btn { background: var(--db-accent); color: var(--db-on-accent); }
 .add-btn:hover { background: var(--db-accent-deep); }
+.cancel-btn { background: var(--db-chip); color: var(--db-text-soft); }
+.cancel-btn:hover { background: #cfcfcf; }
 
 /* 空間大小 */
 .ping-row {
@@ -397,12 +463,21 @@ function submit() {
   font-size: 1.5rem;
   color: var(--db-text);
 }
+/* 白底 + 外框，看起來才像「可以打字的欄位」；原本是無框灰塊，
+   跟旁邊不能點的灰色 chip 長得一模一樣。 */
 .ping-input {
-  width: 160px;
-  height: 68px;
-  border-radius: 0;
+  width: 140px;
+  height: 62px;
+  border: 2px solid var(--db-chip);
+  border-radius: 8px;
+  background: #fff;
   text-align: center;
-  font-size: 1.5rem;
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+}
+.ping-input:focus {
+  border-color: var(--db-accent);
+  background: #fff;
 }
 .ping-hint {
   margin: 0.65rem 0 0;
@@ -411,7 +486,25 @@ function submit() {
   color: var(--db-text-soft);
 }
 
-.skip-desc { margin-top: 1.75rem; }
+.size-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 1.5rem;
+  padding: 0.9rem 1.25rem;
+  border-radius: var(--db-radius-chip);
+  background: var(--db-chip-soft);
+}
+.readout-label { font-size: 0.78rem; color: var(--db-text-soft); }
+.readout-val {
+  font-family: var(--db-font-display);
+  font-size: 1.25rem;
+  color: var(--db-text);
+  font-variant-numeric: tabular-nums;
+}
+.readout-val small { font-size: 0.8rem; color: var(--db-text-soft); }
+.readout-note { font-size: 0.72rem; color: var(--db-placeholder); }
 
 /* 進階設定內部 */
 .adv-grid {

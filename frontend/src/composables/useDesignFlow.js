@@ -528,11 +528,19 @@ async function submit3D() {
         }
       : undefined
 
+    // 跳過排版時沒有 scene_graph、沒有平面圖、也沒有照片，房型與坪數就沒有任何
+    // 欄位可以承載（DesignRequest 沒有 room_type / space_size）。折進 text_prompt，
+    // 使用者在第一步選的東西才真的會影響生成結果，而不是選了等於沒選。
+    const noSpatialInput = !editedSceneGraph && !floorPlanPath.value && !spacePhotoPath.value
+    const spacePreamble = noSpatialInput
+      ? `${ROOM_TYPE_LABEL[roomTypeForPlan.value] || ''}，約 ${spaceSizePing.value} 坪。`
+      : ''
+
     const res = await fetch(apiUrl('/api/generate'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text_prompt:      extraPrompt.value,
+        text_prompt:      (spacePreamble + extraPrompt.value).trim(),
         edit_scope:       1.0,
         style_profile_id: !noStyleReference.value && selectedStyle.value !== 'auto'
           ? selectedStyle.value
