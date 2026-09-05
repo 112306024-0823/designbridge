@@ -1,12 +1,15 @@
 <script setup>
 /**
- * Step 01 空間設定 — Figma MacBook Air - 10
- * 三欄：空間類型 / 預計擺放家具 / 空間大小，底下一顆「生成平面圖」。
+ * Step 01 空間設定 — Figma MacBook Air - 10 的延伸
  *
- * 設計稿沒畫、但會影響生成結果的欄位（自訂長寬、輸出長寬比、家具數量、
- * 家庭結構、風水）全部收進「進階設定」，不刪。
+ * 與設計稿的差異：
+ *  · 「描述你想要的空間」併進這一頁。原本描述在下一步，等於先選房型／家具、
+ *    翻頁、再打字，而且兩頁綁的是同一個欄位，看起來像被問了兩次。
+ *  · 坪數收進「進階設定」：多數情況用預設值就好，擺在主畫面會跟房型搶注意力。
+ *  · 其餘設計稿沒畫、但會影響生成結果的欄位（自訂長寬、輸出比例、家具數量、
+ *    家庭結構、風水）同樣收在進階設定，一個都沒刪。
  */
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { Icon } from '@iconify/vue'
 import AdvancedPanel from '@/components/shell/AdvancedPanel.vue'
 import { ROOM_OPTIONS, FURNITURE_BY_ROOM, furnitureIcon, furnitureLabel } from '@/config/furniture'
@@ -21,7 +24,6 @@ const {
 } = useDesignFlow()
 
 const isSkip = computed(() => planSource.value === 'skip')
-
 const availableFurniture = computed(() => FURNITURE_BY_ROOM[roomType.value] || [])
 
 /* ── 房型 ── */
@@ -83,10 +85,18 @@ const extraSelected = computed(
   () => furnitureItems.value.filter(v => !availableFurniture.value.some(o => o.value === v)),
 )
 
+/* ── 坪數 ↔ 自訂長寬連動（沿用舊 SidebarForm 的 @input 做法，避免兩個 watch 互咬）── */
+function recalcRoomSide(filled, other) {
+  if (!filled) return
+  const totalM2 = spaceSizePing.value * 3.306
+  other.value = Math.round((totalM2 / filled) * 10) / 10
+}
+function onCustomRoomWInput() { recalcRoomSide(customRoomW.value, customRoomD) }
+function onCustomRoomDInput() { recalcRoomSide(customRoomD.value, customRoomW) }
+
 /**
- * 由坪數推得的房間長寬，鏡射 api.py generate_layout 的算法（1 坪 = 3.306 m²，
- * 長寬比 5:4）。填了自訂長寬就顯示自訂值——讓使用者看得到「4 坪」實際會變成
- * 多大的房間，而不是只有一個抽象數字。
+ * 由坪數推得的房間長寬，鏡射 api.py generate_layout 的算法
+ * （1 坪 = 3.306 m²，長寬比 5:4）。
  */
 const derivedSize = computed(() => {
   if (customRoomW.value && customRoomD.value) {
@@ -101,28 +111,16 @@ const derivedSize = computed(() => {
   }
 })
 
-/* ── 坪數 ↔ 自訂長寬連動（沿用舊 SidebarForm 的 @input 做法，避免兩個 watch 互咬）── */
-function recalcRoomSide(filled, other) {
-  if (!filled) return
-  const totalM2 = spaceSizePing.value * 3.306
-  other.value = Math.round((totalM2 / filled) * 10) / 10
-}
-function onCustomRoomWInput() { recalcRoomSide(customRoomW.value, customRoomD) }
-function onCustomRoomDInput() { recalcRoomSide(customRoomD.value, customRoomW) }
-
 function toggleIn(listRef, value) {
   listRef.value = listRef.value.includes(value)
     ? listRef.value.filter(v => v !== value)
     : [...listRef.value, value]
 }
 
-/**
- * 跳過家具排版，直接去渲染那一步。
- *
- * 進來才發現還沒想好要擺什麼家具是很常見的事，本來得退回入口重選「從零開始」，
- * 選過的房型與坪數也一起丟掉。這裡直接把路徑切成 skip：步驟表會跟著少一步，
- * 使用者填過的東西留著。
- */
+/* 描述改在這一頁輸入，風格推薦是下一步才顯示的，所以打字時就先在背景查好，
+   翻頁過去不用再等一次。 */
+watch(extraPrompt, () => { if (isSkip.value) scheduleSearch() })
+
 function goSkipRender() {
   // 沒有文字描述時，風格推薦會拿房型當查詢字，而 roomTypeForPlan 平常是
   // generate-layout 回來才設定的；跳過排版就沒人設定它，要在這裡補，
@@ -144,7 +142,7 @@ function submit() {
 
 <template>
   <div class="space-setup">
-    <div class="columns" :class="{ 'two-col': isSkip }">
+    <div class="columns" :class="{ 'one-col': isSkip }">
 
       <!-- ── 空間類型 ── -->
       <section class="col">
@@ -157,8 +155,7 @@ function submit() {
             @click="pickRoom(opt.value)"
           >{{ opt.label }}</button>
 
-          <!-- 虛線＋「＋」讓它看起來是「可以新增」而不是「已停用」。
-               設計稿把自訂畫成淡灰色，實測看起來就是一顆按不動的按鈕。 -->
+          <!-- 虛線＋「＋」讓它看起來是「可以新增」而不是「已停用」 -->
           <button
             v-if="!showCustomRoom"
             type="button"
@@ -231,35 +228,48 @@ function submit() {
           </button>
         </div>
       </section>
-
-      <!-- ── 空間大小 ── -->
-      <section class="col col-size">
-        <h2 class="db-col-title">空間大小</h2>
-        <div class="ping-row">
-          <span class="ping-word">約</span>
-          <input
-            v-model.number="spaceSizePing"
-            type="number" min="1" max="100" step="0.5"
-            class="db-input ping-input"
-            placeholder="輸入"
-          />
-          <span class="ping-word">坪</span>
-        </div>
-        <p class="ping-hint">≈ {{ Math.round((spaceSizePing || 0) * 3.3) }} m²</p>
-
-        <div v-if="derivedSize" class="size-readout">
-          <span class="readout-label">{{ derivedSize.custom ? '自訂長寬' : '換算約' }}</span>
-          <span class="readout-val">{{ derivedSize.w }} × {{ derivedSize.d }} <small>公尺</small></span>
-          <span v-if="!derivedSize.custom" class="readout-note">
-            可在進階設定自訂長寬
-          </span>
-        </div>
-      </section>
     </div>
 
+    <!-- ══ 描述需求：和空間設定同一頁 ══ -->
+    <section class="describe">
+      <h2 class="db-col-title">描述你想要的空間</h2>
+      <textarea
+        v-model="extraPrompt"
+        class="db-textarea"
+        rows="3"
+        :placeholder="isSkip
+          ? '例如：木質感、採光充足的明亮感…'
+          : '例如：木質感、電視牆靠窗、留出輪椅動線…（也會影響家具怎麼排）'"
+      />
+      <p class="describe-hint">
+        {{ isSkip
+          ? '這段描述會用來搜尋風格參考圖，也會直接影響生成的效果圖。'
+          : '選填。這段描述會一併影響家具排版與後續的風格推薦。' }}
+      </p>
+    </section>
+
     <!-- ══ 進階設定 ══ -->
-    <AdvancedPanel hint="長寬・比例・數量・家庭結構・風水">
+    <AdvancedPanel hint="坪數・長寬・比例・數量・家庭結構・風水">
       <div class="adv-grid">
+        <div class="adv-field">
+          <label class="field-label" for="ping">空間坪數</label>
+          <div class="ping-row">
+            <span class="ping-word">約</span>
+            <input
+              id="ping"
+              v-model.number="spaceSizePing"
+              type="number" min="1" max="100" step="0.5"
+              class="db-input ping-input"
+            />
+            <span class="ping-word">坪</span>
+          </div>
+          <p v-if="derivedSize" class="field-hint">
+            {{ derivedSize.custom ? '自訂長寬' : '換算約' }}
+            {{ derivedSize.w }} × {{ derivedSize.d }} 公尺
+            （≈ {{ Math.round((spaceSizePing || 0) * 3.3) }} m²）
+          </p>
+        </div>
+
         <div class="adv-field">
           <label class="field-label">自訂長寬（公尺，可留空）</label>
           <div class="pair">
@@ -280,14 +290,6 @@ function submit() {
           <select id="aspect" v-model="outputAspect" class="db-input">
             <option v-for="opt in ASPECT_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
           </select>
-        </div>
-
-        <div v-if="!isSkip" class="adv-field">
-          <label class="field-label">額外需求（會一併影響家具排版）</label>
-          <textarea
-            v-model="extraPrompt" class="db-textarea" rows="2"
-            placeholder="例如：留出輪椅動線、電視牆靠窗…"
-          />
         </div>
 
         <div v-if="!isSkip && furnitureItems.length" class="adv-field adv-span">
@@ -329,7 +331,7 @@ function submit() {
 
     <div class="actions">
       <button class="db-btn" :disabled="loading" @click="submit">
-        {{ isSkip ? '下一步：描述你的空間' : '生成平面圖' }}
+        {{ isSkip ? '下一步：選擇風格' : '生成平面圖' }}
       </button>
       <button v-if="!isSkip" type="button" class="skip-link" :disabled="loading" @click="goSkipRender">
         還沒想好要擺什麼家具？跳過排版，直接生成渲染圖 →
@@ -341,23 +343,24 @@ function submit() {
 <style scoped>
 .space-setup { display: flex; flex-direction: column; }
 
+/* 兩欄收窄後置中。房型精簡成四個以後，等分整張卡會讓左欄下方空一大塊，
+   分隔線又剛好把那塊空白框起來，看起來像是漏了東西。 */
 .columns {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 320px));
+  justify-content: center;
   gap: clamp(1.5rem, 3vw, 3rem);
-  padding-bottom: 1.5rem;
+  padding-bottom: 1.75rem;
 }
-/* 不排家具時只有兩欄。等寬 + 各自置中，右邊才不會空掉一大塊 */
-.columns.two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.columns.one-col { grid-template-columns: minmax(0, 340px); }
 
-/* 欄與欄之間拉一條淡分隔線，三塊資訊才不會糊成一片 */
+/* 欄與欄之間拉一條淡分隔線 */
 .col + .col { border-left: 1px solid #f0f0f0; padding-left: clamp(1.5rem, 3vw, 3rem); }
 .col { min-width: 0; display: flex; flex-direction: column; align-items: center; }
 
 /* 標題下方一道短的主色線，當作欄位的分組記號 */
-.col :deep(.db-col-title),
-.col .db-col-title { position: relative; padding-bottom: 0.7rem; }
-.col .db-col-title::after {
+.db-col-title { position: relative; padding-bottom: 0.7rem; }
+.db-col-title::after {
   content: '';
   position: absolute;
   left: 50%;
@@ -369,14 +372,13 @@ function submit() {
   transform: translateX(-50%);
 }
 
-/* 空間類型：設計稿是 2 欄。chip 不再拉滿整欄——拉滿會變成一排「列」，
-   看起來像清單而不是可以複選/單選的標籤。 */
+/* 空間類型：2 欄。chip 不拉滿整欄，拉滿會變成一排「列」而不是可選的標籤 */
 .room-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
   width: 100%;
-  max-width: 300px;
+  max-width: 320px;
 }
 .room-grid .db-chip { width: 100%; padding-inline: 0.5rem; }
 
@@ -432,7 +434,7 @@ function submit() {
   display: flex;
   gap: 0.4rem;
   width: 100%;
-  max-width: 300px;
+  max-width: 320px;
   margin-top: 0.75rem;
 }
 .custom-row .db-input { min-width: 0; }
@@ -450,63 +452,24 @@ function submit() {
 .cancel-btn { background: var(--db-chip); color: var(--db-text-soft); }
 .cancel-btn:hover { background: #cfcfcf; }
 
-/* 空間大小 */
-.ping-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-}
-.ping-word {
-  font-family: var(--db-font-display);
-  font-style: italic;
-  font-size: 1.5rem;
-  color: var(--db-text);
-}
-/* 白底 + 外框，看起來才像「可以打字的欄位」；原本是無框灰塊，
-   跟旁邊不能點的灰色 chip 長得一模一樣。 */
-.ping-input {
-  width: 140px;
-  height: 62px;
-  border: 2px solid var(--db-chip);
-  border-radius: 8px;
-  background: #fff;
-  text-align: center;
-  font-size: 1.6rem;
-  font-variant-numeric: tabular-nums;
-}
-.ping-input:focus {
-  border-color: var(--db-accent);
-  background: #fff;
-}
-.ping-hint {
-  margin: 0.65rem 0 0;
-  text-align: center;
-  font-size: 0.85rem;
-  color: var(--db-text-soft);
-}
-
-.size-readout {
+/* ── 描述需求 ── */
+.describe {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.3rem;
-  margin-top: 1.5rem;
-  padding: 0.9rem 1.25rem;
-  border-radius: var(--db-radius-chip);
-  background: var(--db-chip-soft);
+  padding-top: 1.75rem;
+  border-top: 1px solid #f0f0f0;
 }
-.readout-label { font-size: 0.78rem; color: var(--db-text-soft); }
-.readout-val {
-  font-family: var(--db-font-display);
-  font-size: 1.25rem;
-  color: var(--db-text);
-  font-variant-numeric: tabular-nums;
+.describe .db-textarea { max-width: 720px; }
+.describe-hint {
+  margin: 0.55rem 0 0;
+  max-width: 720px;
+  width: 100%;
+  font-size: 0.8rem;
+  color: var(--db-placeholder);
 }
-.readout-val small { font-size: 0.8rem; color: var(--db-text-soft); }
-.readout-note { font-size: 0.72rem; color: var(--db-placeholder); }
 
-/* 進階設定內部 */
+/* ── 進階設定內部 ── */
 .adv-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -526,6 +489,14 @@ function submit() {
   margin: 0.4rem 0 0;
   font-size: 0.78rem;
   color: var(--db-placeholder);
+}
+
+.ping-row { display: flex; align-items: center; gap: 0.6rem; }
+.ping-word { font-size: 0.95rem; color: var(--db-text-soft); }
+.ping-input {
+  width: 110px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
@@ -562,7 +533,7 @@ function submit() {
   flex-direction: column;
   align-items: center;
   gap: 0.9rem;
-  padding-top: 1.5rem;
+  padding-top: 1rem;
 }
 .actions .db-btn { min-width: 337px; }
 
@@ -582,7 +553,8 @@ function submit() {
 
 @media (max-width: 900px) {
   .columns,
-  .columns.two-col { grid-template-columns: 1fr; }
+  .columns.one-col { grid-template-columns: 1fr; }
+  .col + .col { border-left: none; padding-left: 0; padding-top: 1.5rem; border-top: 1px solid #f0f0f0; }
   .actions .db-btn { min-width: 0; width: 100%; }
 }
 </style>

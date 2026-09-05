@@ -53,13 +53,14 @@ function onPanoClick() {
 
     <!-- ══ 尚未生成：描述 + 風格推薦 ══ -->
     <template v-if="!result">
-      <h2 class="lead">描述你理想中的空間…</h2>
-      <textarea
-        v-model="extraPrompt"
-        class="db-textarea prompt"
-        rows="3"
-        placeholder="輸入…例如：木質感、採光充足的明亮感"
-      />
+      <!-- 描述在第一步就填好了。這裡只回顧、不再給一個綁同一個欄位的輸入框，
+           不然使用者會覺得同一件事被問了兩次。 -->
+      <div class="recap">
+        <span class="recap-label">你的描述</span>
+        <p v-if="extraPrompt.trim()" class="recap-text">{{ extraPrompt }}</p>
+        <p v-else class="recap-text is-empty">（未填寫，將只依風格參考生成）</p>
+        <button type="button" class="recap-edit" @click="prevStep">修改</button>
+      </div>
 
       <!-- StyleSuggestions 自己有「AI 推薦風格參考」標題，這裡不再重複一層 -->
       <section v-if="showSuggestions" class="suggest">
@@ -183,15 +184,40 @@ function onPanoClick() {
 <style scoped>
 .render-step { display: flex; flex-direction: column; }
 
-.lead {
-  margin: 0 0 0.9rem;
-  font-family: var(--db-font-display);
-  font-style: italic;
-  font-weight: 500;
-  font-size: 1.5rem;
-  color: var(--db-text);
+.recap {
+  display: flex;
+  align-items: baseline;
+  gap: 0.85rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: var(--db-radius-chip);
+  background: var(--db-chip-soft);
 }
-.prompt { max-width: 720px; }
+.recap-label {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  color: var(--db-text-soft);
+}
+.recap-text {
+  flex: 1;
+  margin: 0;
+  min-width: 0;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--db-text);
+  overflow-wrap: anywhere;
+}
+.recap-text.is-empty { color: var(--db-placeholder); }
+.recap-edit {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: var(--db-accent-deep);
+  font-size: 0.85rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.recap-edit:hover { color: var(--db-text); }
 
 .sub-title {
   margin: 0;

@@ -48,14 +48,14 @@ export function furnitureIcon(type) {
 
 // 房間類型 + 各房型常見家具——SidebarForm（Step 1 選家具）跟 LayoutEditor（2D 編輯器的
 // 家具面板）共用同一份，兩邊選單才不會慢慢長歪。
+// 只留佈局引擎有完整家具尺寸支援的四個房型（見 layout_agent.py 的 FURNITURE_SIZES）。
+// 浴室／兒童房／餐廳的家具清單留在下面的 FURNITURE_BY_ROOM，要放回選單只要
+// 把對應項目加回這個陣列；使用者也隨時可以用「＋ 自訂」打任意房型。
 export const ROOM_OPTIONS = [
   { value: 'living_room', label: '客廳' },
   { value: 'bedroom',     label: '臥室' },
   { value: 'kitchen',     label: '廚房' },
-  { value: 'dining_room', label: '餐廳' },
   { value: 'study',       label: '書房' },
-  { value: 'bathroom',    label: '浴室' },
-  { value: 'kids_room',   label: '兒童房' },
 ]
 
 export const FURNITURE_BY_ROOM = {
