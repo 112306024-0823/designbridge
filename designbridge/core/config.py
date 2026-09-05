@@ -111,11 +111,13 @@ class Config:
     ENABLE_LAYOUT_DEPTH_PROJECTION: bool = os.getenv(
         "DESIGNBRIDGE_ENABLE_LAYOUT_DEPTH_PROJECTION", "true"
     ).lower() in ("1", "true", "yes")
-    # Calibrated against FLUX Kontext renders: pitch=-16 framed the room far better
-    # than -6/-8 (more floor visible, furniture distribution matched the depth boxes).
+    # pitch=-16 (calibrated for the Kontext path) over-tilts the depth-ControlNet path:
+    # too much empty foreground floor + the depth camera's perspective fights FLUX's own.
+    # -8 keeps a mild downward look without the void; setback 1.2 pushes the room back so
+    # the nearest furniture box doesn't dominate the frame.
     LAYOUT_PROJECTION_HFOV: float = float(os.getenv("DESIGNBRIDGE_LAYOUT_PROJECTION_HFOV", "65.0"))
-    LAYOUT_PROJECTION_PITCH: float = float(os.getenv("DESIGNBRIDGE_LAYOUT_PROJECTION_PITCH", "-16.0"))
-    LAYOUT_PROJECTION_SETBACK: float = float(os.getenv("DESIGNBRIDGE_LAYOUT_PROJECTION_SETBACK", "0.8"))
+    LAYOUT_PROJECTION_PITCH: float = float(os.getenv("DESIGNBRIDGE_LAYOUT_PROJECTION_PITCH", "-8.0"))
+    LAYOUT_PROJECTION_SETBACK: float = float(os.getenv("DESIGNBRIDGE_LAYOUT_PROJECTION_SETBACK", "1.2"))
 
     @classmethod
     def get_gemini_api_key(cls) -> str:

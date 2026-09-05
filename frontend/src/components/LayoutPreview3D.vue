@@ -265,8 +265,11 @@ function buildScene() {
   const aspect = width / height2
   const hfovRad = THREE.MathUtils.degToRad(camCfg.hfov_deg || 65)
   const vfovDeg = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hfovRad / 2) / aspect))
+  const eyeHeight = camCfg.eye_height || 1.4
+  const setback = camCfg.setback || 0.8
+  const pitchRad = THREE.MathUtils.degToRad(camCfg.pitch_deg ?? -16)
   camera = new THREE.PerspectiveCamera(vfovDeg, aspect, 0.05, 50)
-  camera.position.set(0, camCfg.eye_height || 1.4, -(camCfg.setback || 0.8))
+  camera.position.set(0, eyeHeight, -setback)
 
   renderer = new THREE.WebGLRenderer({ antialias: true })
   renderer.setSize(width, height2)
@@ -276,10 +279,16 @@ function buildScene() {
   renderer.domElement.style.touchAction = 'none'
   if (props.editable) renderer.domElement.style.cursor = 'grab'
 
-  // OrbitControls 直接處理視角朝向，不用自己算 pitch 的尤拉角正負號——
-  // 使用者本來就可以自由拖曳旋轉，初始朝向大致對就好。
+  // 初始朝向對齊 scene_graph_to_depth.py 的投影相機（同一個俯角），這樣使用者看到的
+  // 就是生圖實際會用的取景角度。沿著相機視線（+Z、下傾 pitchRad）取一個落在房間中段
+  // 的注視點；使用者之後仍可自由拖曳旋轉。
+  const lookDist = (roomDepth / 2 + setback) / Math.cos(pitchRad)
   controls = new OrbitControls(camera, renderer.domElement)
-  controls.target.set(0, 1.0, roomDepth / 2)
+  controls.target.set(
+    0,
+    eyeHeight + Math.sin(pitchRad) * lookDist,
+    -setback + Math.cos(pitchRad) * lookDist,
+  )
   controls.update()
 
   if (props.editable) {
