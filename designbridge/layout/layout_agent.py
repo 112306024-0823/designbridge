@@ -969,7 +969,7 @@ def parse_floor_plan_image(
 
     Returns ``None`` when parsing fails or finds nothing (caller then falls back).
     """
-    from designbridge.llm import call_llm
+    from designbridge.render.llm import call_llm
 
     types_csv = ", ".join(_KNOWN_FURNITURE_TYPES)
     prompt = (
@@ -1061,6 +1061,10 @@ def _default_layout(room_type: str) -> list[FurnitureItem]:
             FurnitureItem("dresser_1", "dresser", 0.68, 0.08, 0.14, 0.09),
         ],
         "kitchen": [
+            FurnitureItem("cabinet_1", "cabinet", 0.05, 0.05, 0.30, 0.08),
+            FurnitureItem("shelf_1", "shelf", 0.65, 0.05, 0.18, 0.05),
+        ],
+        "dining_room": [
             FurnitureItem("dining_table_1", "dining_table", 0.30, 0.38, 0.20, 0.15),
             FurnitureItem("chair_1", "chair", 0.22, 0.40, 0.08, 0.08),
             FurnitureItem("chair_2", "chair", 0.52, 0.40, 0.08, 0.08),
@@ -1094,7 +1098,7 @@ _FURNITURE_LABEL_MAP: dict[str, str] = {
 
 _ROOM_LABEL_MAP: dict[str, str] = {
     "living_room": "LIVING ROOM", "bedroom": "BEDROOM",
-    "kitchen": "KITCHEN / DINING", "study": "STUDY",
+    "kitchen": "KITCHEN", "dining_room": "DINING ROOM", "study": "STUDY",
 }
 
 
@@ -1914,6 +1918,7 @@ def run_layout_agent(
           (unrelated) content instead of room geometry. Defaults to a square canvas.
     """
     from designbridge.core.prompts import LAYOUT_AGENT_PROMPT, LAYOUT_REFINEMENT_PROMPT
+    from designbridge.core.timing import log_stage
 
     layout_registry = get_layout_constraint_registry()
     meta = structured_requirement.get("meta") or {}
@@ -1946,9 +1951,11 @@ def run_layout_agent(
             user_description=user_description + ("\n" + extra if extra else ""),
         )
 
-    # Initial layout from LLM
+    # Initial layout from LLM — the only network-bound step in this function; everything
+    # below is local numpy/pycairo, so if /api/generate-layout feels slow this is where to look.
     try:
-        items = _call_llm_layout(_build_prompt())
+        with log_stage("layout_agent.llm_layout", task_id=task_id):
+            items = _call_llm_layout(_build_prompt())
         if not items:
             raise ValueError("empty response")
     except Exception as e:
@@ -2012,9 +2019,10 @@ def run_layout_agent(
     scores_history.append(before)
 
     movable = _movable_indices(items, constraints, photo_anchored)
-    items, _obj, accepted = _optimize_positions(
-        items, space_info, movable, steps=Config.LAYOUT_OPTIMIZER_STEPS
-    )
+    with log_stage("layout_agent.optimize_positions", task_id=task_id):
+        items, _obj, accepted = _optimize_positions(
+            items, space_info, movable, steps=Config.LAYOUT_OPTIMIZER_STEPS
+        )
     items = _settle(items)
     total = _weighted_score(_score_soft_constraints(items, space_info))
 

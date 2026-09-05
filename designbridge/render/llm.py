@@ -136,17 +136,16 @@ def _thinking_config(types):
     return types.ThinkingConfig(thinking_budget=budget)
 
 
-def _gemini_client_and_config(
-    api_key: str | None,
-    system: str | None,
-    temperature: float | None,
-    max_tokens: int | None,
-):
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError as exc:
-        raise RuntimeError("google-genai 未安裝。請先執行: pip install google-genai") from exc
+_clients: dict[str | None, object] = {}  # api_key (None = Vertex) -> cached genai.Client
+
+
+def _get_client(api_key: str | None):
+    """Cached genai.Client per api_key — constructing one re-authenticates (Vertex: a
+    fresh ADC token fetch), measured at ~1-1.5s extra per call versus reusing one."""
+    if api_key in _clients:
+        return _clients[api_key]
+
+    from google import genai
 
     if api_key is None:  # Vertex AI mode
         sa = _find_service_account()
@@ -160,6 +159,22 @@ def _gemini_client_and_config(
         client = genai.Client(vertexai=True, project=project, location=Config.GOOGLE_CLOUD_LOCATION)
     else:
         client = genai.Client(api_key=api_key)
+    _clients[api_key] = client
+    return client
+
+
+def _gemini_client_and_config(
+    api_key: str | None,
+    system: str | None,
+    temperature: float | None,
+    max_tokens: int | None,
+):
+    try:
+        from google.genai import types
+    except ImportError as exc:
+        raise RuntimeError("google-genai 未安裝。請先執行: pip install google-genai") from exc
+
+    client = _get_client(api_key)
     cfg = types.GenerateContentConfig(
         temperature=temperature if temperature is not None else Config.GEMINI_TEMPERATURE,
         **({"max_output_tokens": max_tokens} if max_tokens is not None else {}),

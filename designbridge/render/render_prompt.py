@@ -52,7 +52,6 @@ def _build_imagen_prompt_from_requirement(
         "japanese": "Japanese minimalist Japandi",
         "american": "American style",
         "luxury": "luxury high-end glamour",
-        "neoclassic": "neoclassical",
     }
     design_description = (req.get("design_description") or "").strip()
     # Only trust design_description when the user actually described something. With an

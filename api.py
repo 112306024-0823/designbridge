@@ -40,6 +40,28 @@ from designbridge.style.style_apply import list_available_style_profiles
 from style_kb.styles import STYLES
 
 
+def _layout_render_config() -> dict:
+    """Furniture heights/colors + camera params for the frontend's Three.js layout
+    preview — same numbers scene_graph_to_depth.py already uses to rasterize the
+    ControlNet depth map, so the 3D preview and the actual generation stay in sync."""
+    from designbridge.core.config import Config
+    from designbridge.layout.layout_agent import FURNITURE_COLORS
+    from designbridge.layout.scene_graph_to_depth import FURNITURE_HEIGHTS
+
+    return {
+        "furniture_heights": FURNITURE_HEIGHTS,
+        "furniture_colors": {
+            ftype: "#%02x%02x%02x" % rgb for ftype, rgb in FURNITURE_COLORS.items()
+        },
+        "camera": {
+            "hfov_deg": Config.LAYOUT_PROJECTION_HFOV,
+            "pitch_deg": Config.LAYOUT_PROJECTION_PITCH,
+            "eye_height": 1.40,
+            "setback": Config.LAYOUT_PROJECTION_SETBACK,
+        },
+    }
+
+
 @asynccontextmanager
 async def _app_lifespan(_: FastAPI):
     """Preload heavy ML stacks in background so the server accepts requests immediately."""
@@ -102,7 +124,9 @@ class DesignRequest(BaseModel):
 
 class LayoutRequest(BaseModel):
     room_type: str = "living_room"   # living_room | bedroom | kitchen | study
-    space_size_ping: float = 15.0    # 坪數
+    space_size_ping: float = 15.0    # 坪數（room_w/room_d 未指定時，用這個估算長寬）
+    room_w: Optional[float] = None   # 自訂寬度（公尺），與 room_d 一起給才生效
+    room_d: Optional[float] = None   # 自訂深度（公尺）
     furniture_list: List[str] = []   # 預計擺放的家具
     text_prompt: str = ""
     family_needs: List[str] = []
@@ -153,8 +177,13 @@ def search_styles(
     query: str = "",
     style_id: str = "",
     top_k: int = 3,
+    diverse: bool = False,
 ):
-    """向量搜尋最相似的風格參考圖，回傳多筆候選供使用者選擇。"""
+    """向量搜尋最相似的風格參考圖，回傳多筆候選供使用者選擇。
+
+    diverse=True（前端在使用者沒填風格描述、也沒手動選風格時傳入）：每個風格各取一張，
+    避免通用 fallback 查詢字（房型中文字/"interior design"）只集中命中一兩種風格。
+    """
     from designbridge.style.style_supabase import _STYLE_PROMPTS
     from style_kb.styles import STYLES
     style_name_map = {sid: sname for sid, sname in STYLES}
@@ -162,14 +191,20 @@ def search_styles(
     sid = style_id.strip() or ""
     q = query.strip() or sid or "interior design"
     try:
-        from designbridge.style.style_supabase import query_style_images_supabase
+        from designbridge.style.style_supabase import query_style_images_supabase, query_style_images_diverse
 
         client = _get_supabase()
-        results = query_style_images_supabase(
-            text_query=q,
-            style_id=sid or None,
-            top_k=min(top_k, 10),
-        )
+        if diverse and not sid:
+            # per_style=3（不是 1）是刻意留給前端「下一輪」用的池子——向量搜尋本身是
+            # 決定性的，同樣的查詢字重打一次結果不會變，所以一次多要幾張，前端就能在
+            # 池子裡輪替顯示，不用每次都重打一樣的 query 卻拿到一樣的結果。
+            results = query_style_images_diverse(text_query=q, per_style=3)[: min(top_k, 24)]
+        else:
+            results = query_style_images_supabase(
+                text_query=q,
+                style_id=sid or None,
+                top_k=min(top_k, 24),
+            )
         if not results:
             return []
 
@@ -180,33 +215,53 @@ def search_styles(
 
         candidates = []
         for row in results:
-            url = row.image_url
+            url = row.image_url          # DB join key
+            display_url = row.display_url  # actually-reachable URL to show/round-trip
             s_id = row.style_id
             style_kb = kb_map.get(url)
             fallback = _STYLE_PROMPTS.get(s_id, _STYLE_PROMPTS.get("modern", {}))
 
             description = None
+            tags: list[str] = []
             positive_prompt = fallback.get("positive", "")
             negative_prompt = fallback.get("negative", "")
+            colors: dict = {}
+            materials: list[str] = []
 
             if style_kb and isinstance(style_kb, dict):
                 desc_raw = style_kb.get("description")
                 # v2 schema: {"zh": "...", "en": "..."}；前端顯示用中文版
                 description = desc_raw.get("zh") if isinstance(desc_raw, dict) else desc_raw
+                tags_raw = (style_kb.get("style_info") or {}).get("tags")
+                zh_tags = tags_raw.get("zh") if isinstance(tags_raw, dict) else tags_raw
+                if isinstance(zh_tags, list):
+                    tags = [str(t) for t in zh_tags if t][:5]
                 ai = style_kb.get("ai_params") or {}
                 prompts = ai.get("prompts") or {}
                 positive_prompt = prompts.get("positive") or positive_prompt
                 negative_prompt = prompts.get("negative") or negative_prompt
 
+                # 資訊卡片（hover/點擊 ⓘ）用的補充資料，同樣來自 style_kb
+                visual = style_kb.get("visual_elements") or {}
+                colors = visual.get("colors") or {}
+                for m in visual.get("materials") or []:
+                    t = isinstance(m, dict) and m.get("type")
+                    if t and t not in materials:
+                        materials.append(t)
+                materials = materials[:5]
+
             source_meta = {}
             candidates.append({
                 "style_id": s_id,
                 "style_name": style_name_map.get(s_id, source_meta.get("style", s_id)),
-                "image_url": url,
+                "image_url": display_url,
                 "similarity": round(float(row.similarity), 4),
                 "description": description,
+                "tags": tags,
                 "positive_prompt": positive_prompt,
                 "negative_prompt": negative_prompt,
+                "colors": colors,
+                "materials": materials,
             })
         return candidates
     except Exception as e:
@@ -235,7 +290,7 @@ def get_style_preview(
         row = results[0]
         style_name = row.style_name or row.style_id
         return {
-            "image_url": row.image_url,
+            "image_url": row.display_url,
             "style_name": style_name,
             "similarity": round(row.similarity, 4),
         }
@@ -371,9 +426,12 @@ async def generate_layout(request: LayoutRequest):
         from designbridge.layout.layout_agent import run_layout_agent
         from designbridge.layout.special_constraints import enrich_requirement
 
-        total_m2 = request.space_size_ping * 3.306
-        width = round(math.sqrt(total_m2 * 5 / 4), 1)
-        depth = round(math.sqrt(total_m2 * 4 / 5), 1)
+        if request.room_w and request.room_d:
+            width, depth = round(request.room_w, 1), round(request.room_d, 1)
+        else:
+            total_m2 = request.space_size_ping * 3.306
+            width = round(math.sqrt(total_m2 * 5 / 4), 1)
+            depth = round(math.sqrt(total_m2 * 4 / 5), 1)
 
         furniture_list = [f.lower().replace(" ", "_") for f in request.furniture_list]
 
@@ -416,7 +474,9 @@ async def generate_layout(request: LayoutRequest):
             )
 
         task_id = str(_uuid.uuid4())
-        result = run_layout_agent(structured_requirement, task_id)
+        from designbridge.core.timing import log_stage
+        with log_stage("api.generate_layout.total", task_id=task_id):
+            result = run_layout_agent(structured_requirement, task_id)
 
         floor_plan_path = (result.get("scene_graph") or {}).get("floor_plan_path")
         floor_plan_url = None
@@ -431,6 +491,7 @@ async def generate_layout(request: LayoutRequest):
             "floor_plan_path": floor_plan_path,
             "floor_plan_url": floor_plan_url,
             "scene_graph": result.get("scene_graph"),
+            "layout_render_config": _layout_render_config(),
             "room_w": width,
             "room_d": depth,
             "room_type": request.room_type,
@@ -446,6 +507,8 @@ class ParseFloorPlanRequest(BaseModel):
     image_path: str                       # 由 /api/upload-image 回傳的本機路徑
     room_type: str = "living_room"
     space_size_ping: float = 4.0
+    room_w: Optional[float] = None   # 自訂寬度（公尺），與 room_d 一起給才生效
+    room_d: Optional[float] = None   # 自訂深度（公尺）
 
 
 @app.post("/api/parse-floor-plan")
@@ -461,9 +524,12 @@ async def parse_floor_plan(request: ParseFloorPlanRequest):
     try:
         from designbridge.layout.layout_agent import parse_floor_plan_image
 
-        total_m2 = request.space_size_ping * 3.306
-        width = round(math.sqrt(total_m2 * 5 / 4), 1)
-        depth = round(math.sqrt(total_m2 * 4 / 5), 1)
+        if request.room_w and request.room_d:
+            width, depth = round(request.room_w, 1), round(request.room_d, 1)
+        else:
+            total_m2 = request.space_size_ping * 3.306
+            width = round(math.sqrt(total_m2 * 5 / 4), 1)
+            depth = round(math.sqrt(total_m2 * 4 / 5), 1)
 
         task_id = str(_uuid.uuid4())
         scene_graph = parse_floor_plan_image(
@@ -496,6 +562,7 @@ async def parse_floor_plan(request: ParseFloorPlanRequest):
             "floor_plan_url": floor_plan_url,
             "scene_graph": scene_graph,
             "furniture_placements": scene_graph.get("furniture_placements", []),
+            "layout_render_config": _layout_render_config(),
             "room_w": width,
             "room_d": depth,
             "room_type": request.room_type,
