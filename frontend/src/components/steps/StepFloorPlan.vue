@@ -6,8 +6,9 @@
  *  · 2D / 3D 切換：設計稿只畫了 2D 平面圖，但 LayoutPreview3D 可以把同一組家具座標
  *    直接顯示成可拖曳的 3D 模型，兩邊共用 editPlacements，是既有功能不能掉。
  *  · LayoutEditor 自帶的旋轉／刪除／縮放／復原／家具尺寸與房間尺寸面板一併保留。
- *  · 設計稿的「更新平面圖」保留成手動按鈕；同時仍維持舊版拖曳後 500ms 自動重繪，
- *    所以按鈕是「立即重繪」而不是唯一的更新途徑。
+ *  · 沒有「更新平面圖」按鈕：拖曳/加/刪/轉家具都會在鬆手 0.5 秒後自動重繪
+ *    （debounce 在 useDesignFlow 的 onEditorChange 裡），不需要使用者自己按。
+ *    submit3D 送出前也會補跑一次，確保用的是最新的平面圖。
  */
 import { computed, defineAsyncComponent } from 'vue'
 import LayoutEditor from '@/components/LayoutEditor.vue'
@@ -18,7 +19,7 @@ const LayoutPreview3D = defineAsyncComponent(() => import('@/components/LayoutPr
 
 const {
   editPlacements, roomW, roomD, roomTypeForPlan, layoutViewMode, layoutRenderConfig,
-  floorPlanUrl, uploadedPlanUrl, onEditorChange, updateFloorPlan,
+  floorPlanUrl, uploadedPlanUrl, onEditorChange,
   nextStep, scheduleSearch, loading,
 } = useDesignFlow()
 
@@ -85,15 +86,12 @@ function goNext() {
     </div>
 
     <div class="actions">
-      <button class="db-btn db-btn--ghost" :disabled="loading || !editPlacements.length" @click="updateFloorPlan">
-        更新平面圖
-      </button>
       <button class="db-btn" :disabled="loading" @click="goNext">
         下一步：繼續生成 3D 渲染圖
       </button>
     </div>
 
-    <p class="foot-hint">拖動調整家具位置，鬆手 0.5 秒後平面圖會自動重繪；也可以按「更新平面圖」立即重繪。</p>
+    <p class="foot-hint">拖動調整家具位置，鬆手後平面圖會自動更新。</p>
   </div>
 </template>
 
@@ -164,12 +162,17 @@ function goNext() {
   gap: 1.25rem;
   margin-top: 1rem;
 }
+/* 原本 0.88rem 太不起眼，使用者常常沒發現這裡可以點開對照原圖 */
 .refs summary {
   cursor: pointer;
-  color: var(--db-text-soft);
-  font-size: 0.88rem;
+  color: var(--db-text);
+  font-family: var(--db-font-display);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 1.05rem;
 }
-.refs summary:hover { color: var(--db-text); }
+.refs summary::marker { color: var(--db-accent); }
+.refs summary:hover { color: var(--db-accent-deep); }
 .ref-img {
   display: block;
   max-width: min(460px, 100%);

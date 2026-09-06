@@ -4,6 +4,7 @@
  * 滿版背景 → 導覽列 → 流程列 → 置中白卡，白卡內容由當前步驟決定。
  */
 import { computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import AppNav from '@/components/shell/AppNav.vue'
 import StepBar from '@/components/shell/StepBar.vue'
 import LoadingState from '@/components/shell/LoadingState.vue'
@@ -17,13 +18,21 @@ import StepBudget from '@/components/steps/StepBudget.vue'
 import { useDesignFlow } from '@/composables/useDesignFlow'
 import sceneBg from '@/assets/figma/room-bg.png'
 
+const router = useRouter()
 const flow = useDesignFlow()
 const {
   steps, stepIndex, currentStep, goStep,
   loading, loadingMsg, error,
   editPlacements, floorPlanUrl, spacePhotoPath, lastGeneratedImage, planSource,
-  fetchStyleOptions,
+  fetchStyleOptions, resetFlow,
 } = flow
+
+// 三個入口模式選錯了想換一個，只有在第一步才需要——後面幾步已經有資料，
+// 「上一步」在流程列裡點就好，不用再提供這顆。
+function backToModeSelect() {
+  resetFlow()
+  router.push('/start')
+}
 
 const STEP_COMPONENTS = {
   space:      StepSpaceSetup,
@@ -76,6 +85,19 @@ onMounted(() => {
     />
 
     <div class="db-card studio-card">
+      <button
+        v-if="stepIndex === 0 && !loading"
+        type="button"
+        class="mode-back-btn"
+        @click="backToModeSelect"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+        重新選擇模式
+      </button>
+
       <LoadingState v-if="loading" :title="loadingMsg.title" :sub="loadingMsg.sub" />
       <component :is="STEP_COMPONENTS[currentStep]" v-else />
 
@@ -93,6 +115,37 @@ onMounted(() => {
 
 .studio-card {
   padding: clamp(1.5rem, 3vw, 2.5rem);
+  position: relative;
+}
+
+/* 原本是一行小灰字，太不顯眼，容易被當成裝飾文字而不是按鈕。
+   改成有外框的實體按鈕，字級跟其他次要動作（例如「上一步」）看齊。 */
+.mode-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 1.5rem;
+  padding: 0.5rem 1.1rem;
+  border: 2px solid #dcdcdc;
+  border-radius: var(--db-radius-pill);
+  background: #fff;
+  color: var(--db-text);
+  font-family: var(--db-font-display);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: border-color 0.16s, background 0.16s, transform 0.12s;
+}
+.mode-back-btn:hover {
+  border-color: var(--db-accent);
+  background: #fbfaf6;
+  transform: translateX(-2px);
+}
+.mode-back-btn svg { flex-shrink: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-back-btn:hover { transform: none; }
 }
 
 .studio-error {

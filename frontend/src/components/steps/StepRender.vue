@@ -22,7 +22,7 @@ import { API_BASE } from '@/config/api'
 const PanoramaViewer = defineAsyncComponent(() => import('@/components/PanoramaViewer.vue'))
 
 const {
-  extraPrompt, outputAspect,
+  planSource, extraPrompt, outputAspect,
   selectedStyle, noStyleReference, styleMethod, styleRefImage,
   styleOptions, styleLoading, styleError, fetchStyleOptions,
   styleCandidates, candidatesLoading, confirmedStyle, showSuggestions,
@@ -35,6 +35,13 @@ const showPano = ref(false)
 const showDetails = ref(false)
 
 const imageUrl = computed(() => result.value?.generated_image_url || '')
+const isSkipPath = computed(() => planSource.value === 'skip')
+
+// 排家具路徑在這一頁才打描述，打字時重查風格推薦（debounce 在 scheduleSearch 裡）
+function onPromptInput() { scheduleSearch() }
+
+// 不排家具路徑的描述在第一頁，「修改」就是退回去
+function goEditPrompt() { prevStep() }
 
 function regenerate() {
   showPano.value = false
@@ -53,14 +60,26 @@ function onPanoClick() {
 
     <!-- ══ 尚未生成：描述 + 風格推薦 ══ -->
     <template v-if="!result">
-      <!-- 描述在第一步就填好了。這裡只回顧、不再給一個綁同一個欄位的輸入框，
-           不然使用者會覺得同一件事被問了兩次。 -->
-      <div class="recap">
+      <!-- 不排家具路徑在第一頁就填過描述了（那是它唯一的設定頁），這裡只回顧，
+           不再放一個綁同一個欄位的輸入框，免得同一件事被問兩次。
+           排家具路徑的第一頁專心決定房型／家具／坪數，描述在這裡才填。 -->
+      <div v-if="isSkipPath" class="recap">
         <span class="recap-label">你的描述</span>
         <p v-if="extraPrompt.trim()" class="recap-text">{{ extraPrompt }}</p>
         <p v-else class="recap-text is-empty">（未填寫，將只依風格參考生成）</p>
-        <button type="button" class="recap-edit" @click="prevStep">修改</button>
+        <button type="button" class="recap-edit" @click="goEditPrompt">修改</button>
       </div>
+
+      <template v-else>
+        <h2 class="lead">描述你理想中的空間…</h2>
+        <textarea
+          v-model="extraPrompt"
+          class="db-textarea prompt"
+          rows="3"
+          placeholder="輸入…例如：木質感、採光充足的明亮感"
+          @input="onPromptInput"
+        />
+      </template>
 
       <!-- StyleSuggestions 自己有「AI 推薦風格參考」標題，這裡不再重複一層 -->
       <section v-if="showSuggestions" class="suggest">
@@ -183,6 +202,16 @@ function onPanoClick() {
 
 <style scoped>
 .render-step { display: flex; flex-direction: column; }
+
+.lead {
+  margin: 0 0 0.9rem;
+  font-family: var(--db-font-display);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 1.5rem;
+  color: var(--db-text);
+}
+.prompt { max-width: 720px; }
 
 .recap {
   display: flex;

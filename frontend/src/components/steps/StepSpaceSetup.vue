@@ -121,6 +121,13 @@ function toggleIn(listRef, value) {
    翻頁過去不用再等一次。 */
 watch(extraPrompt, () => { if (isSkip.value) scheduleSearch() })
 
+/**
+ * 跳過家具排版。
+ *
+ * 只切換路徑、留在這一頁：切成 skip 之後這頁會就地變成「空間類型 + 描述」，
+ * 步驟列也從五步縮成四步。不往下跳一步，是因為使用者按這顆按鈕的理由通常是
+ * 「還沒想好家具」，這時該讓他先把想要的樣子打出來，而不是直接被推到選風格。
+ */
 function goSkipRender() {
   // 沒有文字描述時，風格推薦會拿房型當查詢字，而 roomTypeForPlan 平常是
   // generate-layout 回來才設定的；跳過排版就沒人設定它，要在這裡補，
@@ -128,12 +135,14 @@ function goSkipRender() {
   roomTypeForPlan.value = roomType.value
   planSource.value = 'skip'
   scheduleSearch()
-  nextStep()
 }
 
 function submit() {
   if (isSkip.value) {
-    goSkipRender()
+    // 不排家具：這頁沒有東西要送後端，直接進下一步選風格
+    roomTypeForPlan.value = roomType.value
+    scheduleSearch()
+    nextStep()
     return
   }
   submitLayout()
@@ -228,30 +237,52 @@ function submit() {
           </button>
         </div>
       </section>
+
+      <!-- ── 空間大小（排家具路徑才放主畫面）──
+           這條路徑的坪數會實際換算成房間長寬去排家具，是要當場決定的東西，
+           收進進階設定的話多數人不會展開，等於永遠用預設值排版。
+           不排家具路徑的坪數只是折進 prompt 的一句話，留在進階設定就好。 -->
+      <section v-if="!isSkip" class="col col-size">
+        <h2 class="db-col-title">空間大小</h2>
+        <div class="ping-main">
+          <span class="ping-word-lg">約</span>
+          <input
+            v-model.number="spaceSizePing"
+            type="number" min="1" max="100" step="0.5"
+            class="db-input ping-input-lg"
+            aria-label="空間坪數"
+          />
+          <span class="ping-word-lg">坪</span>
+        </div>
+        <p class="ping-hint">≈ {{ Math.round((spaceSizePing || 0) * 3.3) }} m²</p>
+
+        <div v-if="derivedSize" class="size-readout">
+          <span class="readout-label">{{ derivedSize.custom ? '自訂長寬' : '換算約' }}</span>
+          <span class="readout-val">{{ derivedSize.w }} × {{ derivedSize.d }} <small>公尺</small></span>
+        </div>
+      </section>
     </div>
 
-    <!-- ══ 描述需求：和空間設定同一頁 ══ -->
-    <section class="describe">
+    <!-- ══ 描述需求：只有不排家具路徑需要在這裡填 ══
+         排家具路徑的描述留在下一步（選風格那頁），第一頁專心決定房型／家具／坪數。 -->
+    <section v-if="isSkip" class="describe">
       <h2 class="db-col-title">描述你想要的空間</h2>
       <textarea
         v-model="extraPrompt"
         class="db-textarea"
         rows="3"
-        :placeholder="isSkip
-          ? '例如：木質感、採光充足的明亮感…'
-          : '例如：木質感、電視牆靠窗、留出輪椅動線…（也會影響家具怎麼排）'"
+        placeholder="例如：木質感、採光充足的明亮感…"
       />
       <p class="describe-hint">
-        {{ isSkip
-          ? '這段描述會用來搜尋風格參考圖，也會直接影響生成的效果圖。'
-          : '選填。這段描述會一併影響家具排版與後續的風格推薦。' }}
+        這段描述會用來搜尋風格參考圖，也會直接影響生成的效果圖。
       </p>
     </section>
 
     <!-- ══ 進階設定 ══ -->
     <AdvancedPanel hint="坪數・長寬・比例・數量・家庭結構・風水">
       <div class="adv-grid">
-        <div class="adv-field">
+        <!-- 排家具路徑的坪數已經在主畫面，這裡不重複 -->
+        <div v-if="isSkip" class="adv-field">
           <label class="field-label" for="ping">空間坪數</label>
           <div class="ping-row">
             <span class="ping-word">約</span>
@@ -333,8 +364,8 @@ function submit() {
       <button class="db-btn" :disabled="loading" @click="submit">
         {{ isSkip ? '下一步：選擇風格' : '生成平面圖' }}
       </button>
-      <button v-if="!isSkip" type="button" class="skip-link" :disabled="loading" @click="goSkipRender">
-        還沒想好要擺什麼家具？跳過排版，直接生成渲染圖 →
+      <button v-if="!isSkip" type="button" class="skip-btn" :disabled="loading" @click="goSkipRender">
+        跳過排版，直接生成渲染圖 →
       </button>
     </div>
   </div>
@@ -343,15 +374,16 @@ function submit() {
 <style scoped>
 .space-setup { display: flex; flex-direction: column; }
 
-/* 兩欄收窄後置中。房型精簡成四個以後，等分整張卡會讓左欄下方空一大塊，
-   分隔線又剛好把那塊空白框起來，看起來像是漏了東西。 */
+/* 排家具路徑三欄（房型／家具／坪數），收窄後置中，不等分整張卡——
+   等分會讓內容少的欄下方空一大塊，分隔線又剛好把空白框起來。 */
 .columns {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 320px));
+  grid-template-columns: repeat(3, minmax(0, 280px));
   justify-content: center;
-  gap: clamp(1.5rem, 3vw, 3rem);
+  gap: clamp(1.25rem, 2.5vw, 2.5rem);
   padding-bottom: 1.75rem;
 }
+/* 不排家具路徑只有房型一欄 */
 .columns.one-col { grid-template-columns: minmax(0, 340px); }
 
 /* 欄與欄之間拉一條淡分隔線 */
@@ -452,6 +484,58 @@ function submit() {
 .cancel-btn { background: var(--db-chip); color: var(--db-text-soft); }
 .cancel-btn:hover { background: #cfcfcf; }
 
+/* ── 空間大小（主畫面版）── */
+.ping-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+}
+.ping-word-lg {
+  font-family: var(--db-font-display);
+  font-style: italic;
+  font-size: 1.4rem;
+  color: var(--db-text);
+}
+/* 白底 + 外框，看起來才像可以打字的欄位 */
+.ping-input-lg {
+  width: 120px;
+  height: 58px;
+  border: 2px solid var(--db-chip);
+  border-radius: 8px;
+  background: #fff;
+  text-align: center;
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+}
+.ping-input-lg:focus { border-color: var(--db-accent); background: #fff; }
+
+.ping-hint {
+  margin: 0.6rem 0 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--db-text-soft);
+}
+
+.size-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 1.1rem;
+  padding: 0.7rem 1rem;
+  border-radius: var(--db-radius-chip);
+  background: var(--db-chip-soft);
+}
+.readout-label { font-size: 0.75rem; color: var(--db-text-soft); }
+.readout-val {
+  font-family: var(--db-font-display);
+  font-size: 1.1rem;
+  color: var(--db-text);
+  font-variant-numeric: tabular-nums;
+}
+.readout-val small { font-size: 0.78rem; color: var(--db-text-soft); }
+
 /* ── 描述需求 ── */
 .describe {
   display: flex;
@@ -537,19 +621,24 @@ function submit() {
 }
 .actions .db-btn { min-width: 337px; }
 
-.skip-link {
-  border: none;
+/* 次要動作：小一號、只有外框，不跟主按鈕搶視線 */
+.skip-btn {
+  padding: 0.4rem 1rem;
+  border: 1.5px solid #dcdcdc;
+  border-radius: var(--db-radius-pill);
   background: none;
-  padding: 0;
   color: var(--db-text-soft);
   font-family: var(--db-font-body);
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  transition: border-color 0.16s, color 0.16s, background 0.16s;
 }
-.skip-link:hover:not(:disabled) { color: var(--db-text); }
-.skip-link:disabled { opacity: 0.5; cursor: not-allowed; }
+.skip-btn:hover:not(:disabled) {
+  border-color: var(--db-accent);
+  color: var(--db-text);
+  background: #fbfaf6;
+}
+.skip-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 @media (max-width: 900px) {
   .columns,

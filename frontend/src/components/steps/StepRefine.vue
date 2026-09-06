@@ -111,9 +111,9 @@ const hasBase = computed(() => !!baseImagePreview.value)
 
 .cols {
   display: grid;
-  grid-template-columns: minmax(280px, 380px) 1fr;
+  grid-template-columns: minmax(260px, 340px) 1fr;
   gap: clamp(1.25rem, 3vw, 2.5rem);
-  align-items: start;
+  align-items: stretch;
 }
 
 .panel { min-width: 0; }
@@ -192,7 +192,13 @@ const hasBase = computed(() => !!baseImagePreview.value)
 }
 .mini-drop:hover { border-color: var(--db-accent); }
 
-.canvas-wrap { min-width: 0; }
+/* 之前沒給高度：RefineCanvas 內部是 width/height:100%，父層沒有實際高度
+   時整組畫布會塌縮成圖片的原始像素大小，遠比左欄小、佔不滿右半邊。
+   這裡給一個跟畫面高度連動的高度，畫布才會真的填滿右側。 */
+.canvas-wrap {
+  min-width: 0;
+  height: clamp(460px, 66vh, 720px);
+}
 
 .canvas-empty {
   display: flex;
@@ -200,6 +206,7 @@ const hasBase = computed(() => !!baseImagePreview.value)
   align-items: center;
   justify-content: center;
   gap: 0.75rem;
+  height: 100%;
   min-height: 380px;
   border-radius: 8px;
   background: var(--db-chip-soft);

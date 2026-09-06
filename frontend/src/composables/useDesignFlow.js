@@ -156,6 +156,13 @@ const panoError   = ref('')
 const quotationLoading = ref(false)
 const quotationError   = ref('')
 
+// ── 收藏這個設計（預算估計步驟最後一顆按鈕）──
+// 每次 /api/generate 都已經自動存進 artifacts/history.json 了，收藏不是另開一份
+// 清單，只是在同一筆紀錄上標記 favorited=true，讓它在歷史紀錄裡好找、不會被
+// 使用者自己在歷史紀錄頁批次刪除時誤刪。
+const favoriteLoading = ref(false)
+const favoriteError   = ref('')
+
 let searchTimer = null
 let floorPlanUpdateTimer = null
 
@@ -332,8 +339,10 @@ function clearConfirmedStyle()   { confirmedStyle.value = null }
 /* ══ Step: 空間設定 → 產生 2D 平面圖 ══════════════════════ */
 
 async function submitLayout() {
+  // 這條路徑的第一頁已經不放描述欄位了（描述移到選風格那一步），
+  // 所以訊息只提家具，不要叫使用者去找一個畫面上沒有的欄位。
   if (!furnitureItems.value.length && !extraPrompt.value.trim()) {
-    error.value = '請至少選擇一件家具或輸入描述'
+    error.value = '請至少選擇一件要擺放的家具'
     return
   }
   const requestId = ++currentRequestId
@@ -685,6 +694,29 @@ async function fetchQuotation() {
   }
 }
 
+/* ══ 收藏這個設計 ══════════════════════════════════════ */
+
+async function toggleFavoriteDesign(next) {
+  const taskId = result.value?.task_id
+  if (!taskId) return
+  const favorited = next ?? !result.value?.favorited
+  favoriteLoading.value = true
+  favoriteError.value = ''
+  try {
+    const res = await fetch(apiUrl(`/api/history/${encodeURIComponent(taskId)}/favorite`), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ favorited }),
+    })
+    if (!res.ok) throw new Error(`${res.status}`)
+    result.value = { ...(result.value || {}), favorited }
+  } catch (e) {
+    favoriteError.value = '收藏失敗，請稍後再試'
+  } finally {
+    favoriteLoading.value = false
+  }
+}
+
 /* ══════════════════════════════════════════════════════ */
 
 export function useDesignFlow() {
@@ -717,6 +749,8 @@ export function useDesignFlow() {
     panoLoading, panoUrl, panoError, generatePanorama,
     // 估價
     quotationLoading, quotationError, fetchQuotation,
+    // 收藏
+    favoriteLoading, favoriteError, toggleFavoriteDesign,
     // 動作
     uploadFile, submitLayout, useUploadedPlan, submitPhoto, submit3D, submitRefine,
   }

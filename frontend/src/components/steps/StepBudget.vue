@@ -11,7 +11,10 @@ import { RouterLink } from 'vue-router'
 import { useDesignFlow } from '@/composables/useDesignFlow'
 import { useFurnitureSelection } from '@/composables/useFurnitureSelection'
 
-const { result, quotationLoading, quotationError, fetchQuotation, prevStep, resetFlow } = useDesignFlow()
+const {
+  result, quotationLoading, quotationError, fetchQuotation, prevStep, resetFlow,
+  favoriteLoading, favoriteError, toggleFavoriteDesign,
+} = useDesignFlow()
 const {
   selectedCount: furnitureSelectedCount,
   toggle: toggleFavorite,
@@ -118,6 +121,23 @@ function toFavoriteItem(item, c) {
     <p v-else-if="!quotationLoading" class="hint">
       點擊「取得家具報價」辨識畫面中的家具並推薦 IKEA 商品（約需 30 秒）。
     </p>
+
+    <!-- 整個流程走完，最後留一個收藏這次設計的地方——它其實一直都在
+         歷史紀錄裡（每次生成都自動存檔），收藏只是標記起來、之後在
+         歷史紀錄好找，也不怕被批次刪除誤刪。 -->
+    <div v-if="result?.task_id" class="collect-row">
+      <button
+        type="button"
+        :class="['collect-btn', { active: result.favorited }]"
+        :disabled="favoriteLoading"
+        @click="toggleFavoriteDesign()"
+      >
+        <span class="collect-star">{{ result.favorited ? '★' : '☆' }}</span>
+        {{ result.favorited ? '已收藏這個設計' : '收藏這個設計' }}
+      </button>
+      <RouterLink to="/history" class="collect-link">在歷史紀錄查看 →</RouterLink>
+      <p v-if="favoriteError" class="db-error collect-error">{{ favoriteError }}</p>
+    </div>
 
     <div class="actions">
       <button class="db-btn db-btn--ghost db-btn--sm" @click="prevStep">← 回微調編輯</button>
@@ -291,6 +311,48 @@ function toFavoriteItem(item, c) {
   line-height: 1.7;
 }
 .hint { padding: 2rem 0; text-align: center; font-size: 0.95rem; }
+
+.collect-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  padding: 1.1rem 1.25rem;
+  border-radius: var(--db-radius-chip);
+  background: var(--db-chip-soft);
+}
+.collect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1.3rem;
+  border: 2px solid var(--db-accent);
+  border-radius: var(--db-radius-pill);
+  background: #fff;
+  color: var(--db-text);
+  font-family: var(--db-font-display);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s;
+}
+.collect-btn:hover:not(:disabled) { background: var(--db-accent-soft); }
+.collect-btn.active {
+  background: var(--db-accent);
+  color: var(--db-on-accent);
+}
+.collect-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.collect-star { font-size: 1.15rem; line-height: 1; }
+.collect-link {
+  color: var(--db-accent-deep);
+  font-size: 0.88rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.collect-error { margin: 0; width: 100%; text-align: center; }
 
 .actions {
   display: flex;
